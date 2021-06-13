@@ -4,7 +4,7 @@ Created on Tue Jun  1 10:27:17 2021
 
 @author: Shahar Kasirer
 
-Basic tools for loading different kinds of images into numpy arrays
+Basic tools for loading, saving and manipulating different kinds of images into numpy arrays
 """
 from copy import deepcopy
 import numpy as np
