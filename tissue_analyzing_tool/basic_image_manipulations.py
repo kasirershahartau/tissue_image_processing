@@ -11,6 +11,8 @@ import numpy as np
 from scipy.stats import scoreatpercentile
 from skimage.exposure import adjust_gamma
 from tifffile import TiffFile, imwrite
+from matplotlib import pyplot as plt
+from  cv2 import GaussianBlur as gaus
 
 ####### Constants ##############
 UINT8_MAXVAL = 255
@@ -240,4 +242,25 @@ def binary_image(image, axes, thresholds):
         adjusted[adjusted < threshold] = 0
     return adjusted 
         
-        
+
+      
+def blur_image(image, kernel_size, std):
+    """
+   Blurs image using GaussianBLur 
+    Parameters
+    ----------
+    image : matrix
+        Object for blurring
+    kernel_size : Integer
+        The pixel blurring range. Must be odd.
+    std : Number
+        Used for the intensity of the blur. Higher value outputs higher blur.
+
+    Returns
+    -------
+    Gaussian : matrix
+        Blurred image according to set parameters.
+
+    """
+    Gaussian = gaus(image,(kernel_size, kernel_size),std)
+    return Gaussian

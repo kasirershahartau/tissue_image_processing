@@ -10,9 +10,8 @@ from basic_image_manipulations import *
 import os
 from matplotlib import pyplot as plt
 
-test_dir = "C:\\Users\\Kasirer\\Phd\\mouse_ear_project\\experimental_results\\processed_data"
-test_file = "21_01_06_Macula_p0_Airyscan Processing_Stitch_LocalProjection_0.tif"
-
+test_dir = "D:\\Anastasia\\Fixed_samples"
+test_file = "Local Z Projection of 21_03_04_E17_utricle_Airyscan Processing_Stitch.tif"
 test_path = os.path.join(test_dir, test_file)
 
 
@@ -25,5 +24,11 @@ def adjust_and_save(path):
     save_tiff(path.replace('.tif', 'adjusted.tif'), movie, metadata=metadata, axes=axes, data_type=data_type)
     return
 
+def loading_test_image():
+     image, axes, shape, metadata = read_tiff(test_path)
+     adjusted = set_channel_brightness(image[0], 65535)
+     return adjusted
+
 if __name__ == "__main__":
-    adjust_and_save(test_path)
+     pass
+ 
