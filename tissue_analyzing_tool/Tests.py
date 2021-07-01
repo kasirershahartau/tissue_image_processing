@@ -12,7 +12,6 @@ from matplotlib import pyplot as plt
 
 test_dir = "C:\\Users\\Kasirer\\Phd\\mouse_ear_project\\experimental_results\\fixed\\Vestibule\\zo_myo_dapi\\E17.5"
 test_file = "21-04-13_E17.5_utricle2_zo1_atho1_dapi_Airyscan Processing.czi"
-
 test_path = os.path.join(test_dir, test_file)
 
 
@@ -26,6 +25,10 @@ def adjust_and_save(path):
     return
 
 
+def loading_test_image():
+     image, axes, shape, metadata = read_tiff(test_path)
+     adjusted = set_channel_brightness(image[0], 65535)
+     return adjusted
 
 if __name__ == "__main__": 
     i=0

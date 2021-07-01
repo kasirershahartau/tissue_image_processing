@@ -12,7 +12,12 @@ from scipy.stats import scoreatpercentile
 from skimage.exposure import adjust_gamma
 from tifffile import TiffFile, imwrite
 from aicsimageio import AICSImage
-
+from matplotlib import pyplot as plt
+from  cv2 import GaussianBlur as gaus
+import cv2
+import skimage.segmentation as skim
+from skimage.filters import difference_of_gaussians
+from scipy.fftpack import fftshift, fftn
 
 ####### Constants ##############
 UINT8_MAXVAL = 255
@@ -313,4 +318,82 @@ def binary_image(image, axes, thresholds):
         adjusted[adjusted < threshold] = 0
     return adjusted 
         
-        
+
+      
+def blur_image(image, kernel_size, std):
+    """
+   Blurs image using GaussianBlur 
+    Parameters
+    ----------
+    image : matrix
+        Object for blurring
+    kernel_size : Integer
+        The pixel blurring range. Must be odd.
+    std : Number
+        Used for the intensity of the blur. Higher value outputs higher blur.
+
+    Returns
+    -------
+    Gaussian : matrix
+        Blurred image according to set parameters.
+
+    """
+    Gaussian = gaus(image,(kernel_size, kernel_size),std)
+    return Gaussian
+
+
+def band_pass_filter(image, lowsigma, highsigma):
+"""
+    
+    Applies the band pass as a range of signals to accentuate in image.
+    Parameters
+    ----------
+    image : matrix
+        Object to put through the filter.
+    lowsigma : Number
+        Low end of wanted frequencies.
+    highsigma : Number
+        High end of wanted frequencies.
+
+    Returns
+    -------
+    adjust: matrix
+        Filtered image according to parameters.
+
+    """
+    adjust = difference_of_gaussians(image, lowsigma, highsigma)
+    return adjust
+
+
+def watershed_segmentation(image,imgthresh, stdeviation, kernell):
+"""
+    
+    Applies watershed segmentation to create "skeleton" version of image for analysis
+    Parameters
+    ----------
+    image : matrix
+        Object to be segmented.
+    imgthresh : number
+        Parameter for segmenting the frequencies of the image. Threshold for 
+        differing images to use. 
+    stdeviation : number
+        Standard deviation for applying filter.
+    kernell : number
+        Size of kernel when applying filter.
+
+    Returns
+    -------
+    skeleton: matrix
+        Filtered image according to parameters.
+
+    """
+    image[image < imgthresh] = 0
+    blurred= blur_image(image, stdeviation, kernell) #bigger std takes away more lines, bigger kern adds lines
+    labelled= skim.watershed(blurred, watershed_line=True)
+    # plt.imshow(labelled)
+    # plt.figure()
+    skeleton = np.zeros(image.shape)
+    skeleton[labelled==0] = 1
+    # plt.imshow(skeleton, cmap=plt.cm.gray)
+    return skeleton
+
