@@ -11,6 +11,8 @@ import numpy as np
 from scipy.stats import scoreatpercentile
 from skimage.exposure import adjust_gamma
 from tifffile import TiffFile, imwrite
+from aicsimageio import AICSImage
+
 
 ####### Constants ##############
 UINT8_MAXVAL = 255
@@ -41,6 +43,75 @@ def read_tiff(path):
         axes = tif.series[0].axes
         metadata = tif.imagej_metadata
     return image, axes, image.shape, metadata    
+
+
+def read_whole_image(path, dims_order="TCZYX"):
+    img = AICSImage(path)
+    data = img.get_image_data(dims_order)
+    return data, img.dims, img.metadata
+
+
+def read_part_of_image(path, x_range, y_range, z_range, c_range, t_range, dims_order="TCZXY"):
+    img = AICSImage(path)
+    default_dims_order = "TCZXY"
+    data = img_handle.get_image_dask_data(default_dims_order)
+    data = data[t_range[0]:t_range[1],
+                c_range[0]:c_range[1],
+                z_range[0]:c_range[1],
+                y_range[0]:y_range[1],
+                x_range[0]:x_range[1]]
+    data = data.compute()
+    if default_dims_order != dims_order:
+        permutation = [dims_order.index(default_dims_order[i]) for i in range(len(default_dims_order))]
+        data = np.transpose(data, permutation)
+    return data, img.dims, img.metadata
+
+def read_image_in_chunks(path, dx=0, dy=0, dz=0, dc=0, dt=0, dims_order="TCZXY"):
+    img = AICSImage(path)
+    default_dims_order = "TCZXY"
+    data = img.get_image_dask_data(default_dims_order)
+    max_x =  img.dims.X
+    max_y = img.dims.Y
+    max_z = img.dims.Z
+    max_t = img.dims.T
+    max_c = img.dims.C
+    if dx == 0:
+        dx = max_x
+    if dy == 0:
+        dy = max_y
+    if dz == 0:
+        dz = max_z
+    if dc == 0:
+        dc = max_c
+    if dt == 0:
+        dt = max_t
+    t = 0
+    c = 0
+    z = 0
+    x = 0
+    y = 0
+    while t < max_t:
+        while c < max_c:
+            while z < max_z:
+                while x < max_x:
+                    while y < max_y:                 
+                        chunk = data[t:min(t+dt, max_t),
+                                     c:min(c+dc, max_c),
+                                     z:min(z+dz, max_z),
+                                     x:min(x+dx, max_x),
+                                     y:min(y+dy, max_y)]
+                        yield chunk.compute()
+                        y+=dy
+                    y=0    
+                    x+=dx
+                x=0    
+                z+=dz
+            z=0    
+            c+=dc
+        c=0    
+        t+=dt
+    return     
+
 
 
 def save_tiff(path, image, metadata={}, axes="", data_type=""):
@@ -210,6 +281,8 @@ def set_channel_brightness(image, max_possible_val, method='bestFit',
         if minimum_pixel_val > 0:
             new_minimum = max(new_minimum, minimum_pixel_val)
         image[image > new_maximum] = new_maximum
+    else:
+        new_minimum = minimum_pixel_val
     if method == 'minMax' or method == 'bestFit':
         image = image - new_minimum
         image = image/np.max(image)
