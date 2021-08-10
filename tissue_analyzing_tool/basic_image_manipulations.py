@@ -9,6 +9,7 @@ Basic tools for loading, saving and manipulating different kinds of images into 
 from copy import deepcopy
 import numpy as np
 from scipy.stats import scoreatpercentile
+from scipy.ndimage import gaussian_filter
 from skimage.exposure import adjust_gamma
 from tifffile import TiffFile, imwrite
 from aicsimageio import AICSImage
@@ -70,6 +71,10 @@ def read_part_of_image(path, x_range, y_range, z_range, c_range, t_range, dims_o
         permutation = [dims_order.index(default_dims_order[i]) for i in range(len(default_dims_order))]
         data = np.transpose(data, permutation)
     return data, img.dims, img.metadata
+
+def get_image_dimensions(path):
+    img = AICSImage(path)
+    return img.dims
 
 def read_image_in_chunks(path, dx=0, dy=0, dz=0, dc=0, dt=0, dims_order="TCZXY"):
     img = AICSImage(path)
@@ -320,30 +325,28 @@ def binary_image(image, axes, thresholds):
         
 
       
-def blur_image(image, kernel_size, std):
+def blur_image(image, std):
     """
    Blurs image using GaussianBlur 
     Parameters
     ----------
     image : matrix
         Object for blurring
-    kernel_size : Integer
-        The pixel blurring range. Must be odd.
-    std : Number
-        Used for the intensity of the blur. Higher value outputs higher blur.
+    std : Tuple with size as the number of dimensions of the input image.
+        Standard deviation for each dimension. Used for the intensity of the blur. Higher value outputs higher blur.
 
     Returns
     -------
-    Gaussian : matrix
+    filtered : matrix
         Blurred image according to set parameters.
 
     """
-    Gaussian = gaus(image,(kernel_size, kernel_size),std)
-    return Gaussian
+    filtered = gaussian_filter(image, std, mode='nearest')
+    return filtered
 
 
 def band_pass_filter(image, lowsigma, highsigma):
-"""
+    """
     
     Applies the band pass as a range of signals to accentuate in image.
     Parameters
@@ -366,7 +369,7 @@ def band_pass_filter(image, lowsigma, highsigma):
 
 
 def watershed_segmentation(image,imgthresh, stdeviation, kernell):
-"""
+    """
     
     Applies watershed segmentation to create "skeleton" version of image for analysis
     Parameters
