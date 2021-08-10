@@ -2,7 +2,7 @@
 """
 Created on Tue Jun  1 10:27:17 2021
 
-@author: Shahar Kasirer
+@author: Shahar Kasirer, Anastasia Pergament
 
 Basic tools for loading, saving and manipulating different kinds of images into numpy arrays
 """
@@ -271,7 +271,7 @@ def blur_image(image, kernel_size, std):
 
 
 def band_pass_filter(image, lowsigma, highsigma):
-"""
+    """
     
     Applies the band pass as a range of signals to accentuate in image.
     Parameters
@@ -289,12 +289,13 @@ def band_pass_filter(image, lowsigma, highsigma):
         Filtered image according to parameters.
 
     """
+    
     adjust = difference_of_gaussians(image, lowsigma, highsigma)
     return adjust
 
 
-def watershed_segmentation(image,imgthresh, stdeviation, kernell):
-"""
+def watershed_segmentation(image, imgthresh, stdeviation, kernell):
+    """
     
     Applies watershed segmentation to create "skeleton" version of image for analysis
     Parameters
@@ -313,15 +314,19 @@ def watershed_segmentation(image,imgthresh, stdeviation, kernell):
     -------
     skeleton: matrix
         Filtered image according to parameters.
+    labelled: matrix
+        Segmented cells from image
 
     """
     image[image < imgthresh] = 0
-    blurred= blur_image(image, stdeviation, kernell) #bigger std takes away more lines, bigger kern adds lines
-    labelled= skim.watershed(blurred, watershed_line=True)
+    blurred= blur_image(image, stdeviation, kernell) #bigger std takes away more lines, bigger kern adds lines, used to blur the image
+    labelled= skim.watershed(blurred, watershed_line=True) #used to list all the cells
     # plt.imshow(labelled)
     # plt.figure()
-    skeleton = np.zeros(image.shape)
-    skeleton[labelled==0] = 1
+    skeleton = np.zeros(image.shape) #used to create image of cells
+    skeleton[labelled==0] = 1 #differenctiate between pure background and cells outlines by setting labelled to 1.
     # plt.imshow(skeleton, cmap=plt.cm.gray)
-    return skeleton
+    return skeleton, labelled
 
+
+            
