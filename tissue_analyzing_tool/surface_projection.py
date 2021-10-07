@@ -20,7 +20,7 @@ def surface_projection(time_point, axes, reference_channel, min_z, max_z,
     else:
         raise "No such method %s"%method
     chosen_z = np.repeat(np.repeat(min_z + np.argmax(score, axis=0), bin_size, axis=0), bin_size, axis=1)
-    if chonsen_z.shape != image.shape[-2:]:
+    if chosen_z.shape != image.shape[-2:]:
         chosen_z = chosen_z[:image.shape[-2],:image.shape[-1]]
     if axes.find("C") >= 0:
         projection = np.zeros((image.shape[0], image.shape[2], image.shape[3]))
@@ -33,6 +33,5 @@ def surface_projection(time_point, axes, reference_channel, min_z, max_z,
     return projection
     
     
-
 
 

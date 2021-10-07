@@ -14,7 +14,7 @@ from skimage.exposure import adjust_gamma
 from tifffile import TiffFile, imwrite
 from aicsimageio import AICSImage
 from matplotlib import pyplot as plt
-from  cv2 import GaussianBlur as gaus
+from cv2 import GaussianBlur as gaus
 import cv2
 import skimage.segmentation as skim
 from skimage.filters import difference_of_gaussians
@@ -76,11 +76,59 @@ def get_image_dimensions(path):
     img = AICSImage(path)
     return img.dims
 
-def read_image_in_chunks(path, dx=0, dy=0, dz=0, dc=0, dt=0, dims_order="TCZXY"):
+
+def read_image_in_chunks_m(path, dx=0, dy=0, dz=0, dc=0, dt=0, dims_order="TCZXY"):
     img = AICSImage(path)
     default_dims_order = "TCZXY"
     data = img.get_image_dask_data(default_dims_order)
-    max_x =  img.dims.X
+    max_x = img.dims.X
+    max_y = img.dims.Y
+    max_z = img.dims.Z
+    max_t = img.dims.T
+    max_c = img.dims.C
+    if dx == 0:
+        dx = max_x
+    if dy == 0:
+        dy = max_y
+    if dz == 0:
+        dz = max_z
+    if dc == 0:
+        dc = max_c
+    if dt == 0:
+        dt = max_t
+    t = 0
+    c = 0
+    z = 0
+    x = 0
+    y = 0
+    while t < max_t:
+        while c < max_c:
+            while z < max_z:
+                while x < max_x:
+                    while y < max_y:
+                        chunk = data[t:min(t+dt, max_t),
+                                     c:min(c+dc, max_c),
+                                     z:min(z+dz, max_z),
+                                     x:min(x+dx, max_x),
+                                     y:min(y+dy, max_y)]
+                        yield chunk.compute()
+                        y+=dy
+                    y=0
+                    x+=dx
+                x=0
+                z+=dz
+            z=0
+            c+=dc
+        c=0
+        t+=dt
+    return
+
+
+def read_image_in_chunks(path, dx=0, dy=0, dz=0, dc=0, dt=0, dims_order="TCZXY"):
+    img = AICSImage(path)
+    default_dims_order = "TCZYX"
+    data = img.get_image_dask_data(default_dims_order)
+    max_x = img.dims.X
     max_y = img.dims.Y
     max_z = img.dims.Z
     max_t = img.dims.T
@@ -108,8 +156,8 @@ def read_image_in_chunks(path, dx=0, dy=0, dz=0, dc=0, dt=0, dims_order="TCZXY")
                         chunk = data[t:min(t+dt, max_t),
                                      c:min(c+dc, max_c),
                                      z:min(z+dz, max_z),
-                                     x:min(x+dx, max_x),
-                                     y:min(y+dy, max_y)]
+                                     y:min(y+dy, max_y),
+                                     x:min(x+dx, max_x)]
                         yield chunk.compute()
                         y+=dy
                     y=0    
@@ -120,8 +168,7 @@ def read_image_in_chunks(path, dx=0, dy=0, dz=0, dc=0, dt=0, dims_order="TCZXY")
             c+=dc
         c=0    
         t+=dt
-    return     
-
+    return
 
 
 def save_tiff(path, image, metadata={}, axes="", data_type=""):
