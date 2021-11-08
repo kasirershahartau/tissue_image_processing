@@ -124,7 +124,8 @@ def read_image_in_chunks_m(path, dx=0, dy=0, dz=0, dc=0, dt=0, dims_order="TCZXY
     return
 
 
-def read_image_in_chunks(path, dx=0, dy=0, dz=0, dc=0, dt=0, dims_order="TCZXY"):
+def read_image_in_chunks(path, dx=0, dy=0, dz=0, dc=0, dt=0, apply_function=None, output=None,
+                         *apply_function_params):
     img = AICSImage(path)
     default_dims_order = "TCZYX"
     data = img.get_image_dask_data(default_dims_order)
@@ -143,6 +144,8 @@ def read_image_in_chunks(path, dx=0, dy=0, dz=0, dc=0, dt=0, dims_order="TCZXY")
         dc = max_c
     if dt == 0:
         dt = max_t
+    if output is not None:
+        out_t, out_c, out_z, out_y, out_x = output.shape
     t = 0
     c = 0
     z = 0
@@ -158,7 +161,18 @@ def read_image_in_chunks(path, dx=0, dy=0, dz=0, dc=0, dt=0, dims_order="TCZXY")
                                      z:min(z+dz, max_z),
                                      y:min(y+dy, max_y),
                                      x:min(x+dx, max_x)]
-                        yield chunk.compute()
+                        if apply_function is None:
+                            yield chunk.compute()
+                        else:
+                            result = apply_function(chunk, *apply_function_params)
+                            if output is None:
+                                yield result
+                            else:
+                                output[min(t, out_t):min(t+dt, max_t, out_t),
+                                     min(c, out_c):min(c+dc, max_c, out_c),
+                                     min(z, out_z):min(z+dz, max_z, out_z),
+                                     min(y, out_y):min(y+dy, max_y, out_y),
+                                     min(x, out_x):min(x+dx, max_x, out_x)] = result
                         y+=dy
                     y=0    
                     x+=dx
