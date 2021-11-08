@@ -20,16 +20,19 @@ def surface_projection(time_point, axes, reference_channel, min_z, max_z,
     else:
         raise "No such method %s"%method
     chosen_z = np.repeat(np.repeat(min_z + np.argmax(score, axis=0), bin_size, axis=0), bin_size, axis=1)
+    z_size, y_size, x_size = image.shape[-3:]
     if chosen_z.shape != image.shape[-2:]:
         chosen_z = chosen_z[:image.shape[-2],:image.shape[-1]]
     if axes.find("C") >= 0:
         projection = np.zeros((image.shape[0], image.shape[2], image.shape[3]))
         for channel_num in range(image.shape[0]):
             image[channel_num,:,:,:] = blur_image(image[channel_num,:,:,:], (5,5,3))
-            projection[channel_num,:,:] = chosen_z.choose(image[channel_num,:,:,:])
+            reshaped = image[channel_num,:,:,:].reshape((z_size, x_size*y_size))
+            projection[channel_num,:,:] = reshaped[chosen_z.flatten(), np.arange(x_size*y_size)].reshape((y_size, x_size))
     else:
         image = blur_image(image, (5,5,3))
-        projection = chosen_z.choose(image)
+        reshaped = image.reshape((z_size, x_size * y_size))
+        projection = reshaped[chosen_z.flatten(), np.arange(x_size * y_size)].reshape((y_size, x_size))
     return projection
     
     
