@@ -56,11 +56,15 @@ def read_whole_image(path, dims_order="TCZYX"):
     data = img.get_image_data(dims_order)
     return data, img.dims, img.metadata
 
+def read_virtual_image(path, dims_order="TCZXY"):
+    img = AICSImage(path)
+    data = img.get_image_dask_data(dims_order)
+    return data, img.dims, img.metadata
 
 def read_part_of_image(path, x_range, y_range, z_range, c_range, t_range, dims_order="TCZXY"):
     img = AICSImage(path)
     default_dims_order = "TCZXY"
-    data = img_handle.get_image_dask_data(default_dims_order)
+    data = img.get_image_dask_data(default_dims_order)
     data = data[t_range[0]:t_range[1],
                 c_range[0]:c_range[1],
                 z_range[0]:c_range[1],
@@ -164,15 +168,18 @@ def read_image_in_chunks(path, dx=0, dy=0, dz=0, dc=0, dt=0, apply_function=None
                         if apply_function is None:
                             yield chunk.compute()
                         else:
-                            result = apply_function(chunk, *apply_function_params)
-                            if output is None:
-                                yield result
-                            else:
+                            result = apply_function(chunk.compute(), *apply_function_params)
+                            if output is not None:
                                 output[min(t, out_t):min(t+dt, max_t, out_t),
                                      min(c, out_c):min(c+dc, max_c, out_c),
                                      min(z, out_z):min(z+dz, max_z, out_z),
                                      min(y, out_y):min(y+dy, max_y, out_y),
-                                     min(x, out_x):min(x+dx, max_x, out_x)] = result
+                                     min(x, out_x):min(x+dx, max_x, out_x)] = result.reshape((min(t+dt, max_t, out_t)-min(t, out_t),
+                                                                                              min(c+dc, max_c, out_c)-min(c, out_c),
+                                                                                              min(z+dz, max_z, out_z)-min(z, out_z),
+                                                                                              min(y+dy, max_y, out_y)-min(y, out_y),
+                                                                                              min(x+dx, max_x, out_x)-min(x, out_x)))
+                                yield result
                         y+=dy
                     y=0    
                     x+=dx
@@ -249,7 +256,7 @@ def put_cannel_axis_first(image, axes):
     else:
         return image, tuple(np.arange(len(axes)))
 
-def set_brightness(image, axes, metadata={}, method='bestFit', clearExtreamPrecentage=1):
+def set_brightness(image, axes, metadata={}, method='bestFit', clearExtreamPrecentage=1, minVal=0, maxVal=0):
     """
     Adjusteing the brightness of each pixel in the given image/movie and
     transforms pixels value into floats in the range [0,1]. Applied on each
@@ -282,10 +289,13 @@ def set_brightness(image, axes, metadata={}, method='bestFit', clearExtreamPrece
 
     """
     data_type = image.dtype
-    max_possible_val = 255 if data_type == 'uint8' else 65535 if data_type == 'uint16' else 1
+    if maxVal:
+        max_possible_val = maxVal
+    else:
+        max_possible_val = 255 if data_type == 'uint8' else 65535 if data_type == 'uint16' else 1
     adjusted = np.copy(image).astype('double')
     channel_axis = axes.find("C")
-    minimum_pixel_val = 0
+    minimum_pixel_val = max(minVal, 0)
     if metadata:
         if 'min' in metadata:
             minimum_pixel_val = metadata['min']
@@ -430,7 +440,7 @@ def band_pass_filter(image, lowsigma, highsigma):
     return adjust
 
 
-def watershed_segmentation(image, imgthresh, stdeviation, kernell):
+def watershed_segmentation(image, imgthresh, stdeviation):
     """
     
     Applies watershed segmentation to create "skeleton" version of image for analysis
@@ -443,8 +453,6 @@ def watershed_segmentation(image, imgthresh, stdeviation, kernell):
         differing images to use. 
     stdeviation : number
         Standard deviation for applying filter.
-    kernell : number
-        Size of kernel when applying filter.
 
     Returns
     -------
@@ -455,14 +463,9 @@ def watershed_segmentation(image, imgthresh, stdeviation, kernell):
 
     """
     image[image < imgthresh] = 0
-    blurred= blur_image(image, stdeviation, kernell) #bigger std takes away more lines, bigger kern adds lines, used to blur the image
-    labelled= skim.watershed(blurred, watershed_line=True) #used to list all the cells
-    # plt.imshow(labelled)
-    # plt.figure()
-    skeleton = np.zeros(image.shape) #used to create image of cells
-    skeleton[labelled==0] = 1 #differenctiate between pure background and cells outlines by setting labelled to 1.
-    # plt.imshow(skeleton, cmap=plt.cm.gray)
-    return skeleton, labelled
+    blurred = blur_image(image, stdeviation) #bigger std takes away more lines, bigger kern adds lines, used to blur the image
+    labelled = skim.watershed(blurred, watershed_line=True) #used to list all the cells
+    return labelled
 
 
             
