@@ -1,0 +1,743 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1458</width>
+    <height>947</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>MainWindow</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <widget class="QPushButton" name="open_file_pb">
+    <property name="geometry">
+     <rect>
+      <x>1340</x>
+      <y>40</y>
+      <width>75</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Open File</string>
+    </property>
+   </widget>
+   <widget class="QCheckBox" name="zo_check_box">
+    <property name="geometry">
+     <rect>
+      <x>1320</x>
+      <y>70</y>
+      <width>91</width>
+      <height>17</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>ZO Channel</string>
+    </property>
+    <property name="checked">
+     <bool>true</bool>
+    </property>
+   </widget>
+   <widget class="QCheckBox" name="atoh_check_box">
+    <property name="enabled">
+     <bool>true</bool>
+    </property>
+    <property name="geometry">
+     <rect>
+      <x>1320</x>
+      <y>90</y>
+      <width>101</width>
+      <height>17</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Atho Channel</string>
+    </property>
+    <property name="checked">
+     <bool>true</bool>
+    </property>
+   </widget>
+   <widget class="QLineEdit" name="frame_line_edit">
+    <property name="geometry">
+     <rect>
+      <x>880</x>
+      <y>870</y>
+      <width>41</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>1/1</string>
+    </property>
+   </widget>
+   <widget class="PlotWidget" name="histogram_widget" native="true">
+    <property name="geometry">
+     <rect>
+      <x>50</x>
+      <y>740</y>
+      <width>591</width>
+      <height>121</height>
+     </rect>
+    </property>
+   </widget>
+   <widget class="QSpinBox" name="zo_spin_box">
+    <property name="geometry">
+     <rect>
+      <x>1410</x>
+      <y>70</y>
+      <width>42</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="value">
+     <number>1</number>
+    </property>
+   </widget>
+   <widget class="QSpinBox" name="atoh_spin_box">
+    <property name="enabled">
+     <bool>true</bool>
+    </property>
+    <property name="geometry">
+     <rect>
+      <x>1410</x>
+      <y>90</y>
+      <width>42</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="value">
+     <number>0</number>
+    </property>
+   </widget>
+   <widget class="QScrollBar" name="atoh_level_scroll_bar">
+    <property name="geometry">
+     <rect>
+      <x>700</x>
+      <y>760</y>
+      <width>191</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="layoutDirection">
+     <enum>Qt::LeftToRight</enum>
+    </property>
+    <property name="maximum">
+     <number>200</number>
+    </property>
+    <property name="singleStep">
+     <number>1</number>
+    </property>
+    <property name="value">
+     <number>1</number>
+    </property>
+    <property name="orientation">
+     <enum>Qt::Horizontal</enum>
+    </property>
+   </widget>
+   <widget class="QLabel" name="atoh_level_label">
+    <property name="geometry">
+     <rect>
+      <x>650</x>
+      <y>760</y>
+      <width>47</width>
+      <height>13</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Atoh level</string>
+    </property>
+   </widget>
+   <widget class="QScrollBar" name="zo_level_scroll_bar">
+    <property name="geometry">
+     <rect>
+      <x>700</x>
+      <y>780</y>
+      <width>191</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="maximum">
+     <number>200</number>
+    </property>
+    <property name="value">
+     <number>50</number>
+    </property>
+    <property name="orientation">
+     <enum>Qt::Horizontal</enum>
+    </property>
+   </widget>
+   <widget class="QLabel" name="zo_level_label">
+    <property name="geometry">
+     <rect>
+      <x>660</x>
+      <y>780</y>
+      <width>41</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Zo level</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="segment_frame_button">
+    <property name="geometry">
+     <rect>
+      <x>1334</x>
+      <y>200</y>
+      <width>81</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Segment frame</string>
+    </property>
+   </widget>
+   <widget class="QSpinBox" name="segmentation_threshold_spin_box">
+    <property name="geometry">
+     <rect>
+      <x>1400</x>
+      <y>230</y>
+      <width>42</width>
+      <height>22</height>
+     </rect>
+    </property>
+    <property name="maximum">
+     <number>100</number>
+    </property>
+    <property name="value">
+     <number>3</number>
+    </property>
+   </widget>
+   <widget class="QSpinBox" name="segmentation_kernel_std_spin_box">
+    <property name="geometry">
+     <rect>
+      <x>1400</x>
+      <y>260</y>
+      <width>42</width>
+      <height>22</height>
+     </rect>
+    </property>
+    <property name="maximum">
+     <number>100</number>
+    </property>
+    <property name="value">
+     <number>3</number>
+    </property>
+   </widget>
+   <widget class="QLabel" name="segmentation_threshold_label">
+    <property name="geometry">
+     <rect>
+      <x>1300</x>
+      <y>230</y>
+      <width>101</width>
+      <height>31</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Threshold
+ (% from maximum)</string>
+    </property>
+   </widget>
+   <widget class="QLabel" name="segmentation_kernel_std_label">
+    <property name="geometry">
+     <rect>
+      <x>1300</x>
+      <y>260</y>
+      <width>71</width>
+      <height>31</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Blurring kernel
+ STD (pixels)</string>
+    </property>
+   </widget>
+   <widget class="QCheckBox" name="show_segmentation_check_box">
+    <property name="geometry">
+     <rect>
+      <x>1320</x>
+      <y>110</y>
+      <width>121</width>
+      <height>17</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Segmentation</string>
+    </property>
+    <property name="checked">
+     <bool>true</bool>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="segment_all_frames_button">
+    <property name="geometry">
+     <rect>
+      <x>1310</x>
+      <y>390</y>
+      <width>111</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Segment all frames</string>
+    </property>
+   </widget>
+   <widget class="QProgressBar" name="segment_all_frames_progress_bar">
+    <property name="geometry">
+     <rect>
+      <x>1340</x>
+      <y>390</y>
+      <width>121</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="value">
+     <number>0</number>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="save_segmentation_button">
+    <property name="geometry">
+     <rect>
+      <x>1300</x>
+      <y>480</y>
+      <width>121</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Save Segmentation</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="load_segmentation_button">
+    <property name="geometry">
+     <rect>
+      <x>1300</x>
+      <y>510</y>
+      <width>121</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Load Segmentation</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="analyze_segmentation_button">
+    <property name="geometry">
+     <rect>
+      <x>1300</x>
+      <y>420</y>
+      <width>121</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Analyze Segmentation</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="cancel_segmentation_button">
+    <property name="geometry">
+     <rect>
+      <x>1300</x>
+      <y>390</y>
+      <width>41</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Cancel</string>
+    </property>
+   </widget>
+   <widget class="QProgressBar" name="analyze_segmentation_progress_bar">
+    <property name="geometry">
+     <rect>
+      <x>1340</x>
+      <y>420</y>
+      <width>121</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="value">
+     <number>0</number>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="cancel_analysis_button">
+    <property name="geometry">
+     <rect>
+      <x>1300</x>
+      <y>420</y>
+      <width>41</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Cancel</string>
+    </property>
+   </widget>
+   <widget class="QProgressBar" name="save_data_progress_bar">
+    <property name="geometry">
+     <rect>
+      <x>1300</x>
+      <y>480</y>
+      <width>161</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="value">
+     <number>0</number>
+    </property>
+   </widget>
+   <widget class="QProgressBar" name="load_data_progress_bar">
+    <property name="enabled">
+     <bool>true</bool>
+    </property>
+    <property name="geometry">
+     <rect>
+      <x>1300</x>
+      <y>510</y>
+      <width>161</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="value">
+     <number>0</number>
+    </property>
+   </widget>
+   <widget class="QCheckBox" name="show_cell_types_check_box">
+    <property name="geometry">
+     <rect>
+      <x>1320</x>
+      <y>130</y>
+      <width>70</width>
+      <height>17</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Cell Types</string>
+    </property>
+   </widget>
+   <widget class="QCheckBox" name="show_neighbors_check_box">
+    <property name="geometry">
+     <rect>
+      <x>1320</x>
+      <y>150</y>
+      <width>70</width>
+      <height>17</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Neighbors</string>
+    </property>
+   </widget>
+   <widget class="QCheckBox" name="show_cell_tracking_check_box">
+    <property name="geometry">
+     <rect>
+      <x>1320</x>
+      <y>170</y>
+      <width>91</width>
+      <height>17</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Cell Tracking</string>
+    </property>
+   </widget>
+   <widget class="QSpinBox" name="cell_tracking_spin_box">
+    <property name="geometry">
+     <rect>
+      <x>1400</x>
+      <y>170</y>
+      <width>51</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="maximum">
+     <number>0</number>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="track_cells_button">
+    <property name="geometry">
+     <rect>
+      <x>1310</x>
+      <y>450</y>
+      <width>111</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Track cells</string>
+    </property>
+   </widget>
+   <widget class="QProgressBar" name="track_cells_progress_bar">
+    <property name="geometry">
+     <rect>
+      <x>1340</x>
+      <y>450</y>
+      <width>121</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="value">
+     <number>0</number>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="cancel_tracking_button">
+    <property name="geometry">
+     <rect>
+      <x>1300</x>
+      <y>450</y>
+      <width>41</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Cancel</string>
+    </property>
+   </widget>
+   <widget class="QScrollBar" name="frame_slider">
+    <property name="geometry">
+     <rect>
+      <x>19</x>
+      <y>870</y>
+      <width>851</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="minimum">
+     <number>1</number>
+    </property>
+    <property name="value">
+     <number>1</number>
+    </property>
+    <property name="orientation">
+     <enum>Qt::Horizontal</enum>
+    </property>
+   </widget>
+   <widget class="QLabel" name="plot_single_cell_data_label1">
+    <property name="geometry">
+     <rect>
+      <x>1100</x>
+      <y>780</y>
+      <width>21</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Cell </string>
+    </property>
+   </widget>
+   <widget class="QTextEdit" name="plot_data_label">
+    <property name="geometry">
+     <rect>
+      <x>1220</x>
+      <y>730</y>
+      <width>111</width>
+      <height>41</height>
+     </rect>
+    </property>
+    <property name="html">
+     <string>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:'MS Shell Dlg 2'; font-size:8.25pt; font-weight:400; font-style:normal;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-size:16pt;&quot;&gt;Plot Data&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+    </property>
+   </widget>
+   <widget class="QSpinBox" name="plot_single_cell_data_spin_box">
+    <property name="geometry">
+     <rect>
+      <x>1130</x>
+      <y>780</y>
+      <width>42</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="maximum">
+     <number>0</number>
+    </property>
+   </widget>
+   <widget class="QLabel" name="plot_single_cell_data_label2">
+    <property name="geometry">
+     <rect>
+      <x>1300</x>
+      <y>780</y>
+      <width>111</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>as a function of time</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="plot_single_cell_data_button">
+    <property name="geometry">
+     <rect>
+      <x>1410</x>
+      <y>780</y>
+      <width>41</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Plot</string>
+    </property>
+   </widget>
+   <widget class="QFontComboBox" name="plot_single_cell_data_combo_box">
+    <property name="geometry">
+     <rect>
+      <x>1180</x>
+      <y>780</y>
+      <width>111</width>
+      <height>22</height>
+     </rect>
+    </property>
+    <property name="currentText">
+     <string>Choose Feature</string>
+    </property>
+   </widget>
+   <widget class="PhotoViewer" name="image_display">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>10</y>
+      <width>1271</width>
+      <height>711</height>
+     </rect>
+    </property>
+   </widget>
+   <widget class="QLabel" name="pixel_info">
+    <property name="enabled">
+     <bool>true</bool>
+    </property>
+    <property name="geometry">
+     <rect>
+      <x>1290</x>
+      <y>10</y>
+      <width>161</width>
+      <height>31</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Press the image to get pixel info</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="fix_segmentation_button">
+    <property name="geometry">
+     <rect>
+      <x>1320</x>
+      <y>300</y>
+      <width>101</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Fix Segmentation</string>
+    </property>
+   </widget>
+   <widget class="QLabel" name="fix_segmentation_label">
+    <property name="geometry">
+     <rect>
+      <x>1290</x>
+      <y>290</y>
+      <width>161</width>
+      <height>61</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Right mouse button - start a new line.
+Double click - finish line.
+Middle mouse button -  delete line
+ </string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="finish_fixing_segmentation_button">
+    <property name="geometry">
+     <rect>
+      <x>1370</x>
+      <y>340</y>
+      <width>75</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Finish</string>
+    </property>
+   </widget>
+   <zorder>track_cells_button</zorder>
+   <zorder>open_file_pb</zorder>
+   <zorder>zo_check_box</zorder>
+   <zorder>atoh_check_box</zorder>
+   <zorder>frame_line_edit</zorder>
+   <zorder>histogram_widget</zorder>
+   <zorder>zo_spin_box</zorder>
+   <zorder>atoh_spin_box</zorder>
+   <zorder>atoh_level_scroll_bar</zorder>
+   <zorder>atoh_level_label</zorder>
+   <zorder>zo_level_scroll_bar</zorder>
+   <zorder>zo_level_label</zorder>
+   <zorder>segment_frame_button</zorder>
+   <zorder>segmentation_threshold_spin_box</zorder>
+   <zorder>segmentation_kernel_std_spin_box</zorder>
+   <zorder>segmentation_threshold_label</zorder>
+   <zorder>segmentation_kernel_std_label</zorder>
+   <zorder>show_segmentation_check_box</zorder>
+   <zorder>segment_all_frames_button</zorder>
+   <zorder>segment_all_frames_progress_bar</zorder>
+   <zorder>save_segmentation_button</zorder>
+   <zorder>load_segmentation_button</zorder>
+   <zorder>analyze_segmentation_button</zorder>
+   <zorder>cancel_segmentation_button</zorder>
+   <zorder>analyze_segmentation_progress_bar</zorder>
+   <zorder>cancel_analysis_button</zorder>
+   <zorder>save_data_progress_bar</zorder>
+   <zorder>load_data_progress_bar</zorder>
+   <zorder>show_cell_types_check_box</zorder>
+   <zorder>show_neighbors_check_box</zorder>
+   <zorder>show_cell_tracking_check_box</zorder>
+   <zorder>cell_tracking_spin_box</zorder>
+   <zorder>track_cells_progress_bar</zorder>
+   <zorder>cancel_tracking_button</zorder>
+   <zorder>frame_slider</zorder>
+   <zorder>plot_single_cell_data_label1</zorder>
+   <zorder>plot_data_label</zorder>
+   <zorder>plot_single_cell_data_spin_box</zorder>
+   <zorder>plot_single_cell_data_label2</zorder>
+   <zorder>plot_single_cell_data_button</zorder>
+   <zorder>plot_single_cell_data_combo_box</zorder>
+   <zorder>image_display</zorder>
+   <zorder>pixel_info</zorder>
+   <zorder>fix_segmentation_button</zorder>
+   <zorder>fix_segmentation_label</zorder>
+   <zorder>finish_fixing_segmentation_button</zorder>
+  </widget>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>1458</width>
+     <height>21</height>
+    </rect>
+   </property>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>PlotWidget</class>
+   <extends>QWidget</extends>
+   <header>pyqtgraph</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>PhotoViewer</class>
+   <extends>QGraphicsView</extends>
+   <header>photo_viewer</header>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections/>
+</ui>
