@@ -2,8 +2,8 @@ setBatchMode(true);
 // first, track a cell with "point selection" tool and press 'm' to load the measurements window
 
 // update according to the current experiment
-timepoints_folder = "D:/Kasirer/Movies/2021-08-01_P0_vestibule_ablation/position3/"; // folder with full timepoints (including z-stack)
-savefolder = "D:/Kasirer/Movies/2021-08-01_P0_vestibule_ablation/"; // folder to save in
+timepoints_folder = "D:/Kasirer/experimental_results/movies/Utricle/2021-08-29_p0_utricle_ablation/position2/"; // folder with full timepoints (including z-stack)
+savefolder = "D:/Kasirer/experimental_results/movies/Utricle/2021-08-29_p0_utricle_ablation/"; // folder to save in
 R = 150; // region radius to crop (in pixels)
 switchFZ = 0; // if the time and z dimensions got switched in the results
 
