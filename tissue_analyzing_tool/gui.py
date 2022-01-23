@@ -12,8 +12,8 @@ from PyQt5.uic import loadUi
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
-from PyQt5.QtWidgets import QDialog, QFileDialog, QMessageBox, QProgressBar
-from PyQt5.QtGui import QIcon, QPixmap, QImage, qRgb
+from PyQt5.QtWidgets import QDialog, QFileDialog, QMessageBox, QProgressBar, QShortcut
+from PyQt5.QtGui import QIcon, QPixmap, QImage, qRgb, QKeySequence
 from PyQt5.QtCore import QTimer, QThread, pyqtSignal, Qt
 from functools import partial
 COLORTABLE=[]
@@ -32,9 +32,8 @@ class FormImageProcessing(QMainWindow):
         loadUi("movie_display.ui", self)
         self.setWindowTitle("Movie Segmentation")
         self.setState()
-        self.saveFile = QAction("&Save File", self)
-        self.saveFile.setShortcut("Ctrl+S")
-        self.saveFile.setStatusTip('Save File')
+        self.saveFile = QShortcut(QKeySequence("Ctrl+S"), self)
+        self.undo = QShortcut(QKeySequence("Ctrl+Z"), self)
         self.connect_methods()
         self.hide_progress_bars()
         self.img = None
@@ -81,7 +80,8 @@ class FormImageProcessing(QMainWindow):
         self.show_cell_tracking_check_box.stateChanged.connect(self.analysis_related_widget_changed)
         self.cell_tracking_spin_box.valueChanged.connect(self.analysis_related_widget_changed)
         self.show_neighbors_check_box.stateChanged.connect(self.analysis_related_widget_changed)
-        self.saveFile.triggered.connect(self.save_data)
+        self.saveFile.activated.connect(self.save_data)
+        self.undo.activated.connect(self.undo_last_action)
         self.save_segmentation_button.clicked.connect(self.save_data)
         self.load_segmentation_button.clicked.connect(self.load_data)
         self.analyze_segmentation_button.clicked.connect(self.analyze_segmentation)
@@ -217,13 +217,20 @@ class FormImageProcessing(QMainWindow):
                 if button == Qt.LeftButton:
                     if double_click:
                         self.fix_segmentation_last_position = None
-                        self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()))
+                        self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()), final=True,
+                                                               hc_marker_image=self.img[frame - 1,
+                                                                               self.atoh_spin_box.value(),
+                                                                               0, :, :].compute())
                     else:
                         self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()),
-                                                               self.fix_segmentation_last_position)
+                                                               self.fix_segmentation_last_position,
+                                                               initial=(self.fix_segmentation_last_position is None))
                         self.fix_segmentation_last_position = (pos.x(), pos.y())
                 elif button == Qt.MiddleButton:
-                    self.tissue_info.remove_segmentation_line(frame, (pos.x(), pos.y()))
+                    self.tissue_info.remove_segmentation_line(frame, (pos.x(), pos.y()),
+                                                              hc_marker_image=self.img[frame - 1,
+                                                                                       self.atoh_spin_box.value(),
+                                                                                       0, :, :].compute())
                 self.segmentation_changed = True
                 self.current_segmentation = self.tissue_info.get_segmentation(frame)
                 self.display_frame()
@@ -237,6 +244,13 @@ class FormImageProcessing(QMainWindow):
                         cell_id = cell.label
                     text += '\ncell id = %d' % cell_id
                 self.pixel_info.setText(text)
+
+    def undo_last_action(self):
+        if self.fixing_segmentation_mode == FIX_SEGMENTATION_ON:
+            if self.tissue_info.undo_last_action(self.frame_slider.value()) > 0:
+                self.segmentation_changed = True
+                self.current_segmentation = self.tissue_info.get_segmentation(self.frame_slider.value())
+                self.display_frame()
 
     def frame_line_edit_changed(self):
         try:
@@ -367,6 +381,9 @@ class FormImageProcessing(QMainWindow):
         self.segment_all_frames_progress_bar.setValue(percentage_done)
         self.display_frame()
         if percentage_done == 100:
+            self.frame_slider.setEnabled(True)
+            self.frame_line_edit.setEnabled(True)
+            self.segment_all_frames_button.setEnabled(True)
             self.cancel_segmentation_button.hide()
             self.segment_all_frames_progress_bar.hide()
             self.setState(image=True, segmentation=True)
@@ -381,6 +398,8 @@ class FormImageProcessing(QMainWindow):
         self.segmentation_thread = SegmentAllThread(self.img, zo_channel, threshold, std, frame_numbers, self.tissue_info)
         self.segmentation_thread._signal.connect(self.frame_segmentation_done)
         self.segment_all_frames_button.setEnabled(False)
+        self.frame_slider.setEnabled(False)
+        self.frame_line_edit.setEnabled(False)
         self.segmentation_thread.start()
 
 
@@ -418,6 +437,8 @@ class FormImageProcessing(QMainWindow):
             self.setState(image=True, segmentation=True, analysis=True)
             self.cells_number_changed()
             self.update_single_cell_features()
+            self.frame_slider.setEnabled(True)
+            self.frame_line_edit.setEnabled(True)
 
     def analyze_frames(self, frame_numbers):
         self.analyze_segmentation_progress_bar.reset()
@@ -427,6 +448,8 @@ class FormImageProcessing(QMainWindow):
         self.analysis_thread = AnalysisThread(self.img, self.tissue_info, frame_numbers, atoh_channel)
         self.analysis_thread._signal.connect(self.frame_analysis_done)
         self.analyze_segmentation_button.setEnabled(False)
+        self.frame_slider.setEnabled(False)
+        self.frame_line_edit.setEnabled(False)
         self.analysis_thread.start()
 
     def analyze_segmentation(self):
@@ -461,6 +484,8 @@ class FormImageProcessing(QMainWindow):
             self.cancel_tracking_button.hide()
             self.track_cells_progress_bar.hide()
             self.setState(image=True, segmentation=True, analysis=True)
+            self.frame_slider.setEnabled(True)
+            self.frame_line_edit.setEnabled(True)
 
     def track_cells(self):
         self.track_cells_progress_bar.reset()
@@ -469,6 +494,8 @@ class FormImageProcessing(QMainWindow):
         self.tracking_thread = TrackingThread(self.tissue_info)
         self.tracking_thread._signal.connect(self.cells_tracking_done)
         self.track_cells_button.setEnabled(False)
+        self.frame_slider.setEnabled(False)
+        self.frame_line_edit.setEnabled(False)
         self.tracking_thread.start()
 
     def cancel_tracking(self):
@@ -486,7 +513,7 @@ class FormImageProcessing(QMainWindow):
         self.fixing_segmentation_mode = FIX_SEGMENTATION_ON
 
     def finish_fixing_segmentation(self):
-        self.tissue_info.update_labels()
+        self.tissue_info.update_labels(self.frame_slider.value())
         self.segmentation_changed = True
         self.current_segmentation = self.tissue_info.get_segmentation(self.frame_slider.value())
         self.display_frame()
@@ -504,6 +531,8 @@ class FormImageProcessing(QMainWindow):
         name = QFileDialog.getSaveFileName(self, 'Save File', directory=self.working_directory)[0]
         self.save_data_progress_bar.reset()
         self.save_data_progress_bar.show()
+        self.frame_slider.setEnabled(False)
+        self.frame_line_edit.setEnabled(False)
         self.save_thread = SaveDataThread(self.tissue_info, name)
         self.save_thread._signal.connect(self.frame_saving_done)
         self.save_thread.start()
@@ -516,6 +545,8 @@ class FormImageProcessing(QMainWindow):
             self.segmentation_saved = True
             self.analysis_saved = True
             self.save_data_progress_bar.hide()
+            self.frame_slider.setEnabled(True)
+            self.frame_line_edit.setEnabled(True)
 
     def data_lost_warning(self):
         message_box = QMessageBox
@@ -581,7 +612,7 @@ class SegmentAllThread(QThread):
         for frame in self.frame_numbers:
             zo_img = self.img[frame - 1, self.zo_channel, 0, :, :].compute()
             labels = watershed_segmentation(zo_img, self.threshold*np.max(zo_img), self.std)
-            self.out.setLabels(frame, labels)
+            self.out.set_labels(frame, labels)
             done_frames += 1
             percentage_done = np.round(100*done_frames/len(self.frame_numbers))
             self.emit("%d/%d" % (frame, percentage_done))
