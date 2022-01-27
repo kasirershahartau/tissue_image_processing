@@ -19,6 +19,7 @@ from functools import partial
 COLORTABLE=[]
 fname = ""
 from numexpr import utils
+import time
 
 utils.MAX_THREADS = 8
 
@@ -51,17 +52,22 @@ class FormImageProcessing(QMainWindow):
         self.segmentation_saved = True
         self.number_of_frames = 0
         self.analysis_saved = True
+        self.waiting_for_data_save = []
         self.fixing_segmentation_mode = FIX_SEGMENTATION_OFF
         self.fix_segmentation_last_position = None
         # self.working_directory = "c:\\"
         self.working_directory = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-12-12-p0_utricle_ablation\\"
 
     def closeEvent(self, event):
-        if self.data_lost_warning():
+        if self.data_lost_warning(self.close):
             del self.tissue_info
             event.accept()  # let the window close
         else:
             event.ignore()
+
+    def close(self):
+        del self.tissue_info
+        super(FormImageProcessing, self).close()
 
     def connect_methods(self):
         self.zo_check_box.stateChanged.connect(self.zo_related_widget_changed)
@@ -187,17 +193,18 @@ class FormImageProcessing(QMainWindow):
         self.current_segmentation = self.tissue_info.get_segmentation(self.frame_slider.value())
         self.pixel_info.setText('Press the image to get pixel info')
         self.display_frame()
+        self.cells_number_changed()
         if self.current_segmentation is None:
             self.show_segmentation_check_box.setEnabled(False)
-            self.cells_number_changed()
+
 
     def cells_number_changed(self):
-        cells_num = self.tissue_info.get_cells_number(self.frame_slider.value())
+        cells_num = self.tissue_info.get_cells_number()
         self.cell_tracking_spin_box.setMaximum(cells_num)
         self.plot_single_cell_data_spin_box.setMaximum(cells_num)
 
     def update_single_cell_features(self):
-        features = self.tissue_info.get_cells_features()
+        features = self.tissue_info.get_cells_features(self.frame_slider.value())
         self.plot_single_cell_data_combo_box.clear()
         self.plot_single_cell_data_combo_box.addItems(features)
 
@@ -417,7 +424,7 @@ class FormImageProcessing(QMainWindow):
         return ret == message_box.Yes
 
     def segment_all_frames(self):
-        if not self.data_lost_warning():
+        if not self.data_lost_warning(self.segment_all_frames):
             return 0
         if self.this_might_take_a_while_message():
             self.segment_frames(np.arange(1,self.number_of_frames+1))
@@ -453,7 +460,7 @@ class FormImageProcessing(QMainWindow):
         self.analysis_thread.start()
 
     def analyze_segmentation(self):
-        if not self.data_lost_warning():
+        if not self.data_lost_warning(self.analyze_segmentation):
             return 0
         if self.this_might_take_a_while_message():
             self.analyze_frames(np.arange(1, self.number_of_frames+1))
@@ -481,6 +488,7 @@ class FormImageProcessing(QMainWindow):
         self.track_cells_progress_bar.setValue(percentage_done)
 
         if percentage_done == 100:
+            self.cells_number_changed()
             self.cancel_tracking_button.hide()
             self.track_cells_progress_bar.hide()
             self.setState(image=True, segmentation=True, analysis=True)
@@ -547,8 +555,11 @@ class FormImageProcessing(QMainWindow):
             self.save_data_progress_bar.hide()
             self.frame_slider.setEnabled(True)
             self.frame_line_edit.setEnabled(True)
+            for func in self.waiting_for_data_save:
+                func()
+            self.waiting_for_data_save = []
 
-    def data_lost_warning(self):
+    def data_lost_warning(self, calling_function):
         message_box = QMessageBox
         if not self.segmentation_saved or not self.analysis_saved:
             ret = message_box.question(self, '', "Current data will be lost, do you want to save it first?",
@@ -557,10 +568,12 @@ class FormImageProcessing(QMainWindow):
                 return False
             elif ret == message_box.Save:
                 self.save_data()
+                self.waiting_for_data_save.append(calling_function)
+                return False
         return True
 
     def load_data(self):
-        if not self.data_lost_warning():
+        if not self.data_lost_warning(self.load_data):
             return 0
         name = QFileDialog.getOpenFileName(caption='Open File',
                                             directory=self.working_directory, filter="*.seg")[0]
