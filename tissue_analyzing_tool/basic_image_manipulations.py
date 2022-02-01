@@ -13,6 +13,8 @@ from scipy.ndimage import gaussian_filter
 from skimage.exposure import adjust_gamma
 from tifffile import TiffFile, imwrite
 from aicsimageio import AICSImage
+from aicsimageio.readers import czi_reader, bioformats_reader
+from aicsimageio.writers import ome_tiff_writer
 from matplotlib import pyplot as plt
 from cv2 import GaussianBlur as gaus
 import cv2
@@ -27,7 +29,7 @@ UINT16_MAXVAL = 65535
 
 def read_tiff(path):
     """
-    Reading the given tiff file. 
+    Reading the given tiff file.
      Parameters
     ----------
     path - string
@@ -39,16 +41,16 @@ def read_tiff(path):
     axes - a string specifying axis order (i.e. 'TXY' means that the first
                                            axis is time, second is x and third
                                            is y)
-    shape - Shape of image, same order as axes (i.e. if axes='TXY' and 
+    shape - Shape of image, same order as axes (i.e. if axes='TXY' and
                                                 shape=(3,5,5) we have 3
                                                 timepoints, 5X5 pixels for
-                                                each). 
+                                                each).
     """
     with TiffFile(path) as tif:
         image = tif.asarray()
         axes = tif.series[0].axes
         metadata = tif.imagej_metadata
-    return image, axes, image.shape, metadata    
+    return image, axes, image.shape, metadata
 
 
 def read_whole_image(path, dims_order="TCZYX"):
@@ -76,61 +78,20 @@ def read_part_of_image(path, x_range, y_range, z_range, c_range, t_range, dims_o
         data = np.transpose(data, permutation)
     return data, img.dims, img.metadata
 
-def get_image_dimensions(path):
-    img = AICSImage(path)
+def get_image_dimensions(path, series=0):
+    img = AICSImage(path, reader=bioformats_reader.BioformatsReader)
+    img.set_scene(series)
     return img.dims
 
+def get_image_metadata(path, series=0):
+    img = AICSImage(path, reader=bioformats_reader.BioformatsReader)
+    img.set_scene(series)
+    return img.metadata
 
-def read_image_in_chunks_m(path, dx=0, dy=0, dz=0, dc=0, dt=0, dims_order="TCZXY"):
-    img = AICSImage(path)
-    default_dims_order = "TCZXY"
-    data = img.get_image_dask_data(default_dims_order)
-    max_x = img.dims.X
-    max_y = img.dims.Y
-    max_z = img.dims.Z
-    max_t = img.dims.T
-    max_c = img.dims.C
-    if dx == 0:
-        dx = max_x
-    if dy == 0:
-        dy = max_y
-    if dz == 0:
-        dz = max_z
-    if dc == 0:
-        dc = max_c
-    if dt == 0:
-        dt = max_t
-    t = 0
-    c = 0
-    z = 0
-    x = 0
-    y = 0
-    while t < max_t:
-        while c < max_c:
-            while z < max_z:
-                while x < max_x:
-                    while y < max_y:
-                        chunk = data[t:min(t+dt, max_t),
-                                     c:min(c+dc, max_c),
-                                     z:min(z+dz, max_z),
-                                     x:min(x+dx, max_x),
-                                     y:min(y+dy, max_y)]
-                        yield chunk.compute()
-                        y+=dy
-                    y=0
-                    x+=dx
-                x=0
-                z+=dz
-            z=0
-            c+=dc
-        c=0
-        t+=dt
-    return
-
-
-def read_image_in_chunks(path, dx=0, dy=0, dz=0, dc=0, dt=0, apply_function=None, output=None,
-                         *apply_function_params):
-    img = AICSImage(path)
+def read_image_in_chunks(path, series=0, dx=0, dy=0, dz=0, dc=0, dt=0, apply_function=None, output=None,
+                         **apply_function_params):
+    img = AICSImage(path,  reader=bioformats_reader.BioformatsReader)
+    img.set_scene(series)
     default_dims_order = "TCZYX"
     data = img.get_image_dask_data(default_dims_order)
     max_x = img.dims.X
@@ -148,8 +109,6 @@ def read_image_in_chunks(path, dx=0, dy=0, dz=0, dc=0, dt=0, apply_function=None
         dc = max_c
     if dt == 0:
         dt = max_t
-    if output is not None:
-        out_t, out_c, out_z, out_y, out_x = output.shape
     t = 0
     c = 0
     z = 0
@@ -168,17 +127,26 @@ def read_image_in_chunks(path, dx=0, dy=0, dz=0, dc=0, dt=0, apply_function=None
                         if apply_function is None:
                             yield chunk.compute()
                         else:
-                            result = apply_function(chunk.compute(), *apply_function_params)
+                            result = apply_function(chunk.compute(), **apply_function_params)
                             if output is not None:
-                                output[min(t, out_t):min(t+dt, max_t, out_t),
-                                     min(c, out_c):min(c+dc, max_c, out_c),
-                                     min(z, out_z):min(z+dz, max_z, out_z),
-                                     min(y, out_y):min(y+dy, max_y, out_y),
-                                     min(x, out_x):min(x+dx, max_x, out_x)] = result.reshape((min(t+dt, max_t, out_t)-min(t, out_t),
-                                                                                              min(c+dc, max_c, out_c)-min(c, out_c),
-                                                                                              min(z+dz, max_z, out_z)-min(z, out_z),
-                                                                                              min(y+dy, max_y, out_y)-min(y, out_y),
-                                                                                              min(x+dx, max_x, out_x)-min(x, out_x)))
+                                deflate = False
+                                if not isinstance(result, tuple):
+                                    deflate = True
+                                    result = [result]
+                                    output = [output]
+                                for i in range(len(result)):
+                                    out_t, out_c, out_z, out_y, out_x = output[i].shape
+                                    output[i][min(t, out_t):min(t+dt, max_t, out_t),
+                                         min(c, out_c):min(c+dc, max_c, out_c),
+                                         min(z, out_z):min(z+dz, max_z, out_z),
+                                         min(y, out_y):min(y+dy, max_y, out_y),
+                                         min(x, out_x):min(x+dx, max_x, out_x)] = result[i].reshape((min(t+dt, max_t, out_t)-min(t, out_t),
+                                                                                                  min(c+dc, max_c, out_c)-min(c, out_c),
+                                                                                                  min(z+dz, max_z, out_z)-min(z, out_z),
+                                                                                                  min(y+dy, max_y, out_y)-min(y, out_y),
+                                                                                                  min(x+dx, max_x, out_x)-min(x, out_x)))
+                                if deflate:
+                                    result = result[0]
                                 yield result
                         y+=dy
                     y=0    
@@ -213,16 +181,15 @@ def save_tiff(path, image, metadata={}, axes="", data_type=""):
         
         
     """
-    if axes:
-        metadata['axes'] = axes    
     if data_type:
         if image.dtype != data_type and (data_type == 'uint8' or data_type == 'uint16'):
             max_possible_val = UINT8_MAXVAL if data_type == 'uint8' else UINT16_MAXVAL
             image = np.round((image/np.max(image))*max_possible_val).astype(data_type)
-    imwrite(path, image, imagej=True, metadata=metadata)
+    writer = ome_tiff_writer.OmeTiffWriter
+    writer.save(image, path, dim_order=axes, ome_xml=metadata)
     return
 
-def put_cannel_axis_first(image, axes):
+def put_channel_axis_first(image, axes):
     """
     Transposing image so that channels axis would be 0. The order would be
     "CTZXY" in the case of a 3D movie.
@@ -300,7 +267,7 @@ def set_brightness(image, axes, metadata={}, method='bestFit', clearExtreamPrece
         if 'min' in metadata:
             minimum_pixel_val = metadata['min']
     if channel_axis >= 0:  # channel axis exists
-        adjusted, desired_order = put_cannel_axis_first(adjusted, axes)
+        adjusted, desired_order = put_channel_axis_first(adjusted, axes)
         number_of_channels = adjusted.shape[0]
         for channel in range(number_of_channels):
             current = adjusted[channel]
@@ -377,7 +344,7 @@ def binary_image(image, axes, thresholds):
     adjusted = np.copy(image)
     channel_axis = axes.find("C")
     if channel_axis > 0:
-        adjusted, order = put_cannel_axis_first(adjusted, axes)
+        adjusted, order = put_channel_axis_first(adjusted, axes)
         number_of_channels = adjusted.shape[0]
         for channel in range(number_of_channels):
             current = adjusted[channel]

@@ -68,12 +68,17 @@ if __name__ == "__main__":
     # projection = surface_projection(image, axes, 0, 0, 102, 'max_std', 10)
     # save_tiff(os.path.join(test_dir, 'projection.tiff'), projection.swapaxes(-1,-2), metadata=metadata, data_type="uint16")
 
-    image = loading_test_image()
-    small_zo_image = image[0]
-    segmentation = watershed_segmentation(small_zo_image, 0.3*np.max(small_zo_image), 3)
-    plt.imshow(segmentation)
-    tissue = Tissue()
-    tissue.setLabels(1, segmentation)
-    tissue.calculate_frame_cellinfo(1)
-    draw_neighbors(tissue)
-    plt.show()
+    # image = loading_test_image()
+    # small_zo_image = image[0]
+    # segmentation = watershed_segmentation(small_zo_image, 0.3*np.max(small_zo_image), 3)
+    # plt.imshow(segmentation)
+    # tissue = Tissue()
+    # tissue.setLabels(1, segmentation)
+    # tissue.calculate_frame_cellinfo(1)
+    # draw_neighbors(tissue)
+    # plt.show()
+    directory = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-12-26_P0_utricle_ablation\\"
+    file_names = ["initial_Out.czi", "after1_Out.czi", "after2_Out.czi", "after3_Out.czi", "after4_Out.czi",
+                  "after5_Out.czi", "after6_Out.czi", "after7_Out.czi"]
+    paths = [os.path.join(directory, file) for file in file_names]
+    movie_surface_projection([paths[0]], (8,6,6,8), 4)
