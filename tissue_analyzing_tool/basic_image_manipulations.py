@@ -19,8 +19,9 @@ from matplotlib import pyplot as plt
 from cv2 import GaussianBlur as gaus
 import cv2
 import skimage.segmentation as skim
-from skimage.filters import difference_of_gaussians
+from skimage.filters import difference_of_gaussians, threshold_local
 from scipy.fftpack import fftshift, fftn
+from skimage.transform import resize
 
 ####### Constants ##############
 UINT8_MAXVAL = 255
@@ -90,10 +91,7 @@ def get_image_metadata(path, series=0):
 
 def read_image_in_chunks(path, series=0, dx=0, dy=0, dz=0, dc=0, dt=0, apply_function=None, output=None,
                          **apply_function_params):
-    img = AICSImage(path,  reader=bioformats_reader.BioformatsReader)
-    img.set_scene(series)
-    default_dims_order = "TCZYX"
-    data = img.get_image_dask_data(default_dims_order)
+    img = AICSImage(path,  reader=bioformats_reader.BioformatsReader, series=series)
     max_x = img.dims.X
     max_y = img.dims.Y
     max_z = img.dims.Z
@@ -119,7 +117,7 @@ def read_image_in_chunks(path, series=0, dx=0, dy=0, dz=0, dc=0, dt=0, apply_fun
             while z < max_z:
                 while x < max_x:
                     while y < max_y:                 
-                        chunk = data[t:min(t+dt, max_t),
+                        chunk = img.data[t:min(t+dt, max_t),
                                      c:min(c+dc, max_c),
                                      z:min(z+dz, max_z),
                                      y:min(y+dy, max_y),
@@ -127,7 +125,7 @@ def read_image_in_chunks(path, series=0, dx=0, dy=0, dz=0, dc=0, dt=0, apply_fun
                         if apply_function is None:
                             yield chunk.compute()
                         else:
-                            result = apply_function(chunk.compute(), **apply_function_params)
+                            result = apply_function(chunk, **apply_function_params)
                             if output is not None:
                                 deflate = False
                                 if not isinstance(result, tuple):
@@ -188,6 +186,14 @@ def save_tiff(path, image, metadata={}, axes="", data_type=""):
     writer = ome_tiff_writer.OmeTiffWriter
     writer.save(image, path, dim_order=axes, ome_xml=metadata)
     return
+
+def create_imageJ_metadata(img_shape):
+    frames = img_shape[0]
+    channels = img_shape[1]
+    z_stacks = img_shape[3] if len(img_shape) > 4 else 1
+    x_size = img_shape[-1]
+    y_size = img_shape[-2]
+    meta = {"ImageJ": '1.53f', "images": ''}
 
 def put_channel_axis_first(image, axes):
     """
@@ -429,10 +435,50 @@ def watershed_segmentation(image, imgthresh, stdeviation):
         Segmented cells from image
 
     """
-    image[image < imgthresh] = 0
-    blurred = blur_image(image, stdeviation) #bigger std takes away more lines, bigger kern adds lines, used to blur the image
+    seg = np.copy(image)
+    seg[seg < imgthresh] = 0
+    blurred = blur_image(seg, stdeviation) #bigger std takes away more lines, bigger kern adds lines, used to blur the image
     labelled = skim.watershed(blurred, watershed_line=True) #used to list all the cells
     return labelled
 
 
-            
+def watershed_segmentation(image, imgthresh, stdeviation, blocksize):
+    """
+
+    Applies watershed segmentation to create "skeleton" version of image for analysis
+    Parameters
+    ----------
+    image : matrix
+        Object to be segmented.
+    imgthresh : number between 0-1
+        thresholding every pixl that is smaller than imgthresh*maximum intensity at each local environment
+    stdeviation : number
+        Standard deviation for applying filter.
+
+    Returns
+    -------
+    skeleton: matrix
+        Filtered image according to parameters.
+    labelled: matrix
+        Segmented cells from image
+
+    """
+    seg = np.copy(image)
+    def local_thresh_helper(flatten_array):
+        return imgthresh*np.max(flatten_array)
+    if blocksize % 2 == 0:
+        blocksize += 1
+    threshold = threshold_local(seg, block_size=blocksize, method='generic', param=local_thresh_helper)
+    seg[seg < threshold] = 0
+    blurred = blur_image(seg, stdeviation)  # bigger std takes away more lines, bigger kern adds lines, used to blur the image
+    labelled = skim.watershed(blurred, watershed_line=True)  # used to list all the cells
+    return labelled
+
+def concatenate_time_points(files):
+    imgs = []
+    for file in files:
+        img = np.load(file)
+        imgs.append(img)
+        if img.shape[1:] != imgs[0].shape[1:]:
+            imgs[-1] = resize(img, (img.shape[0], imgs[0].shape[1:]))
+    return np.concatenate(imgs, axis=0)

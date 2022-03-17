@@ -67,19 +67,25 @@ def movie_surface_projection(files, reference_channel, position_final_movie, ini
     @param output_dir: path for output directory
     """
     # Initializing output with X,Y dimensions according with the first file
-    dims = get_image_dimensions(files[0])
-    projections = [None] * initial_positions_number
-    z_maps = [None] * initial_positions_number
-    for i in range(len(projections)):
-        projections[i] = np.empty((0,dims.C, dims.Y, dims.X))
-        z_maps[i] = np.empty((0, dims.Y, dims.X))
     positions = list(range(initial_positions_number))
+    time_points_number = np.zeros((initial_positions_number, len(files)))
     # Projecting
+    projection_files = [[] for position in range(initial_positions_number)]
+    zmap_files = [[] for position in range(initial_positions_number)]
     for file_num, file in enumerate(files):
         remove_positions = []
+        dims = get_image_dimensions(file)
         for position_num, position in enumerate(positions):
+            if position_final_movie[position] == file_num + 1:
+                remove_positions.append(position)
+            projection_path = os.path.join(output_dir, "position%d_movie%d_projection.npy" % (position,file_num))
+            zmap_path = os.path.join(output_dir, "position%d_movie%d_zmap.npy" % (position, file_num))
+            projection_files[position].append(projection_path)
+            zmap_files[position].append(zmap_path)
             print("Projecting position %d, movie %d" % (position + 1, file_num + 1))
-            dims = get_image_dimensions(file)
+            time_points_number[position, file_num] = dims.T
+            if os.path.isfile(projection_path) and os.path.isfile(zmap_path):
+                continue
             current_projection = np.zeros((dims.T, dims.C, 1, dims.Y, dims.X))
             current_zmap = np.zeros((dims.T, 1, 1, dims.Y, dims.X))
             projector = read_image_in_chunks(file, series=position_num, dt=1,
@@ -89,30 +95,28 @@ def movie_surface_projection(files, reference_channel, position_final_movie, ini
             for time_point_index, time_point in enumerate(projector):
                 print("Projecting timepoint %d" % (time_point_index + 1))
             current_projection = current_projection.reshape((dims.T, dims.C, dims.Y, dims.X))
-            if projections[position].shape[1:] != (dims.C, dims.Y, dims.X):
-                current_projection = resize(current_projection, (dims.T,)+projections[position].shape[1:])
-            current_zmap = current_zmap.reshape((dims.T, dims.Y, dims.X))
-            if z_maps[position].shape[1:] != (dims.Y, dims.X):
-                current_zmap = resize(current_zmap, (dims.T,)+z_maps[position].shape[1:])
-            projections[position] = np.concatenate((projections[position], current_projection), axis=0)
-            z_maps[position] = np.concatenate((z_maps[position], current_zmap), axis=0)
-            if position_final_movie[position] == file_num + 1:
-                remove_positions.append(position)
+            np.save(projection_path, current_projection)
+            np.save(zmap_path, current_zmap)
+
         for to_delete in remove_positions:
             positions.remove(to_delete)
-    # Updating meta data
-    meta = []
-    for i in range(len(projections)):
-        former_metadata = get_image_metadata(files[0], series=i)
-        new_metadata = update_projection_metadata(former_metadata, projections[i].shape[0], series=i)
-        meta.append(new_metadata)
-    # Saving projections
-    for i,proj in enumerate(projections):
-        save_tiff(os.path.join(output_dir, "position%d.tif" %(i+1)), proj, metadata=meta[i], axes="TCYX",data_type="uint16")
-    for i, z_map in enumerate(z_maps):
-        np.save(os.path.join(output_dir, "zmap%d.npy" %(i+1)), z_map)
+    #  Updating meta data and saving projections
+    for position in range(initial_positions_number):
+        former_metadata = get_image_metadata(files[0], series=position)
+        new_metadata = update_projection_metadata(former_metadata, np.sum(time_points_number[position, :]),
+                                                  series=position)
+        movie_projection = concatenate_time_points(projection_files[position])
+        save_tiff(os.path.join(output_dir, "position%d.tif" %(position+1)), movie_projection,
+                  metadata=new_metadata, axes="TCYX",data_type="uint16")
+        movie_zmap = np.concatenate([np.load(zmap_files[position][i]) for i in range(len(zmap_files[position]))], axis=0)
+        np.save(os.path.join(output_dir, "zmap_position%d.npy" %(position+1)), movie_zmap)
     # Saving stage location (to correct for stage movement between movies)
     save_stage_positions(files, position_final_movie, initial_positions_number, output_dir)
+    # Removing timepoints projection
+    for position_files in projection_files + zmap_files:
+        for projection_file in position_files:
+            os.remove(projection_file)
+
 
 def save_stage_positions(files, position_final_movie, initial_positions_number, output_dir):
     positions = list(range(initial_positions_number))
