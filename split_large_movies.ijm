@@ -3,12 +3,12 @@
 setBatchMode(true);
 
 // adjust the parameters before the loop and also "czi_name"
-folder = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-12-23_E17.5_utricle_atoh_zo\\"; 
+folder = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-12-06_P0_utricle_ablation\\"; 
 tot_pos = 4; // number of positions
-pos_final_movie = newArray(12,4,7,12); // an array with the final movies index of each position
-tot_movies = 12; // number of movies/files
+pos_final_movie = newArray(8,6,6,8); // an array with the final movies index of each position
+tot_movies = 8; // number of movies/files
 start_movie = 1;
-ts = newArray(8,13,25,28,32,36,30,26,25,38,12); // time points in each movie/file
+ts = newArray(1,13,39,33,29,29,40,20); // time points in each movie/file
 Ti = 1; // initial t
 
 
