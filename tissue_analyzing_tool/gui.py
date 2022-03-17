@@ -27,6 +27,7 @@ FIX_SEGMENTATION_OFF = 0
 FIX_SEGMENTATION_ON = 1
 FIX_SEGMENTATION_LINE = 2
 
+
 class FormImageProcessing(QMainWindow):
     def __init__(self):
         QMainWindow.__init__(self)
@@ -55,8 +56,9 @@ class FormImageProcessing(QMainWindow):
         self.waiting_for_data_save = []
         self.fixing_segmentation_mode = FIX_SEGMENTATION_OFF
         self.fix_segmentation_last_position = None
+        self.fix_cell_types_on = False
         # self.working_directory = "c:\\"
-        self.working_directory = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-12-12-p0_utricle_ablation\\"
+        self.working_directory = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-11-11-E17.5-utricle\\"
 
     def closeEvent(self, event):
         if self.data_lost_warning(self.close):
@@ -79,6 +81,7 @@ class FormImageProcessing(QMainWindow):
         self.zo_level_scroll_bar.valueChanged.connect(self.zo_related_widget_changed)
         self.atoh_level_scroll_bar.valueChanged.connect(self.atoh_related_widget_changed)
         self.segment_frame_button.clicked.connect(self.segment_frame)
+        self.analyze_frame_button.clicked.connect(self.analyze_frame)
         self.open_file_pb.clicked.connect(self.open_file)
         self.segment_all_frames_button.clicked.connect(self.segment_all_frames)
         self.show_segmentation_check_box.stateChanged.connect(self.segmentation_related_widget_changed)
@@ -96,9 +99,12 @@ class FormImageProcessing(QMainWindow):
         self.cancel_analysis_button.clicked.connect(self.cancel_analysis)
         self.cancel_tracking_button.clicked.connect(self.cancel_tracking)
         self.plot_single_cell_data_button.clicked.connect(self.plot_single_cell_data)
+        self.plot_single_frame_data_button.clicked.connect(self.plot_single_frame_data)
         self.image_display.photoClicked.connect(self.image_clicked)
         self.fix_segmentation_button.clicked.connect(self.fix_segmentation)
         self.finish_fixing_segmentation_button.clicked.connect(self.finish_fixing_segmentation)
+        self.fix_cell_types_button.clicked.connect(self.fix_cell_types)
+        self.finish_fixing_cell_types_button.clicked.connect(self.finish_fixing_cell_types)
 
     def open_file(self):
         global img
@@ -130,7 +136,7 @@ class FormImageProcessing(QMainWindow):
         if self.zo_changed:
             if self.zo_check_box.isChecked():
                 zo_channel = self.zo_spin_box.value()
-                self.current_frame[1, :, :] = 0.01*self.zo_level_scroll_bar.value()*self.img[frame_number - 1, zo_channel, 0, :, :].compute()
+                self.current_frame[1, :, :] = 0.1*self.zo_level_scroll_bar.value()*self.img[frame_number - 1, zo_channel, 0, :, :].compute()
             else:
                 self.current_frame[1, :, :] = 0
             self.zo_changed = False
@@ -208,6 +214,19 @@ class FormImageProcessing(QMainWindow):
         self.plot_single_cell_data_combo_box.clear()
         self.plot_single_cell_data_combo_box.addItems(features)
 
+    def update_single_frame_features(self):
+        features = self.tissue_info.get_cells_features(self.frame_slider.value())
+        self.plot_single_frame_data_x_combo_box.clear()
+        self.plot_single_frame_data_x_combo_box.addItems(features)
+        self.plot_single_frame_data_x_combo_box.addItems(self.tissue_info.SPECIAL_FEATURES)
+        self.plot_single_frame_data_x_combo_box.addItems(self.tissue_info.SPECIAL_X_ONLY_FEATURES)
+        self.plot_single_frame_data_y_combo_box.clear()
+        self.plot_single_frame_data_y_combo_box.addItems(features)
+        self.plot_single_frame_data_y_combo_box.addItems(self.tissue_info.SPECIAL_FEATURES)
+        self.plot_single_frame_data_y_combo_box.addItems(self.tissue_info.SPECIAL_Y_ONLY_FEATURES)
+        self.plot_single_frame_data_cell_type_combo_box.clear()
+        self.plot_single_frame_data_cell_type_combo_box.addItems(self.tissue_info.CELL_TYPES)
+
     def slider_changed(self):
         text = "%d/%d" % (self.frame_slider.value(), self.number_of_frames)
         if self.frame_line_edit.text() != text:
@@ -222,12 +241,13 @@ class FormImageProcessing(QMainWindow):
             if self.fixing_segmentation_mode == FIX_SEGMENTATION_ON:
                 frame = self.frame_slider.value()
                 if button == Qt.LeftButton:
-                    if double_click:
+                    if double_click and self.fix_segmentation_last_position is not None:
                         self.fix_segmentation_last_position = None
                         self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()), final=True,
                                                                hc_marker_image=self.img[frame - 1,
                                                                                self.atoh_spin_box.value(),
-                                                                               0, :, :].compute())
+                                                                               0, :, :].compute(),
+                                                               hc_threshold=self.hc_threshold_spin_box.value()/100)
                     else:
                         self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()),
                                                                self.fix_segmentation_last_position,
@@ -237,9 +257,18 @@ class FormImageProcessing(QMainWindow):
                     self.tissue_info.remove_segmentation_line(frame, (pos.x(), pos.y()),
                                                               hc_marker_image=self.img[frame - 1,
                                                                                        self.atoh_spin_box.value(),
-                                                                                       0, :, :].compute())
+                                                                                       0, :, :].compute(),
+                                                              hc_threshold=self.hc_threshold_spin_box.value()/100)
                 self.segmentation_changed = True
                 self.current_segmentation = self.tissue_info.get_segmentation(frame)
+                self.display_frame()
+            elif self.fix_cell_types_on:
+                frame = self.frame_slider.value()
+                if button == Qt.LeftButton:
+                    self.tissue_info.change_cell_type(frame, (pos.x(), pos.y()))
+                elif button == Qt.MiddleButton:
+                    self.tissue_info.make_invalid_cell(frame, (pos.x(), pos.y()))
+                self.analysis_changed = True
                 self.display_frame()
             if self.pixel_info.isEnabled():
                 text = 'pixel info: x = %d, y = %d' % (pos.x(), pos.y())
@@ -297,6 +326,8 @@ class FormImageProcessing(QMainWindow):
         self.cancel_tracking_button.hide()
         self.finish_fixing_segmentation_button.hide()
         self.fix_segmentation_label.hide()
+        self.finish_fixing_cell_types_button.hide()
+        self.fix_cell_types_label.hide()
 
     def setState(self, image=False, segmentation=False, analysis=False):
         if image:
@@ -311,6 +342,8 @@ class FormImageProcessing(QMainWindow):
             self.segment_frame_button.setEnabled(True)
             self.segmentation_threshold_spin_box.setEnabled(True)
             self.segmentation_kernel_std_spin_box.setEnabled(True)
+            self.segmentation_block_size_spin_box.setEnabled(True)
+            self.segmentation_block_size_label.setEnabled(True)
             self.segmentation_threshold_label.setEnabled(True)
             self.segmentation_kernel_std_label.setEnabled(True)
             self.load_segmentation_button.setEnabled(True)
@@ -327,8 +360,11 @@ class FormImageProcessing(QMainWindow):
             self.atoh_level_scroll_bar.setEnabled(False)
             self.zo_level_scroll_bar.setEnabled(False)
             self.segment_frame_button.setEnabled(False)
+            self.analyze_frame_button.setEnabled(False)
             self.segmentation_threshold_spin_box.setEnabled(False)
             self.segmentation_kernel_std_spin_box.setEnabled(False)
+            self.segmentation_block_size_spin_box.setEnabled(False)
+            self.segmentation_block_size_label.setEnabled(False)
             self.segmentation_threshold_label.setEnabled(False)
             self.segmentation_kernel_std_label.setEnabled(False)
             self.load_segmentation_button.setEnabled(False)
@@ -336,18 +372,27 @@ class FormImageProcessing(QMainWindow):
             self.plot_single_cell_data_spin_box.setEnabled(False)
             self.plot_single_cell_data_combo_box.setEnabled(False)
             self.plot_single_cell_data_button.setEnabled(False)
+            self.plot_single_frame_data_button.setEnabled(False)
+            self.plot_single_frame_data_x_combo_box.setEnabled(False)
+            self.plot_single_frame_data_y_combo_box.setEnabled(False)
+            self.plot_single_frame_data_cell_type_combo_box.setEnabled(False)
             self.pixel_info.setEnabled(False)
             self.finish_fixing_segmentation_button.setEnabled(False)
             self.fix_segmentation_label.setEnabled(False)
             self.fix_segmentation_button.setEnabled(False)
+            self.finish_fixing_cell_types_button.setEnabled(False)
+            self.fix_cell_types_label.setEnabled(False)
+            self.fix_cell_types_button.setEnabled(False)
         if segmentation:
             self.show_segmentation_check_box.setEnabled(True)
             self.save_segmentation_button.setEnabled(True)
             self.analyze_segmentation_button.setEnabled(True)
+            self.analyze_frame_button.setEnabled(True)
             self.fix_segmentation_button.setEnabled(True)
         else:
             self.show_segmentation_check_box.setEnabled(False)
             self.save_segmentation_button.setEnabled(False)
+            self.analyze_frame_button.setEnabled(False)
             self.analyze_segmentation_button.setEnabled(False)
             analysis = False
         if analysis:
@@ -359,6 +404,13 @@ class FormImageProcessing(QMainWindow):
             self.plot_single_cell_data_spin_box.setEnabled(True)
             self.plot_single_cell_data_combo_box.setEnabled(True)
             self.plot_single_cell_data_button.setEnabled(True)
+            self.plot_single_frame_data_button.setEnabled(True)
+            self.plot_single_frame_data_x_combo_box.setEnabled(True)
+            self.plot_single_frame_data_y_combo_box.setEnabled(True)
+            self.plot_single_frame_data_cell_type_combo_box.setEnabled(True)
+            self.hc_threshold_label.setEnabled(True)
+            self.hc_threshold_spin_box.setEnabled(True)
+            self.fix_cell_types_button.setEnabled(True)
         else:
             self.show_cell_types_check_box.setEnabled(False)
             self.show_cell_tracking_check_box.setEnabled(False)
@@ -368,6 +420,12 @@ class FormImageProcessing(QMainWindow):
             self.plot_single_cell_data_spin_box.setEnabled(False)
             self.plot_single_cell_data_combo_box.setEnabled(False)
             self.plot_single_cell_data_button.setEnabled(False)
+            self.plot_single_frame_data_button.setEnabled(False)
+            self.plot_single_frame_data_x_combo_box.setEnabled(False)
+            self.plot_single_frame_data_y_combo_box.setEnabled(False)
+            self.plot_single_frame_data_cell_type_combo_box.setEnabled(False)
+            self.hc_threshold_label.setEnabled(False)
+            self.hc_threshold_spin_box.setEnabled(False)
 
 
     def plot_single_cell_data(self):
@@ -376,6 +434,21 @@ class FormImageProcessing(QMainWindow):
         cell_id = self.plot_single_cell_data_spin_box.value()
         feature = self.plot_single_cell_data_combo_box.currentText()
         self.tissue_info.plot_single_cell_data(cell_id, feature)
+
+    def plot_single_frame_data(self):
+        if self.plot_single_frame_data_x_combo_box.currentIndex() < 0 or \
+                self.plot_single_frame_data_y_combo_box.currentIndex() < 0 or \
+                self.plot_single_frame_data_cell_type_combo_box.currentIndex() < 0:
+            return 0
+        x_feature = self.plot_single_frame_data_x_combo_box.currentText()
+        y_feature = self.plot_single_frame_data_y_combo_box.currentText()
+        cell_type = self.plot_single_frame_data_cell_type_combo_box.currentText()
+        frame = self.frame_slider.value()
+        error_message = self.tissue_info.plot_single_frame_data(frame, x_feature, y_feature, cell_type)
+        if error_message:
+            message_box = QMessageBox
+            message_box.question(self, '', error_message, message_box.Close)
+
 
     def frame_segmentation_done(self, msg):
         split_msg = msg.split("/")
@@ -402,7 +475,9 @@ class FormImageProcessing(QMainWindow):
         zo_channel = self.zo_spin_box.value()
         threshold = 0.01 * self.segmentation_threshold_spin_box.value()
         std = self.segmentation_kernel_std_spin_box.value()
-        self.segmentation_thread = SegmentAllThread(self.img, zo_channel, threshold, std, frame_numbers, self.tissue_info)
+        block_size = self.segmentation_block_size_spin_box.value()
+        self.segmentation_thread = SegmentAllThread(self.img, zo_channel, threshold, std, block_size,
+                                                    frame_numbers, self.tissue_info)
         self.segmentation_thread._signal.connect(self.frame_segmentation_done)
         self.segment_all_frames_button.setEnabled(False)
         self.frame_slider.setEnabled(False)
@@ -444,6 +519,7 @@ class FormImageProcessing(QMainWindow):
             self.setState(image=True, segmentation=True, analysis=True)
             self.cells_number_changed()
             self.update_single_cell_features()
+            self.update_single_frame_features()
             self.frame_slider.setEnabled(True)
             self.frame_line_edit.setEnabled(True)
 
@@ -452,12 +528,20 @@ class FormImageProcessing(QMainWindow):
         self.analyze_segmentation_progress_bar.show()
         self.cancel_analysis_button.show()
         atoh_channel = self.atoh_spin_box.value()
-        self.analysis_thread = AnalysisThread(self.img, self.tissue_info, frame_numbers, atoh_channel)
+        hc_threshold = self.hc_threshold_spin_box.value()/100
+        self.analysis_thread = AnalysisThread(self.img, self.tissue_info, frame_numbers, atoh_channel, hc_threshold)
         self.analysis_thread._signal.connect(self.frame_analysis_done)
         self.analyze_segmentation_button.setEnabled(False)
         self.frame_slider.setEnabled(False)
         self.frame_line_edit.setEnabled(False)
         self.analysis_thread.start()
+
+    def analyze_frame(self, frame_number=0):
+        if frame_number == 0:
+            frame_number = self.frame_slider.value()
+        else:
+            self.frame_slider.setValue(frame_number)
+        self.analyze_frames([frame_number])
 
     def analyze_segmentation(self):
         if not self.data_lost_warning(self.analyze_segmentation):
@@ -519,8 +603,18 @@ class FormImageProcessing(QMainWindow):
         self.frame_slider.setEnabled(False)
         self.frame_line_edit.setEnabled(False)
         self.fixing_segmentation_mode = FIX_SEGMENTATION_ON
+        self.fix_cell_types_button.setEnabled(False)
+
 
     def finish_fixing_segmentation(self):
+        if self.fix_segmentation_last_position is not None:
+            frame = self.frame_slider.value()
+            self.tissue_info.add_segmentation_line(frame, self.fix_segmentation_last_position, final=True,
+                                                   hc_marker_image=self.img[frame - 1,
+                                                                   self.atoh_spin_box.value(),
+                                                                   0, :, :].compute(),
+                                                   hc_threshold=self.hc_threshold_spin_box.value()/100)
+            self.fix_segmentation_last_position = None
         self.tissue_info.update_labels(self.frame_slider.value())
         self.segmentation_changed = True
         self.current_segmentation = self.tissue_info.get_segmentation(self.frame_slider.value())
@@ -534,6 +628,31 @@ class FormImageProcessing(QMainWindow):
         self.finish_fixing_segmentation_button.hide()
         self.frame_slider.setEnabled(True)
         self.frame_line_edit.setEnabled(True)
+        self.fix_cell_types_button.setEnabled(True)
+
+    def fix_cell_types(self):
+        self.fix_cell_types_button.setEnabled(False)
+        self.fix_cell_types_button.hide()
+        self.fix_cell_types_label.setEnabled(True)
+        self.fix_cell_types_label.show()
+        self.finish_fixing_cell_types_button.setEnabled(True)
+        self.finish_fixing_cell_types_button.show()
+        self.frame_slider.setEnabled(False)
+        self.frame_line_edit.setEnabled(False)
+        self.fix_cell_types_on = True
+        self.fix_segmentation_button.setEnabled(False)
+
+    def finish_fixing_cell_types(self):
+        self.fix_cell_types_on = False
+        self.fix_cell_types_button.setEnabled(True)
+        self.fix_cell_types_button.show()
+        self.fix_cell_types_label.setEnabled(False)
+        self.fix_cell_types_label.hide()
+        self.finish_fixing_cell_types_button.setEnabled(False)
+        self.finish_fixing_cell_types_button.hide()
+        self.frame_slider.setEnabled(True)
+        self.frame_line_edit.setEnabled(True)
+        self.fix_segmentation_button.setEnabled(True)
 
     def save_data(self):
         name = QFileDialog.getSaveFileName(self, 'Save File', directory=self.working_directory)[0]
@@ -601,13 +720,14 @@ class FormImageProcessing(QMainWindow):
                           analysis=self.tissue_info.is_any_analyzed())
             self.cells_number_changed()
             self.update_single_cell_features()
+            self.update_single_frame_features()
 
 
 
 class SegmentAllThread(QThread):
     _signal = pyqtSignal(str)
 
-    def __init__(self, img, zo_channel, threshold, std, frame_numbers, out):
+    def __init__(self, img, zo_channel, threshold, std, block_size, frame_numbers, out):
         super(SegmentAllThread, self).__init__()
         self.img = img
         self.zo_channel = zo_channel
@@ -615,6 +735,7 @@ class SegmentAllThread(QThread):
         self.frame_numbers = frame_numbers
         self.threshold = threshold
         self.std = std
+        self.block_size = block_size
         self.is_killed = False
 
     def __del__(self):
@@ -624,7 +745,7 @@ class SegmentAllThread(QThread):
         done_frames = 0
         for frame in self.frame_numbers:
             zo_img = self.img[frame - 1, self.zo_channel, 0, :, :].compute()
-            labels = watershed_segmentation(zo_img, self.threshold*np.max(zo_img), self.std)
+            labels = watershed_segmentation(zo_img, self.threshold, self.std, self.block_size)
             self.out.set_labels(frame, labels)
             done_frames += 1
             percentage_done = np.round(100*done_frames/len(self.frame_numbers))
@@ -643,12 +764,13 @@ class SegmentAllThread(QThread):
 class AnalysisThread(QThread):
     _signal = pyqtSignal(str)
 
-    def __init__(self, img, tissue_info, frame_numbers, atoh_channel):
+    def __init__(self, img, tissue_info, frame_numbers, atoh_channel, hc_threshold):
         super(AnalysisThread, self).__init__()
         self.tissue_info = tissue_info
         self.img = img
         self.frame_numbers = frame_numbers
         self.atoh_channel = atoh_channel
+        self.hc_threshold = hc_threshold
         self.is_killed = False
 
     def __del__(self):
@@ -658,7 +780,7 @@ class AnalysisThread(QThread):
         done_frames = 0
         for frame in self.frame_numbers:
             atoh_img = self.img[frame - 1, self.atoh_channel, 0, :, :].compute()
-            self.tissue_info.calculate_frame_cellinfo(frame, atoh_img)
+            self.tissue_info.calculate_frame_cellinfo(frame, atoh_img, self.hc_threshold)
             done_frames += 1
             percentage_done = np.round(100*done_frames/len(self.frame_numbers))
             self.emit("%d/%d" % (frame, percentage_done))
