@@ -9,12 +9,19 @@ from tissue_info import Tissue
 vispy.use('PyQt5')
 from PyQt5.QtWidgets import *
 from PyQt5.uic import loadUi
+
+import matplotlib
+matplotlib.use('Qt5Agg')
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
-from PyQt5.QtWidgets import QDialog, QFileDialog, QMessageBox, QProgressBar, QShortcut
+from PyQt5.QtWidgets import QDialog, QFileDialog, QMessageBox, QProgressBar, QShortcut, QVBoxLayout, QWidget
 from PyQt5.QtGui import QIcon, QPixmap, QImage, qRgb, QKeySequence
 from PyQt5.QtCore import QTimer, QThread, pyqtSignal, Qt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+from matplotlib.figure import Figure
+
+
 from functools import partial
 COLORTABLE=[]
 fname = ""
@@ -28,9 +35,56 @@ FIX_SEGMENTATION_ON = 1
 FIX_SEGMENTATION_LINE = 2
 
 
+class MplCanvas(FigureCanvasQTAgg):
+    def __init__(self, parent=None, width=5, height=4, dpi=100):
+        fig = Figure(figsize=(width, height), dpi=dpi)
+        self.axes = fig.add_subplot(111)
+        super(MplCanvas, self).__init__(fig)
+
+
+class CustomNavigationToolbar(NavigationToolbar):
+    def __init__(self, canvas, parent, data):
+        super(CustomNavigationToolbar, self).__init__(canvas, parent)
+        self.data = data
+
+    def save_figure(self, *args):
+        super(CustomNavigationToolbar, self).save_figure(*args)
+        if self.data is not None:
+            name = QFileDialog.getSaveFileName(self, 'Choose a file name to save data',
+                                               directory=matplotlib.rcParams['savefig.directory'])[0]
+            np.save(name, self.data)
+
+
+class PlotDataWindow(QMainWindow):
+    def __init__(self, parent=None):
+        super(PlotDataWindow, self).__init__(parent)
+        self.setWindowTitle("Data plot")
+        self.canvas = MplCanvas(self, width=5, height=4, dpi=100)
+        self.ax = self.canvas.axes
+
+    def create_toolbar(self, data):
+        # Create toolbar, passing canvas as first parament, parent (self, the MainWindow) as second.
+        toolbar = CustomNavigationToolbar(self.canvas, self, data)
+        layout = QVBoxLayout()
+        layout.addWidget(toolbar)
+        layout.addWidget(self.canvas)
+
+        # Create a placeholder widget to hold our toolbar and canvas.
+        widget = QWidget()
+        widget.setLayout(layout)
+        self.setCentralWidget(widget)
+
+    def get_ax(self):
+        return self.ax
+
+    def show(self, data=None):
+        self.create_toolbar(data)
+        super(PlotDataWindow, self).show()
+
+
 class FormImageProcessing(QMainWindow):
-    def __init__(self):
-        QMainWindow.__init__(self)
+    def __init__(self, parent=None):
+        super(FormImageProcessing, self).__init__(parent)
         loadUi("movie_display.ui", self)
         self.setWindowTitle("Movie Segmentation")
         self.setState()
@@ -100,6 +154,7 @@ class FormImageProcessing(QMainWindow):
         self.cancel_tracking_button.clicked.connect(self.cancel_tracking)
         self.plot_single_cell_data_button.clicked.connect(self.plot_single_cell_data)
         self.plot_single_frame_data_button.clicked.connect(self.plot_single_frame_data)
+        self.plot_compare_frames_button.clicked.connect(self.plot_compare_frames_data)
         self.image_display.photoClicked.connect(self.image_clicked)
         self.fix_segmentation_button.clicked.connect(self.fix_segmentation)
         self.finish_fixing_segmentation_button.clicked.connect(self.finish_fixing_segmentation)
@@ -220,12 +275,20 @@ class FormImageProcessing(QMainWindow):
         self.plot_single_frame_data_x_combo_box.addItems(features)
         self.plot_single_frame_data_x_combo_box.addItems(self.tissue_info.SPECIAL_FEATURES)
         self.plot_single_frame_data_x_combo_box.addItems(self.tissue_info.SPECIAL_X_ONLY_FEATURES)
+        self.compare_frames_combo_box.clear()
+        self.compare_frames_combo_box.addItems(features)
+        self.compare_frames_combo_box.addItems(self.tissue_info.SPECIAL_FEATURES)
+        self.compare_frames_combo_box.addItems(self.tissue_info.SPECIAL_X_ONLY_FEATURES)
+        self.compare_frames_combo_box.addItems(self.tissue_info.SPECIAL_Y_ONLY_FEATURES)
         self.plot_single_frame_data_y_combo_box.clear()
         self.plot_single_frame_data_y_combo_box.addItems(features)
         self.plot_single_frame_data_y_combo_box.addItems(self.tissue_info.SPECIAL_FEATURES)
         self.plot_single_frame_data_y_combo_box.addItems(self.tissue_info.SPECIAL_Y_ONLY_FEATURES)
         self.plot_single_frame_data_cell_type_combo_box.clear()
         self.plot_single_frame_data_cell_type_combo_box.addItems(self.tissue_info.CELL_TYPES)
+        self.plot_compare_frame_data_cell_type_combo_box.clear()
+        self.plot_compare_frame_data_cell_type_combo_box.addItems(self.tissue_info.CELL_TYPES)
+
 
     def slider_changed(self):
         text = "%d/%d" % (self.frame_slider.value(), self.number_of_frames)
@@ -247,7 +310,8 @@ class FormImageProcessing(QMainWindow):
                                                                hc_marker_image=self.img[frame - 1,
                                                                                self.atoh_spin_box.value(),
                                                                                0, :, :].compute(),
-                                                               hc_threshold=self.hc_threshold_spin_box.value()/100)
+                                                               hc_threshold=self.hc_threshold_spin_box.value()/100,
+                                                               use_existing_types=self.use_existing_cell_types_check_box.isChecked())
                     else:
                         self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()),
                                                                self.fix_segmentation_last_position,
@@ -258,7 +322,8 @@ class FormImageProcessing(QMainWindow):
                                                               hc_marker_image=self.img[frame - 1,
                                                                                        self.atoh_spin_box.value(),
                                                                                        0, :, :].compute(),
-                                                              hc_threshold=self.hc_threshold_spin_box.value()/100)
+                                                              hc_threshold=self.hc_threshold_spin_box.value()/100,
+                                                              use_existing_types=self.use_existing_cell_types_check_box.isChecked())
                 self.segmentation_changed = True
                 self.current_segmentation = self.tissue_info.get_segmentation(frame)
                 self.display_frame()
@@ -376,6 +441,10 @@ class FormImageProcessing(QMainWindow):
             self.plot_single_frame_data_x_combo_box.setEnabled(False)
             self.plot_single_frame_data_y_combo_box.setEnabled(False)
             self.plot_single_frame_data_cell_type_combo_box.setEnabled(False)
+            self.plot_compare_frames_button.setEnabled(False)
+            self.plot_compare_frame_data_cell_type_combo_box.setEnabled(False)
+            self.compare_frames_line_edit.setEnabled(False)
+            self.compare_frames_combo_box.setEnabled(False)
             self.pixel_info.setEnabled(False)
             self.finish_fixing_segmentation_button.setEnabled(False)
             self.fix_segmentation_label.setEnabled(False)
@@ -389,11 +458,15 @@ class FormImageProcessing(QMainWindow):
             self.analyze_segmentation_button.setEnabled(True)
             self.analyze_frame_button.setEnabled(True)
             self.fix_segmentation_button.setEnabled(True)
+            self.hc_threshold_label.setEnabled(True)
+            self.hc_threshold_spin_box.setEnabled(True)
         else:
             self.show_segmentation_check_box.setEnabled(False)
             self.save_segmentation_button.setEnabled(False)
             self.analyze_frame_button.setEnabled(False)
             self.analyze_segmentation_button.setEnabled(False)
+            self.hc_threshold_label.setEnabled(False)
+            self.hc_threshold_spin_box.setEnabled(False)
             analysis = False
         if analysis:
             self.show_cell_types_check_box.setEnabled(True)
@@ -408,8 +481,11 @@ class FormImageProcessing(QMainWindow):
             self.plot_single_frame_data_x_combo_box.setEnabled(True)
             self.plot_single_frame_data_y_combo_box.setEnabled(True)
             self.plot_single_frame_data_cell_type_combo_box.setEnabled(True)
-            self.hc_threshold_label.setEnabled(True)
-            self.hc_threshold_spin_box.setEnabled(True)
+            self.plot_compare_frames_button.setEnabled(True)
+            self.compare_frames_line_edit.setEnabled(True)
+            self.compare_frames_combo_box.setEnabled(True)
+            self.plot_compare_frame_data_cell_type_combo_box.setEnabled(True)
+            self.use_existing_cell_types_check_box.setEnabled(True)
             self.fix_cell_types_button.setEnabled(True)
         else:
             self.show_cell_types_check_box.setEnabled(False)
@@ -424,8 +500,12 @@ class FormImageProcessing(QMainWindow):
             self.plot_single_frame_data_x_combo_box.setEnabled(False)
             self.plot_single_frame_data_y_combo_box.setEnabled(False)
             self.plot_single_frame_data_cell_type_combo_box.setEnabled(False)
-            self.hc_threshold_label.setEnabled(False)
-            self.hc_threshold_spin_box.setEnabled(False)
+            self.plot_compare_frames_button.setEnabled(False)
+            self.compare_frames_line_edit.setEnabled(False)
+            self.compare_frames_combo_box.setEnabled(False)
+            self.plot_compare_frame_data_cell_type_combo_box.setEnabled(False)
+            self.use_existing_cell_types_check_box.setEnabled(False)
+
 
 
     def plot_single_cell_data(self):
@@ -433,7 +513,9 @@ class FormImageProcessing(QMainWindow):
             return 0
         cell_id = self.plot_single_cell_data_spin_box.value()
         feature = self.plot_single_cell_data_combo_box.currentText()
-        self.tissue_info.plot_single_cell_data(cell_id, feature)
+        plot_window = PlotDataWindow(self)
+        data = self.tissue_info.plot_single_cell_data(cell_id, feature, plot_window.get_ax())
+        plot_window.show(data)
 
     def plot_single_frame_data(self):
         if self.plot_single_frame_data_x_combo_box.currentIndex() < 0 or \
@@ -444,11 +526,32 @@ class FormImageProcessing(QMainWindow):
         y_feature = self.plot_single_frame_data_y_combo_box.currentText()
         cell_type = self.plot_single_frame_data_cell_type_combo_box.currentText()
         frame = self.frame_slider.value()
-        error_message = self.tissue_info.plot_single_frame_data(frame, x_feature, y_feature, cell_type)
+        plot_window = PlotDataWindow(self)
+        data, error_message = self.tissue_info.plot_single_frame_data(frame, x_feature, y_feature, plot_window.get_ax(),
+                                                                      cell_type)
         if error_message:
             message_box = QMessageBox
             message_box.question(self, '', error_message, message_box.Close)
+        else:
+            plot_window.show(data)
 
+    def plot_compare_frames_data(self):
+        if self.compare_frames_combo_box.currentIndex() < 0:
+            return 0
+        frames_string = self.compare_frames_line_edit.text()
+        if re.match("(\d+,\s*)*\d(,\s*)?", frames_string):
+            frames_list = re.split(",\s*", frames_string)
+            frames = [int(f) for f in frames_list]
+        feature = self.compare_frames_combo_box.currentText()
+        cell_type = self.plot_compare_frame_data_cell_type_combo_box.currentText()
+        plot_window = PlotDataWindow(self)
+        data, error_message = self.tissue_info.plot_compare_frames_data(frames, feature, plot_window.get_ax(),
+                                                                      cell_type)
+        if error_message:
+            message_box = QMessageBox
+            message_box.question(self, '', error_message, message_box.Close)
+        else:
+            plot_window.show(data)
 
     def frame_segmentation_done(self, msg):
         split_msg = msg.split("/")
@@ -529,7 +632,8 @@ class FormImageProcessing(QMainWindow):
         self.cancel_analysis_button.show()
         atoh_channel = self.atoh_spin_box.value()
         hc_threshold = self.hc_threshold_spin_box.value()/100
-        self.analysis_thread = AnalysisThread(self.img, self.tissue_info, frame_numbers, atoh_channel, hc_threshold)
+        self.analysis_thread = AnalysisThread(self.img, self.tissue_info, frame_numbers, atoh_channel, hc_threshold,
+                                              self.use_existing_cell_types_check_box.isChecked())
         self.analysis_thread._signal.connect(self.frame_analysis_done)
         self.analyze_segmentation_button.setEnabled(False)
         self.frame_slider.setEnabled(False)
@@ -613,7 +717,8 @@ class FormImageProcessing(QMainWindow):
                                                    hc_marker_image=self.img[frame - 1,
                                                                    self.atoh_spin_box.value(),
                                                                    0, :, :].compute(),
-                                                   hc_threshold=self.hc_threshold_spin_box.value()/100)
+                                                   hc_threshold=self.hc_threshold_spin_box.value()/100,
+                                                   use_existing_types=self.use_existing_cell_types_check_box.isChecked())
             self.fix_segmentation_last_position = None
         self.tissue_info.update_labels(self.frame_slider.value())
         self.segmentation_changed = True
@@ -764,7 +869,7 @@ class SegmentAllThread(QThread):
 class AnalysisThread(QThread):
     _signal = pyqtSignal(str)
 
-    def __init__(self, img, tissue_info, frame_numbers, atoh_channel, hc_threshold):
+    def __init__(self, img, tissue_info, frame_numbers, atoh_channel, hc_threshold, use_existing_types=False):
         super(AnalysisThread, self).__init__()
         self.tissue_info = tissue_info
         self.img = img
@@ -772,6 +877,7 @@ class AnalysisThread(QThread):
         self.atoh_channel = atoh_channel
         self.hc_threshold = hc_threshold
         self.is_killed = False
+        self.use_existing_types = use_existing_types
 
     def __del__(self):
         self.wait()
@@ -780,7 +886,7 @@ class AnalysisThread(QThread):
         done_frames = 0
         for frame in self.frame_numbers:
             atoh_img = self.img[frame - 1, self.atoh_channel, 0, :, :].compute()
-            self.tissue_info.calculate_frame_cellinfo(frame, atoh_img, self.hc_threshold)
+            self.tissue_info.calculate_frame_cellinfo(frame, atoh_img, self.hc_threshold, self.use_existing_types)
             done_frames += 1
             percentage_done = np.round(100*done_frames/len(self.frame_numbers))
             self.emit("%d/%d" % (frame, percentage_done))

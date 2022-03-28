@@ -699,7 +699,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>1290</x>
-      <y>330</y>
+      <y>320</y>
       <width>71</width>
       <height>16</height>
      </rect>
@@ -712,7 +712,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>1400</x>
-      <y>330</y>
+      <y>320</y>
       <width>42</width>
       <height>22</height>
      </rect>
@@ -741,7 +741,7 @@ Middle mouse button -  delete line
      </rect>
     </property>
     <property name="text">
-     <string>Press omn a cell
+     <string>Press on a cell
  with left mouse button</string>
     </property>
    </widget>
@@ -888,6 +888,126 @@ Middle mouse button -  delete line
      <string>Choose type</string>
     </property>
    </widget>
+   <widget class="QCheckBox" name="use_existing_cell_types_check_box">
+    <property name="geometry">
+     <rect>
+      <x>1290</x>
+      <y>340</y>
+      <width>151</width>
+      <height>17</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Use existing cell types</string>
+    </property>
+   </widget>
+   <widget class="QLabel" name="compare_frame_label">
+    <property name="geometry">
+     <rect>
+      <x>1100</x>
+      <y>780</y>
+      <width>91</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Compare frames</string>
+    </property>
+   </widget>
+   <widget class="QLabel" name="compare_frames_data_label">
+    <property name="geometry">
+     <rect>
+      <x>910</x>
+      <y>800</y>
+      <width>47</width>
+      <height>13</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>data:</string>
+    </property>
+   </widget>
+   <widget class="QFontComboBox" name="compare_frames_combo_box">
+    <property name="geometry">
+     <rect>
+      <x>940</x>
+      <y>798</y>
+      <width>111</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="currentText">
+     <string>Choose Feature</string>
+    </property>
+   </widget>
+   <widget class="QLabel" name="compare_frames_frame_list_label">
+    <property name="geometry">
+     <rect>
+      <x>1060</x>
+      <y>800</y>
+      <width>47</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>frames:</string>
+    </property>
+   </widget>
+   <widget class="QLineEdit" name="compare_frames_line_edit">
+    <property name="geometry">
+     <rect>
+      <x>1100</x>
+      <y>801</y>
+      <width>131</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="inputMask">
+     <string/>
+    </property>
+    <property name="placeholderText">
+     <string>Enter frames numbers</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="plot_compare_frames_button">
+    <property name="geometry">
+     <rect>
+      <x>1410</x>
+      <y>802</y>
+      <width>41</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Plot</string>
+    </property>
+   </widget>
+   <widget class="QLabel" name="plot_compare_frame_data_cells_type_label_2">
+    <property name="geometry">
+     <rect>
+      <x>1240</x>
+      <y>800</y>
+      <width>51</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>cells type:</string>
+    </property>
+   </widget>
+   <widget class="QFontComboBox" name="plot_compare_frame_data_cell_type_combo_box">
+    <property name="geometry">
+     <rect>
+      <x>1290</x>
+      <y>800</y>
+      <width>111</width>
+      <height>22</height>
+     </rect>
+    </property>
+    <property name="currentText">
+     <string>Choose type</string>
+    </property>
+   </widget>
    <zorder>track_cells_button</zorder>
    <zorder>open_file_pb</zorder>
    <zorder>zo_check_box</zorder>
@@ -951,6 +1071,15 @@ Middle mouse button -  delete line
    <zorder>plot_single_frame_data_button</zorder>
    <zorder>plot_single_cell_data_cells_typ_label</zorder>
    <zorder>plot_single_frame_data_cell_type_combo_box</zorder>
+   <zorder>use_existing_cell_types_check_box</zorder>
+   <zorder>compare_frame_label</zorder>
+   <zorder>compare_frames_data_label</zorder>
+   <zorder>compare_frames_combo_box</zorder>
+   <zorder>compare_frames_frame_list_label</zorder>
+   <zorder>compare_frames_line_edit</zorder>
+   <zorder>plot_compare_frames_button</zorder>
+   <zorder>plot_compare_frame_data_cells_type_label_2</zorder>
+   <zorder>plot_compare_frame_data_cell_type_combo_box</zorder>
   </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">

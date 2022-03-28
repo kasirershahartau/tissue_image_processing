@@ -252,7 +252,7 @@ class Tissue(object):
             self.events[event_type][-1]["resulting_cells_id"] = resulting_cells_id
 
 
-    def calculate_frame_cellinfo(self, frame_number, hc_marker_image=None, hc_threshold=0.01):
+    def calculate_frame_cellinfo(self, frame_number, hc_marker_image=None, hc_threshold=0.01, use_existing_types=False):
         """
         Functions to calculate and organize the cell information.
         """
@@ -261,6 +261,9 @@ class Tissue(object):
             return 0
         number_of_cells = int(np.max(labels))
         cells_info = make_df(number_of_cells, CELL_INFO_SPECS)
+        cell_types = self.get_cell_types(frame_number)
+        if use_existing_types and cell_types is not None:
+            hc_marker_image = (cell_types == HC_TYPE).astype(float)
         if hc_marker_image is not None:
             properties = regionprops_table(labels, intensity_image=hc_marker_image,
                                            properties=['label', 'area', 'perimeter', 'centroid', 'mean_intensity', 'bbox'])
@@ -298,7 +301,8 @@ class Tissue(object):
         else:
             return None
 
-    def plot_single_cell_data(self, cell_id, feature):
+    def plot_single_cell_data(self, cell_id, feature, ax):
+        current_cell_info_frame = self.cells_info_frame
         t = []
         data = []
         for frame in range(1, self.number_of_frames+1):
@@ -306,60 +310,110 @@ class Tissue(object):
             if cell is not None:
                 t.append((frame-1)*15)
                 data.append(cell[feature])
-        plt.plot(t, data, '*')
-        plt.xlabel('Time (minutes)')
-        plt.ylabel(feature)
-        plt.title("%s of cell number %d" % (feature, cell_id))
-        plt.show()
+        ax.plot(t, data, '*')
+        ax.set_xlabel('Time (minutes)')
+        ax.set_ylabel(feature)
+        ax.set_title("%s of cell number %d" % (feature, cell_id))
+        self.get_cells_info(current_cell_info_frame)
+        return np.array([t, data])
 
-    def plot_single_frame_data(self, frame, x_feature, y_feature, cells_type='all'):
+    def get_frame_data(self, frame, feature, valid_cells, special_features, cells_type='all'):
+        if feature in special_features:
+            if feature == "psi6":
+                second_order_neighbors = self.find_second_order_neighbors(frame, valid_cells, cell_type=cells_type)
+                data = self.calc_psin(frame, valid_cells, second_order_neighbors, n=6)
+            elif feature == "roundness":
+                data = self.calculate_cells_roundness(valid_cells)
+            elif feature == "neighbors from the same type":
+                data = self.calculate_n_neighbors_from_the_same_type(frame, valid_cells)
+            elif feature == "roundness":
+                data = self.calculate_cells_roundness(valid_cells)
+            elif feature == "neighbors from the same type":
+                data = self.calculate_n_neighbors_from_the_same_type(frame, valid_cells)
+            else:
+                return None, "Not implemented yet..."
+        else:
+            data = valid_cells[feature].to_numpy()
+        return data, ""
+
+
+    def plot_single_frame_data(self, frame, x_feature, y_feature, ax, cells_type='all'):
         cell_info = self.get_cells_info(frame)
+        y_data = None
         if cell_info is None:
-            return "No frame data is available"
+            return None, "No frame data is available"
         if cells_type == "all":
             valid_cells = cell_info.query("valid == 1")
         else:
             valid_cells = cell_info.query("valid == 1 and type ==\"%s\"" % cells_type)
         plotted = False
-        if x_feature in self.SPECIAL_FEATURES + self.SPECIAL_X_ONLY_FEATURES:
-            if x_feature == "psi6":
-                second_order_neighbors = self.find_second_order_neighbors(frame, valid_cells, cell_type=cells_type)
-                x_data = self.calc_psin(frame, valid_cells, second_order_neighbors, n=6)
-            elif x_feature == "roundness":
-                x_data = self.calculate_cells_roundness(valid_cells)
-            elif x_feature == "neighbors from the same type":
-                x_data = self.calculate_n_neighbors_from_the_same_type(frame, valid_cells)
-            else:
-                return "Not implemented yet..."
+        x_data, msg = self.get_frame_data(frame, x_feature, valid_cells,
+                                          self.SPECIAL_FEATURES + self.SPECIAL_X_ONLY_FEATURES, cells_type)
+        if x_data is None:
+            return None, msg
+        if y_feature == "histogram":
+            ax.hist(x_data)
+            ax.set_xlabel(x_feature)
+            ax.set_ylabel('frequency')
+            title = "%s histogram for frame %d" % (x_feature, frame)
+            plotted = True
         else:
-            x_data = valid_cells[x_feature]
-        if y_feature in self.SPECIAL_FEATURES + self.SPECIAL_Y_ONLY_FEATURES:
-            if y_feature == "histogram":
-                plt.figure()
-                plt.hist(x_data)
-                plt.xlabel(x_feature)
-                plt.ylabel('frequency')
-                title = "%s histogram for frame %d" % (x_feature, frame)
-                plotted = True
-            elif y_feature == "roundness":
-                y_data = self.calculate_cells_roundness(valid_cells)
-            elif x_feature == "neighbors from the same type":
-                y_data = self.calculate_n_neighbors_from_the_same_type(frame, valid_cells)
-            else:
-                return "Not implemented yet..."
-        else:
-            y_data = valid_cells[y_feature]
+            y_data, msg = self.get_frame_data(frame, y_feature, valid_cells,
+                                          self.SPECIAL_FEATURES + self.SPECIAL_Y_ONLY_FEATURES, cells_type)
+            if y_data is None:
+                return None, msg
+
         if not plotted:
-            plt.figure()
-            plt.plot(x_data, y_data, '*')
-            plt.xlabel(x_feature)
-            plt.ylabel(y_feature)
+            ax.plot(x_data, y_data, '*')
+            ax.set_xlabel(x_feature)
+            ax.set_ylabel(y_feature)
             title = "%s vs %s for frame %d" % (x_feature, y_feature, frame)
         if cells_type != 'all':
             title += " for %s only" % (cells_type)
-        plt.title(title)
-        plt.show()
-        return ""
+        ax.set_title(title)
+        if x_data is not None and y_data is not None:
+            data = np.vstack((x_data.flatten(), y_data.flatten()))
+        elif x_data is not None:
+            data = x_data.reshape((np.size(x_data), 1))
+        else:
+            data = None
+        return data, ""
+
+    def plot_compare_frames_data(self, frames, feature, ax, cells_type='all'):
+        data = []
+        err = []
+        n_results = []
+        current_cell_info_frame = self.cells_info_frame
+        for frame in frames:
+            cell_info = self.get_cells_info(frame)
+            if cell_info is None:
+                return None, "No frame data is available for frame %d" % frame
+            if cells_type == "all":
+                valid_cells = cell_info.query("valid == 1")
+            else:
+                valid_cells = cell_info.query("valid == 1 and type ==\"%s\"" % cells_type)
+            raw_data, msg = self.get_frame_data(frame, feature, valid_cells,
+                                              self.SPECIAL_FEATURES + self.SPECIAL_X_ONLY_FEATURES + self.SPECIAL_Y_ONLY_FEATURES,
+                                                cells_type)
+            if raw_data is None:
+                return None, msg
+            data.append(np.average(raw_data))
+            err.append(np.std(raw_data)/np.sqrt(np.size(raw_data)))
+            n_results.append(np.size(raw_data))
+        x_pos = np.arange(len(frames))
+        x_labels = ["frame %d (N = %d)" % (f, n) for f,n in zip(frames, n_results)]
+        ax.bar(x_pos, data, yerr=err, align='center', alpha=0.5, ecolor='black', capsize=10)
+        ax.set_ylabel(feature)
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(x_labels)
+        title = "%s for different frames" % feature
+        if cells_type != 'all':
+            title += " for %s only" % cells_type
+        ax.set_title(title)
+        ax.yaxis.grid(True)
+        self.get_cells_info(current_cell_info_frame)
+        return data, ""
+
 
     @staticmethod
     def calculate_cells_roundness(cells):
@@ -467,18 +521,18 @@ class Tissue(object):
         # TODO: implement
         return x,y
 
-    def calc_cell_types(self, hc_marker_image, frame_number, properties=None, hc_threshold=0.01):
+    def calc_cell_types(self, hc_marker_image, frame_number, properties=None, hc_threshold=0.1):
         cells_info = self.get_cells_info(frame_number)
         labels = self.get_labels(frame_number)
         self.get_cell_types(frame_number)
+        max_brightness = np.max(hc_marker_image[hc_marker_image > 0])
         self.cell_types = np.zeros(labels.shape)
-        median_brightness = np.max(hc_marker_image[hc_marker_image > 0])
         if properties is None:
             for cell_index in range(len(cells_info)):
                 if cells_info.valid[cell_index] == 1:
                     cell_pixels = hc_marker_image[labels == cell_index]
                     average_cell_brightness = np.mean(cell_pixels)
-                    if average_cell_brightness > hc_threshold*median_brightness:
+                    if average_cell_brightness > hc_threshold*max_brightness:
                         self.cells_info.at[cell_index, "type"] = "HC"
                         self.cell_types[labels == cell_index] = HC_TYPE
                     else:
@@ -486,7 +540,7 @@ class Tissue(object):
                         self.cell_types[labels == cell_index] = SC_TYPE
         else:
             cell_indices = properties['label'] - 1
-            threshold = hc_threshold*median_brightness
+            threshold = hc_threshold * max_brightness
             atoh_intensities = properties["mean_intensity"]
             HC_indices = cell_indices[atoh_intensities > threshold]
             SC_indices = cell_indices[atoh_intensities <= threshold]
@@ -532,6 +586,7 @@ class Tissue(object):
         index = 0
         for i, row in cells.iterrows():
             if len(second_order_neighbors[index]) == 0:
+                index += 1
                 continue
             cell_x = row.cx
             cell_y = row.cy
@@ -575,7 +630,7 @@ class Tissue(object):
         return img[np.newaxis, :,:] * np.array(TRACK_COLOR).reshape((3,1,1))
 
     def add_segmentation_line(self, frame, point1, point2=None, initial=False, final=False, hc_marker_image=None,
-                              hc_threshold=0.1):
+                              hc_threshold=0.1, use_existing_types=False):
         labels = self.get_labels(frame)
         if labels is None:
             return 0
@@ -598,11 +653,12 @@ class Tissue(object):
             self.cell_types[rr, cc] = 0
         if final:
             self.update_after_adding_segmentation_line(self._label_before_line_addition, frame, hc_marker_image,
-                                                       hc_threshold)
+                                                       hc_threshold, use_existing_types)
             self._finished_last_line_addition = True
         return 0
 
-    def remove_segmentation_line(self, frame, point1, hc_marker_image=None, hc_threshold=0.1, part_of_undo=False):
+    def remove_segmentation_line(self, frame, point1, hc_marker_image=None, hc_threshold=0.1, part_of_undo=False,
+                                 use_existing_types=False):
         labels = self.get_labels(frame)
         if labels is None:
             return 0
@@ -640,7 +696,7 @@ class Tissue(object):
 
         remove_neighboring_points_on_line(point, True)
         self.update_after_segmentation_line_removal(self._neighbors_labels[0], self._neighbors_labels[1], frame,
-                                                    hc_marker_image, hc_threshold, part_of_undo)
+                                                    hc_marker_image, hc_threshold, part_of_undo, use_existing_types)
         return 0
 
     def change_cell_type(self, frame, pos):
@@ -679,7 +735,7 @@ class Tissue(object):
         return 0
 
     def update_after_segmentation_line_removal(self, cell1_label, cell2_label, frame, hc_marker_image=None,
-                                               hc_threshold=0.1, part_of_undo=False):
+                                               hc_threshold=0.1, part_of_undo=False, use_existing_types=False):
         labels = self.get_labels(frame)
         cell_info = self.get_cells_info(frame)
         cell_types = self.get_cell_types(frame)
@@ -715,9 +771,11 @@ class Tissue(object):
                     cell_info.at[new_label - 1, "bounding_box_max_col"] = max(cell1_info.bounding_box_max_col,
                                                                               cell2_info.bounding_box_max_col)
                     cell_info.at[new_label - 1, "valid"] = MIN_CELL_AREA < area1 + area2 < MAX_CELL_AREA
-                    if hc_marker_image is not None:
+                    if use_existing_types and cell_types is not None:
+                        hc_marker_image = (cell_types == HC_TYPE).astype(float)
+                    if hc_marker_image is not None and not use_existing_types:
                         mean_intensity = np.mean(hc_marker_image[labels == new_label])
-                        if mean_intensity > 0.001*hc_threshold*np.max(hc_marker_image):
+                        if mean_intensity > hc_threshold * np.max(hc_marker_image[hc_marker_image>0]):
                             cell_info.at[new_label - 1, "type"] = "HC"
                             if cell_types is not None:
                                 cell_types[labels == new_label] = HC_TYPE
@@ -742,7 +800,8 @@ class Tissue(object):
                     cell_info.at[delete_label - 1, "n_neighbors"] = 0
         return 0
 
-    def update_after_adding_segmentation_line(self, cell_label, frame, hc_marker_image=None, hc_threshold=0.1):
+    def update_after_adding_segmentation_line(self, cell_label, frame, hc_marker_image=None, hc_threshold=0.1,
+                                              use_existing_types=False):
         labels = self.get_labels(frame)
         cell_info = self.get_cells_info(frame)
         cell_types = self.get_cell_types(frame)
@@ -773,6 +832,8 @@ class Tissue(object):
             cell_region[new_region_labels == cell2_label] = new_label
             labels[min(0,bounding_box_min_row-2):bounding_box_max_row+2, min(0,bounding_box_min_col-2):bounding_box_max_col+2] = cell_region
             if cell_info is not None:
+                if use_existing_types and cell_types is not None:
+                    hc_marker_image = (cell_types == HC_TYPE).astype(float)
                 if hc_marker_image is None:
                     properties = regionprops(cell_region)
                 else:
@@ -810,10 +871,10 @@ class Tissue(object):
                 need_to_update_neighbors = list(cell_info.neighbors[cell_label]) + [cell_label + new_label]
                 self.find_neighbors(frame, labels_region=cell_region, only_for_labels=need_to_update_neighbors)
                 if hc_marker_image is not None:
-                    max_intensity = np.max(hc_marker_image)
+                    max_intensity = np.max(hc_marker_image[hc_marker_image > 0])
                     for i in [new_label, cell_label]:
                         mean_intensity = np.mean(hc_marker_image[labels == i])
-                        if mean_intensity > 0.001 * hc_threshold * max_intensity:
+                        if mean_intensity > hc_threshold * max_intensity:
                             cell_info.at[i - 1, "type"] = "HC"
                             if cell_types is not None:
                                 cell_types[labels == i] = HC_TYPE
