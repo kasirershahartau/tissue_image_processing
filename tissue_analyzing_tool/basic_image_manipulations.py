@@ -22,6 +22,7 @@ import skimage.segmentation as skim
 from skimage.filters import difference_of_gaussians, threshold_local
 from scipy.fftpack import fftshift, fftn
 from skimage.transform import resize
+from skimage.registration import phase_cross_correlation
 
 ####### Constants ##############
 UINT8_MAXVAL = 255
@@ -91,7 +92,12 @@ def get_image_metadata(path, series=0):
 
 def read_image_in_chunks(path, series=0, dx=0, dy=0, dz=0, dc=0, dt=0, apply_function=None, output=None,
                          **apply_function_params):
-    img = AICSImage(path,  reader=bioformats_reader.BioformatsReader, series=series)
+    img = AICSImage(path,  reader=bioformats_reader.BioformatsReader, series=series, dask_tiles=True)
+    default_dims_order = "TCZYX"
+    if series == 0:  # There is an error with reading dask data for multi series image so we can only virtually read
+        data = img.get_image_dask_data(default_dims_order)
+    else:
+        data = img.data
     max_x = img.dims.X
     max_y = img.dims.Y
     max_z = img.dims.Z
@@ -115,15 +121,17 @@ def read_image_in_chunks(path, series=0, dx=0, dy=0, dz=0, dc=0, dt=0, apply_fun
     while t < max_t:
         while c < max_c:
             while z < max_z:
-                while x < max_x:
-                    while y < max_y:                 
-                        chunk = img.data[t:min(t+dt, max_t),
+                while y < max_y:
+                    while x < max_x:
+                        chunk = data[t:min(t+dt, max_t),
                                      c:min(c+dc, max_c),
                                      z:min(z+dz, max_z),
                                      y:min(y+dy, max_y),
                                      x:min(x+dx, max_x)]
+                        if series == 0:
+                            chunk = chunk.compute()
                         if apply_function is None:
-                            yield chunk.compute()
+                                yield chunk
                         else:
                             result = apply_function(chunk, **apply_function_params)
                             if output is not None:
@@ -146,10 +154,10 @@ def read_image_in_chunks(path, series=0, dx=0, dy=0, dz=0, dc=0, dt=0, apply_fun
                                 if deflate:
                                     result = result[0]
                                 yield result
-                        y+=dy
-                    y=0    
-                    x+=dx
-                x=0    
+                        x+=dx
+                    x=0
+                    y+=dy
+                y=0
                 z+=dz
             z=0    
             c+=dc
@@ -158,7 +166,7 @@ def read_image_in_chunks(path, series=0, dx=0, dy=0, dz=0, dc=0, dt=0, apply_fun
     return
 
 
-def save_tiff(path, image, metadata={}, axes="", data_type=""):
+def save_tiff(path, image, metadata=None, axes="", data_type=""):
     """
     Saving the given image as a tif file.
     Parameters
@@ -482,3 +490,20 @@ def concatenate_time_points(files):
         if img.shape[1:] != imgs[0].shape[1:]:
             imgs[-1] = resize(img, (img.shape[0], imgs[0].shape[1:]))
     return np.concatenate(imgs, axis=0)
+
+def calculate_drift(first_image, second_image, sub_pixel_precision=True):
+    """
+    Calculating the global 2D drift between 2 images (usually 2 time-lapse frames).
+    @param first_image: The reference image (can be multi channels image)
+    @param second_image: The drifted image. Same size as first_image.
+    @param sub_pixel_precision: If True (default), the shift would be given to sub-pixel precision (floating numbers),
+    else it would be a whole number.
+    @returns horizontal shift, vertical shift. Shift is what needed to be added to the second image to get the first
+    image. The positive directions are down and right.
+    """
+    if sub_pixel_precision:
+        shift, error, diffphase = phase_cross_correlation(first_image, second_image, upsample_factor=100)
+    else:
+        shift, error, diffphase = phase_cross_correlation(first_image, second_image)
+    return shift[-2:]
+
