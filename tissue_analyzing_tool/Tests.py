@@ -55,30 +55,7 @@ def add_numbers(ax, tissue):
          
     
 if __name__ == "__main__":
-    # shape = get_image_dimensions(test_path)
-    # projection = np.zeros((shape.T, shape.C, 1, shape.Y, shape.X))
-    # for i,chunk in enumerate(read_image_in_chunks(test_path, 1000, 1000, 0, 0, 0, surface_projection, projection,
-    #                                             "TCZXY", 0, 0, 102, 'max_std', 5)):
-    #     print("Chunk %d had been projected" % i)
-    # save_tiff(os.path.join(test_dir, 'projection_by_chunks.tiff'), projection,
-    #           data_type="uint16")
-
-    # image, axes, shape, metadata = read_tiff(test_path)
-    # adjusted = set_brightness(image, axes)
-    # projection = surface_projection(image, axes, 0, 0, 102, 'max_std', 10)
-    # save_tiff(os.path.join(test_dir, 'projection.tiff'), projection.swapaxes(-1,-2), metadata=metadata, data_type="uint16")
-
-    # image = loading_test_image()
-    # small_zo_image = image[0]
-    # segmentation = watershed_segmentation(small_zo_image, 0.3*np.max(small_zo_image), 3)
-    # plt.imshow(segmentation)
-    # tissue = Tissue()
-    # tissue.setLabels(1, segmentation)
-    # tissue.calculate_frame_cellinfo(1)
-    # draw_neighbors(tissue)
-    # plt.show()
-    directory = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-12-26_P0_utricle_ablation\\"
-    file_names = ["initial_Out.czi", "after1_Out.czi", "after2_Out.czi", "after3_Out.czi", "after4_Out.czi",
-                  "after5_Out.czi", "after6_Out.czi", "after7_Out.czi"]
-    paths = [os.path.join(directory, file) for file in file_names]
-    movie_surface_projection([paths[0]], (8,6,6,8), 4)
+    input_dir = "D:\\Kasirer\\experimental_results\\fixed\\Vestibule\\zo_myo_dapi\\E15.5\\"
+    input_file_name = "21-04-20_E15.5_utricle_zo_myo_dapi_Airyscan Processing_Stitch.tif"
+    large_image_projection(input_dir, input_dir, input_file_name, position=0, reference_channel=0, chunk_size=0,
+                           bin_size=10, channels_shift=0, min_z=8, max_z=40, method="multi_channel")
