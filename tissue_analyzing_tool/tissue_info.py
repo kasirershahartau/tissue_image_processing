@@ -8,17 +8,18 @@ Methods to analyze cells
 """
 import os.path
 import shutil
-from basic_image_manipulations import watershed_segmentation
+from basic_image_manipulations import calculate_drift
 import re
 import cv2
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.patches import Circle
-from scipy.ndimage.filters import maximum_filter
+from scipy.ndimage.filters import maximum_filter, minimum_filter
 from skimage.draw import line, disk
 from skimage.measure import regionprops_table, regionprops
 from skimage.measure import label as label_image_regions
+from skimage.registration import phase_cross_correlation
 import zipfile
 
 
@@ -27,6 +28,7 @@ MAX_CELL_AREA = 6000
 HC_TYPE = 1
 SC_TYPE = 2
 INVALID_TYPE = 0
+MAX_SEG_LINE_LENGTH = 100
 CELL_INFO_SPECS = {"area": 0,
                    "perimeter": 0,
                    "label": 0,
@@ -47,6 +49,8 @@ TRACK_COLOR = (0, 1, 0)
 NEIGHBORS_COLOR = (1, 1, 1)
 HC_COLOR = (1, 0, 1)
 SC_COLOR = (1, 1, 0)
+EVENTS_COLOR = {"division": (0,0,1), "delamination": (1,0,0), "differentiation": (0,1,1)}
+
 
 def make_df(number_of_lines, specs):
     """
@@ -107,7 +111,8 @@ class Tissue(object):
          The tissue class holds the cells of a tissue, and organizes information
          according to cell area and centroid location.
     """
-    SPECIAL_FEATURES = ["roundness", "neighbors from the same type"]
+    SPECIAL_FEATURES = ["roundness", "neighbors from the same type", "HC neighbors", "SC neighbors", "contact length",
+                        "HC contact length", "SC contact length"]
     SPECIAL_X_ONLY_FEATURES = ["psi6"]
     SPECIAL_Y_ONLY_FEATURES = ["histogram"]
     CELL_TYPES = ["all", "HC", "SC"]
@@ -118,16 +123,18 @@ class Tissue(object):
         self.labels = None
         self.cell_types = None
         self.events = {"differentiation": [], "delamination": [], "division": []}
+        self.drifts = np.zeros((number_of_frames, 2))
         self.cells_info_frame = 0
         self.labels_frame = 0
         self.cell_types_frame = 0
         self.data_path = data_path
         self.working_dir = self.initialize_working_space()
         self.last_added_line = []
-        self._neighbors_labels = (0,0)
+        self._neighbors_labels = []
         self._label_before_line_addition = 0
         self.last_action = []
-        self._finished_last_line_addition=True
+        self._finished_last_line_addition = True
+        self._labels_copy_for_line_addition = None
         self.cells_number = 0
 
     def __del__(self):
@@ -149,11 +156,17 @@ class Tissue(object):
         self.cells_info = None
         self.labels = None
         self.cell_types = None
+        self.remove_labels()
+        self.remove_cell_types()
+        self.remove_cells_info()
 
-    def set_labels(self, frame_number, labels):
+
+    def set_labels(self, frame_number, labels, reset_data=False):
         if frame_number != self.labels_frame:
             self.save_labels()
             self.labels_frame = frame_number
+        if reset_data:
+            self.reset_frame_data()
         self.labels = labels
 
     def set_cells_info(self, frame_number, cells_info):
@@ -240,17 +253,64 @@ class Tissue(object):
                 return True
         return False
 
-    def add_event(self, event_type, start_frame, end_frame, cell_id, resulting_cells_id=None):
-        """
-        Adding new event to records.
-        @param resulting_cells_id: only for cell division
-        """
-        if event_type not in self.events.keys():
+    def get_cell_id_by_position(self, frame, pos):
+        labels = self.get_labels(frame)
+        cells_info = self.get_cells_info(frame)
+        if labels is None or cells_info is None:
             return 0
-        self.events[event_type].append({"start": start_frame, "end": end_frame, "cell": cell_id})
-        if event_type == "division":
-            self.events[event_type][-1]["resulting_cells_id"] = resulting_cells_id
+        x, y = pos
+        cell_idx = labels[y, x] - 1
+        if cell_idx < 0:
+            return 0
+        return cells_info.label[cell_idx]
 
+    def add_event(self, event_type, start_frame, end_frame, start_pos, end_pos, second_end_pos=None):
+            """
+            Adding new event to records.
+            @param resulting_cells_id: only for cell division
+            """
+            if event_type not in self.events.keys():
+                return 0
+            start_cell_id = self.get_cell_id_by_position(start_frame, start_pos)
+            end_cell_id = self.get_cell_id_by_position(end_frame, end_pos)
+            if second_end_pos is not None:
+                second_cell_id = self.get_cell_id_by_position(end_frame, second_end_pos)
+                if start_cell_id != end_cell_id and start_cell_id == second_cell_id:
+                    second_cell_id = end_cell_id
+                self.events[event_type].append({"start": start_frame, "end": end_frame, "cell": start_cell_id,
+                                                "resulting_cell": second_cell_id})
+            else:
+                if start_cell_id != end_cell_id and event_type == "differentiation":
+                    self.fix_cell_label(end_frame, end_pos, start_cell_id)
+                self.events[event_type].append({"start": start_frame, "end": end_frame, "cell": start_cell_id})
+
+
+    def draw_events(self, frame, radius=5):
+        labels = self.get_labels(frame)
+        if labels is None:
+            return 0
+        final_image = np.zeros((3,) + labels.shape)
+        for event_type in self.events.keys():
+            img = np.zeros(labels.shape)
+            color = EVENTS_COLOR[event_type]
+            for event in self.events[event_type]:
+                if event["start"] <= frame <= event["end"]:
+                    cell_label = event["cell"]
+                    cell = self.get_cell_data_by_label(cell_label, frame)
+                    if cell is None:
+                        return img
+                    else:
+                        rr, cc = disk((cell.cy, cell.cx), radius, shape=img.shape)
+                        img[rr, cc] = 1
+                        if event_type == "division":
+                            resulting_cell_label = event["resulting_cell"]
+                            resulting_cell = self.get_cell_data_by_label(resulting_cell_label, frame)
+                            if cell is None:
+                                continue
+                            rr, cc = disk((resulting_cell.cy, resulting_cell.cx), radius, shape=img.shape)
+                            img[rr, cc] = 1
+            final_image = final_image + img[np.newaxis, :, :] * np.array(color).reshape((3,1,1))
+        return final_image
 
     def calculate_frame_cellinfo(self, frame_number, hc_marker_image=None, hc_threshold=0.01, use_existing_types=False):
         """
@@ -260,6 +320,8 @@ class Tissue(object):
         if labels is None:
             return 0
         number_of_cells = int(np.max(labels))
+        if number_of_cells == 0:
+            return 0
         cells_info = make_df(number_of_cells, CELL_INFO_SPECS)
         cell_types = self.get_cell_types(frame_number)
         if use_existing_types and cell_types is not None:
@@ -270,6 +332,7 @@ class Tissue(object):
         else:
             properties = regionprops_table(labels, properties=['label', 'area', 'perimeter', 'centroid', 'bbox'])
         cell_indices = properties['label'] - 1
+        cells_info.at[cell_indices, "label"] = properties['label']
         cells_info.at[cell_indices, "area"] = properties['area']
         cells_info.at[cell_indices, "perimeter"] = properties['perimeter']
         cells_info.at[cell_indices, "cx"] = properties['centroid-1']
@@ -315,21 +378,49 @@ class Tissue(object):
         ax.set_ylabel(feature)
         ax.set_title("%s of cell number %d" % (feature, cell_id))
         self.get_cells_info(current_cell_info_frame)
-        return np.array([t, data])
+        return pd.DataFrame({"Time": t, feature: data})
 
-    def get_frame_data(self, frame, feature, valid_cells, special_features, cells_type='all'):
+    def get_frame_data(self, frame, feature, valid_cells, special_features, cells_type='all', for_histogram=False):
         if feature in special_features:
             if feature == "psi6":
                 second_order_neighbors = self.find_second_order_neighbors(frame, valid_cells, cell_type=cells_type)
-                data = self.calc_psin(frame, valid_cells, second_order_neighbors, n=6)
+                data = self.calc_psin(frame, valid_cells, second_order_neighbors, n=6, for_histogram=for_histogram)
             elif feature == "roundness":
                 data = self.calculate_cells_roundness(valid_cells)
             elif feature == "neighbors from the same type":
-                data = self.calculate_n_neighbors_from_the_same_type(frame, valid_cells)
+                data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='same')
+            elif feature == "HC neighbors":
+                data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='HC')
+            elif feature == "SC neighbors":
+                data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='SC')
             elif feature == "roundness":
                 data = self.calculate_cells_roundness(valid_cells)
-            elif feature == "neighbors from the same type":
-                data = self.calculate_n_neighbors_from_the_same_type(frame, valid_cells)
+            elif "contact length" in feature:
+                if 'HC' in feature:
+                    neighbors_type = 'HC'
+                elif 'SC' in feature:
+                    neighbors_type = 'SC'
+                else:
+                    neighbors_type = 'all'
+                if for_histogram:
+                    data = np.empty((0,))
+                else:
+                    data = np.empty((valid_cells.shape[0],))
+                    i = 0
+                labels = self.get_labels(frame)
+                max_filtered_label = maximum_filter(labels, (2,2), mode='constant')
+                min_filtered_label = minimum_filter(max_filtered_label, (2,2), mode='constant')
+
+                for index, cell in valid_cells.iterrows():
+                    _, contact_lengths = self.calculate_contact_length(frame, cell, max_filtered_label,
+                                                                       min_filtered_label,
+                                                                       cell_type=neighbors_type)
+                    if for_histogram:
+                        data = np.hstack((data, contact_lengths))
+                    else:
+                        data[i] = np.sum(contact_lengths)
+                        i += 1
+
             else:
                 return None, "Not implemented yet..."
         else:
@@ -356,6 +447,7 @@ class Tissue(object):
             ax.set_xlabel(x_feature)
             ax.set_ylabel('frequency')
             title = "%s histogram for frame %d" % (x_feature, frame)
+            res = pd.DataFrame({"Frame":[frame]*np.size(x_data), x_feature: x_data})
             plotted = True
         else:
             y_data, msg = self.get_frame_data(frame, y_feature, valid_cells,
@@ -368,16 +460,11 @@ class Tissue(object):
             ax.set_xlabel(x_feature)
             ax.set_ylabel(y_feature)
             title = "%s vs %s for frame %d" % (x_feature, y_feature, frame)
+            res = pd.DataFrame({"Frame": [frame] * np.size(x_data), x_feature: x_data, y_feature: y_data})
         if cells_type != 'all':
             title += " for %s only" % (cells_type)
         ax.set_title(title)
-        if x_data is not None and y_data is not None:
-            data = np.vstack((x_data.flatten(), y_data.flatten()))
-        elif x_data is not None:
-            data = x_data.reshape((np.size(x_data), 1))
-        else:
-            data = None
-        return data, ""
+        return res, ""
 
     def plot_compare_frames_data(self, frames, feature, ax, cells_type='all'):
         data = []
@@ -394,7 +481,7 @@ class Tissue(object):
                 valid_cells = cell_info.query("valid == 1 and type ==\"%s\"" % cells_type)
             raw_data, msg = self.get_frame_data(frame, feature, valid_cells,
                                               self.SPECIAL_FEATURES + self.SPECIAL_X_ONLY_FEATURES + self.SPECIAL_Y_ONLY_FEATURES,
-                                                cells_type)
+                                                cells_type, for_histogram=True)
             if raw_data is None:
                 return None, msg
             data.append(np.average(raw_data))
@@ -412,25 +499,28 @@ class Tissue(object):
         ax.set_title(title)
         ax.yaxis.grid(True)
         self.get_cells_info(current_cell_info_frame)
-        return data, ""
+        return pd.DataFrame({"Frame": frames, feature + " average": data, feature + " se": err, "N": n_results}), ""
 
 
     @staticmethod
     def calculate_cells_roundness(cells):
         return cells.eval("perimeter ** (3/2) / ( area * 3.14 ** (1/2) * 6 )").to_numpy()
 
-    def calculate_n_neighbors_from_the_same_type(self, frame, cells):
+    def calculate_n_neighbors_from_type(self, frame, cells, cell_type='same'):
         cell_info = self.get_cells_info(frame)
         if cell_info is None:
             return None
-        neighbors_from_the_same_type = np.zeros((cells.shape[0],))
+        neighbors_from_type = np.zeros((cells.shape[0],))
         index = 0
         for i, row in cells.iterrows():
-            cell_type = row.type
+            if cell_type == 'same':
+                look_for_type = row.type
+            else:
+                look_for_type = cell_type
             neighbors = np.array(list(row.neighbors))
-            neighbors_from_the_same_type[index] = np.sum((cell_info.type[neighbors - 1] == cell_type).to_numpy().astype(int))
+            neighbors_from_type[index] = np.sum((cell_info.type[neighbors - 1] == look_for_type).to_numpy().astype(int))
             index += 1
-        return neighbors_from_the_same_type
+        return neighbors_from_type
 
     def plot_centroids(self, frame_number):
         """
@@ -475,7 +565,27 @@ class Tissue(object):
             self.cells_info.at[cell_index, "n_neighbors"] = len(cells_info.neighbors[cell_index])
         return
 
-    def track_cells(self, initial_frame=1, final_frame=-1):
+    def calculate_contact_length(self, frame, cell_info, max_filtered_labels, min_filtered_labels, cell_type='all'):
+        cells_info = self.get_cells_info(frame)
+        cell_label = cell_info.label
+        region_first_row = max(0, cell_info.bounding_box_min_row - 2)
+        region_last_row = cell_info.bounding_box_max_row + 2
+        region_first_col = max(0, cell_info.bounding_box_min_col - 2)
+        region_last_col = cell_info.bounding_box_max_col + 2
+        max_filtered_region = max_filtered_labels[region_first_row:region_last_row, region_first_col:region_last_col]
+        min_filtered_region = min_filtered_labels[region_first_row:region_last_row, region_first_col:region_last_col]
+        neighbor_labels = np.array(list(cell_info.neighbors.copy()))
+        if cell_type != 'all':
+            neighbors_from_the_right_type = (cells_info.type[np.array(neighbor_labels) - 1] == cell_type).to_numpy()
+            neighbor_labels = neighbor_labels[neighbors_from_the_right_type]
+        contact_length = []
+        for neighbor_label in neighbor_labels:
+            max_label = max(cell_label, neighbor_label)
+            min_label = min(cell_label, neighbor_label)
+            contact_length.append(np.sum(np.logical_and(max_filtered_region == max_label, min_filtered_region == min_label)).astype(int))
+        return neighbor_labels, contact_length
+
+    def track_cells(self, initial_frame=1, final_frame=-1, images=None):
         if final_frame == -1:
             final_frame = self.number_of_frames
         cells_info = self.get_cells_info(initial_frame)
@@ -485,23 +595,35 @@ class Tissue(object):
         last_used_label = cells_info.label.max()
         cells_info.at[unlabeled_cells, "label"] = np.arange(last_used_label + 1,
                                                             last_used_label + np.sum(unlabeled_cells.astype(int)) + 1)
-        cx_previous_frame = cells_info.cx.to_numpy()
-        cy_previous_frame = cells_info.cy.to_numpy()
+        cx_previous_frame = np.copy(cells_info.cx.to_numpy())
+        cy_previous_frame = np.copy(cells_info.cy.to_numpy())
         labels_previous_frame = cells_info.label.to_numpy()
-        previous_frame = 0
+        previous_frame = initial_frame
         self.cells_number = max(self.cells_number, cells_info.label.max())
         for frame in range(initial_frame + 1, final_frame + 1):
-            cx_previous_frame, cy_previous_frame = self.get_registration_correction(cx_previous_frame,
-                                                                                    cy_previous_frame,
-                                                                                    previous_frame, frame)
+            if (self.drifts > 0).any():
+                cx_previous_frame -= self.drifts[frame - 1, 1]
+                cy_previous_frame -= self.drifts[frame - 1, 0]
+            elif images is not None:
+                previous_img = images[previous_frame-1, :, 0, :, :].compute()
+                current_img = images[frame-1, :, 0, :, :].compute()
+                shift, error, diffphase = phase_cross_correlation(previous_img, current_img, upsample_factor=100)
+                self.drifts[frame-1, :] = shift[-2:]
+                cx_previous_frame -= shift[-1]
+                cy_previous_frame -= shift[-2]
+
             cells_info = self.get_cells_info(frame)
             labels = self.get_labels(frame)
             if cells_info is None or labels is None:
                 continue
             cells_info.at[:, "label"] = 0
-
-            indices_in_current_frame = labels[np.round(cy_previous_frame).astype(int),
-                                              np.round(cx_previous_frame).astype(int)] - 1
+            indices_in_current_frame = -1 * np.ones(cy_previous_frame.shape)
+            y_locations = np.round(cy_previous_frame).astype(int)
+            x_locations = np.round(cx_previous_frame).astype(int)
+            valid_locations = np.logical_and(np.logical_and(0 <= y_locations, y_locations < labels.shape[0]),
+                              np.logical_and(0 <= x_locations, x_locations < labels.shape[1]))
+            indices_in_current_frame[valid_locations] = labels[np.round(cy_previous_frame[valid_locations]).astype(int),
+                                              np.round(cx_previous_frame[valid_locations]).astype(int)] - 1
             cells_info.at[indices_in_current_frame[indices_in_current_frame >= 0], "label"] = \
                 labels_previous_frame[indices_in_current_frame >= 0]
             unlabeled_cells = (cells_info.label.to_numpy() == 0)
@@ -510,16 +632,34 @@ class Tissue(object):
                                                                 last_used_label + np.sum(
                                                                     unlabeled_cells.astype(int)) + 1)
             self.cells_number = max(self.cells_number, cells_info.label.max())
-            cx_previous_frame = cells_info.cx.to_numpy()
-            cy_previous_frame = cells_info.cy.to_numpy()
+            cx_previous_frame = np.copy(cells_info.cx.to_numpy())
+            cy_previous_frame = np.copy(cells_info.cy.to_numpy())
             labels_previous_frame = cells_info.label.to_numpy()
             previous_frame = frame
             yield frame
         yield previous_frame
 
-    def get_registration_correction(self, x, y, origin_frame, destination_frame):
-        # TODO: implement
-        return x,y
+    def fix_cell_label(self, frame, position, new_label):
+        if new_label <= 0:
+            return 0
+        labels = self.get_labels(frame)
+        if labels is None:
+            return 0
+        x, y = position
+        cell_idx = labels[y, x] - 1
+        if cell_idx < 0:
+            return 0
+        cells_info = self.get_cells_info(frame)
+        if cells_info is not None:
+            current_label = cells_info.label[cell_idx]
+            cells_with_same_label_index = cells_info.query("label == %d" % new_label).index
+            if len(cells_with_same_label_index) > 0:
+                cells_info.at[cells_with_same_label_index[0],"label"] = current_label
+            cells_info.at[cell_idx, "label"] = new_label
+            tracking_iterator = self.track_cells(initial_frame=frame)
+            for frame in tracking_iterator:
+                continue
+        return 0
 
     def calc_cell_types(self, hc_marker_image, frame_number, properties=None, hc_threshold=0.1):
         cells_info = self.get_cells_info(frame_number)
@@ -578,14 +718,14 @@ class Tissue(object):
             index += 1
         return second_order_neighbors
 
-    def calc_psin(self, frame, cells, second_order_neighbors, n=6):
+    def calc_psin(self, frame, cells, second_order_neighbors, n=6, for_histogram=False):
         cell_info = self.get_cells_info(frame)
         if cell_info is None:
             return None
         psin = np.zeros(cells.shape[0])
         index = 0
         for i, row in cells.iterrows():
-            if len(second_order_neighbors[index]) == 0:
+            if for_histogram and len(second_order_neighbors[index]) == 0:
                 index += 1
                 continue
             cell_x = row.cx
@@ -593,7 +733,10 @@ class Tissue(object):
             second_order_neigbors_indices = np.array(list(second_order_neighbors[index])) - 1
             neighbors_xs = cell_info.cx[second_order_neigbors_indices].to_numpy()
             neighbors_ys = cell_info.cy[second_order_neigbors_indices].to_numpy()
-            psin[index] = np.abs(np.sum(np.exp(-n * 1j * np.arctan2(neighbors_ys-cell_y, neighbors_xs-cell_x))))/np.size(neighbors_xs)
+            if np.size(neighbors_xs) > 0:
+                psin[index] = np.abs(np.sum(np.exp(-n * 1j * np.arctan2(neighbors_ys-cell_y, neighbors_xs-cell_x))))/np.size(neighbors_xs)
+            else:
+                psin[index] = 0
             index += 1
         return psin
 
@@ -631,71 +774,86 @@ class Tissue(object):
 
     def add_segmentation_line(self, frame, point1, point2=None, initial=False, final=False, hc_marker_image=None,
                               hc_threshold=0.1, use_existing_types=False):
+        points_too_far = False
         labels = self.get_labels(frame)
         if labels is None:
             return 0
         x1, y1 = point1
-        former_label = labels[y1, x1]
+        if initial:
+            self._labels_copy_for_line_addition = np.copy(labels)
+        if point2 is not None:
+            x2, y2 = point2
+            if (x1-x2)**2 + (y1-y2)**2 > MAX_SEG_LINE_LENGTH**2:
+                x1, y1 = point2
+                point1 = point2
+                point2 = None
+                points_too_far = True
+                final = True
+        if point2 is None:
+            x2, y2 = self.find_nearest_segmentation_pixel(self._labels_copy_for_line_addition, point1)
+        former_label = np.max(labels[max(y1-1,0):y1+1, max(x1-1, 0):x1+1])
         if initial:
             self.last_added_line.append((x1, y1))
             self.last_action.append("add")
             self._finished_last_line_addition = False
-            self._label_before_line_addition = former_label
+            self._label_before_line_addition = [former_label] if former_label > 0 else []
         elif not final and former_label > 0:
-            self._label_before_line_addition = former_label
-        if point2:
-            x2, y2 = point2
-        else:
-            x2, y2 = self.find_nearest_segmentation_pixel(labels, point1)
+            self._label_before_line_addition.append(former_label)
         rr, cc = line(y1, x1, y2, x2)
         self.labels[rr, cc] = 0
         if self.get_cell_types(frame) is not None:
             self.cell_types[rr, cc] = 0
         if final:
-            self.update_after_adding_segmentation_line(self._label_before_line_addition, frame, hc_marker_image,
-                                                       hc_threshold, use_existing_types)
+            if len(self._label_before_line_addition) > 0:
+                label_before_addition = np.bincount(self._label_before_line_addition).argmax()  # majority vote for former label
+                self.update_after_adding_segmentation_line(label_before_addition, frame, hc_marker_image,
+                                                           hc_threshold, use_existing_types)
             self._finished_last_line_addition = True
-        return 0
+        return int(points_too_far)
 
     def remove_segmentation_line(self, frame, point1, hc_marker_image=None, hc_threshold=0.1, part_of_undo=False,
                                  use_existing_types=False):
         labels = self.get_labels(frame)
         if labels is None:
             return 0
-        point = self.find_nearest_segmentation_pixel(labels, point1, distance_limit=10)
-        if point is None:
+        point = self.find_nearest_segmentation_pixel(labels, point1, distance_limit=20)
+        if point[0] is None:
             return 0
         if not part_of_undo:
             self.last_action.append("remove")
-        self._neighbors_labels = (0, 0)
+        self._neighbors_labels = []
         labels[labels < 0] -= 1
 
         def remove_neighboring_points_on_line(last_point, initial_point=False):
             x, y = last_point
             labels[y, x] = -1  # Removing the initial point
-            neighborhood = labels[y-1:y+2, x-1:x+2]
+            neighborhood = labels[max(0,y-1):y+2, max(0,x-1):x+2]
             unique_neighborhood = np.unique(neighborhood[neighborhood > 0])
-            if len(unique_neighborhood) > 2:  # More than 2 cells in neighborhood -> reached the edge
-                labels[y, x] = 0
-                return 0
-            elif self._neighbors_labels == (0,0):
-                if len(unique_neighborhood) == 2:
-                    self._neighbors_labels = (unique_neighborhood[0], unique_neighborhood[1])
-                if len(unique_neighborhood) == 1:
-                    self._neighbors_labels = (unique_neighborhood[0], unique_neighborhood[0])
-            elif not np.isin(unique_neighborhood, self._neighbors_labels).all():
-                labels[y, x] = 0
-                return 0
             neighbors_relative_indices = np.where(neighborhood == 0)
             neighbors_xs = neighbors_relative_indices[1] + x - 1
             neighbors_ys = neighbors_relative_indices[0] + y - 1
             if initial_point or len(neighbors_xs) == 1:
+                if len(unique_neighborhood) > 0:
+                    for neighbor in unique_neighborhood:
+                        if neighbor not in self._neighbors_labels:
+                            self._neighbors_labels.append(neighbor)
+                if len(self._neighbors_labels) > 2:  # Reached a third neighbor -> reached the edge
+                    labels[y, x] = 0
+                    return 0
                 for neighbor_x, neighbor_y in zip(neighbors_xs, neighbors_ys):
                     remove_neighboring_points_on_line((neighbor_x, neighbor_y))
+            elif len(neighbors_xs) > 1:
+                for neighbor in unique_neighborhood:
+                    if neighbor not in self._neighbors_labels:
+                        labels[y, x] = 0
+                        return 0
+                remove_neighboring_points_on_line((neighbors_xs[0], neighbors_ys[0]))
             return 0
 
         remove_neighboring_points_on_line(point, True)
-        self.update_after_segmentation_line_removal(self._neighbors_labels[0], self._neighbors_labels[1], frame,
+        first_neighbor = self._neighbors_labels[0] if len(self._neighbors_labels) > 0 else 0
+        second_neighbor = self._neighbors_labels[1] if len(self._neighbors_labels) > 1 else first_neighbor
+        self.update_after_segmentation_line_removal(first_neighbor, second_neighbor, frame,
                                                     hc_marker_image, hc_threshold, part_of_undo, use_existing_types)
         return 0
 
@@ -705,6 +863,8 @@ class Tissue(object):
             return 0
         x,y = pos
         cell_idx = labels[y, x] - 1
+        if cell_idx < 0:
+            return 0
         cells_info = self.get_cells_info(frame)
         if cells_info is not None:
             current_type = cells_info.type[cell_idx]
@@ -798,6 +958,14 @@ class Tissue(object):
                     cell_info.at[delete_label - 1, "empty_cell"] = 1
                     cell_info.at[delete_label - 1, "neighbors"] = set()
                     cell_info.at[delete_label - 1, "n_neighbors"] = 0
+            else:
+                new_label = cell1_label
+                if part_of_undo:
+                    labels[labels == -1] = new_label
+                    labels[labels < 0] += 1
+                    if not self._finished_last_line_addition:
+                        self._finished_last_line_addition = True
+                        return 0
         return 0
 
     def update_after_adding_segmentation_line(self, cell_label, frame, hc_marker_image=None, hc_threshold=0.1,
@@ -816,7 +984,7 @@ class Tissue(object):
             else:
                 empty_indices = np.argwhere(cell_info.empty_cell.to_numpy() == 1)
                 if len(empty_indices) > 0:
-                    new_label = empty_indices[0] + 1
+                    new_label = empty_indices[0,0] + 1
                 else:
                     new_label = cell_info.shape[0] + 1
                 cell = cell_info.iloc[cell_label - 1]
@@ -824,64 +992,79 @@ class Tissue(object):
                 bounding_box_min_col = cell.bounding_box_min_col
                 bounding_box_max_row = cell.bounding_box_max_row
                 bounding_box_max_col = cell.bounding_box_max_col
-            cell_region = labels[min(0,bounding_box_min_row-2):bounding_box_max_row+2, min(0,bounding_box_min_col-2):bounding_box_max_col+2]
-            new_region_labels = label_image_regions((cell_region != 0).astype(int), connectivity=1, background=0)
+            region_first_row = max(0,bounding_box_min_row-2)
+            region_first_col = max(0,bounding_box_min_col-2)
+            region_last_row = bounding_box_max_row+2
+            region_last_col = bounding_box_max_col+2
+            cell_region = labels[region_first_row:region_last_row, region_first_col:region_last_col]
+            new_region_labels = label_image_regions((cell_region > 0).astype(int), connectivity=1, background=0)
             cell1_label = np.min(new_region_labels[cell_region == cell_label])
             cell2_label = np.max(new_region_labels[cell_region == cell_label])
             cell_region[new_region_labels == cell1_label] = cell_label
             cell_region[new_region_labels == cell2_label] = new_label
-            labels[min(0,bounding_box_min_row-2):bounding_box_max_row+2, min(0,bounding_box_min_col-2):bounding_box_max_col+2] = cell_region
+            labels[region_first_row:region_last_row, region_first_col:region_last_col] = cell_region
             if cell_info is not None:
                 if use_existing_types and cell_types is not None:
                     hc_marker_image = (cell_types == HC_TYPE).astype(float)
                 if hc_marker_image is None:
                     properties = regionprops(cell_region)
                 else:
-                    hc_marker_region = hc_marker_image[bounding_box_min_row:bounding_box_max_row,
-                                       bounding_box_min_col:bounding_box_max_col]
+                    hc_marker_region = hc_marker_image[region_first_row:region_last_row,
+                                                       region_first_col:region_last_col]
                     properties = regionprops(cell_region, intensity_image=hc_marker_region)
+                    max_intensity = np.max(hc_marker_image[hc_marker_image > 0])
                 for region in properties:
                     if region.label == cell_label:
                         cell_info.at[cell_label - 1, "area"] = region.area
                         cell_info.at[cell_label - 1, "perimeter"] = region.perimeter
-                        cell_info.at[cell_label - 1, "cx"] = region.centroid[1]
-                        cell_info.at[cell_label - 1, "cy"] = region.centroid[0]
-                        cell_info.at[cell_label - 1, "bounding_box_min_row"] = region.bbox[0]
-                        cell_info.at[cell_label - 1, "bounding_box_min_col"] = region.bbox[1]
-                        cell_info.at[cell_label - 1, "bounding_box_max_row"] = region.bbox[2]
-                        cell_info.at[cell_label - 1, "bounding_box_max_col"] = region.bbox[3]
+                        cell_info.at[cell_label - 1, "cx"] = region.centroid[1] + region_first_col
+                        cell_info.at[cell_label - 1, "cy"] = region.centroid[0] + region_first_row
+                        cell_info.at[cell_label - 1, "bounding_box_min_row"] = region.bbox[0] + region_first_row
+                        cell_info.at[cell_label - 1, "bounding_box_min_col"] = region.bbox[1] + region_first_col
+                        cell_info.at[cell_label - 1, "bounding_box_max_row"] = region.bbox[2] + region_first_row
+                        cell_info.at[cell_label - 1, "bounding_box_max_col"] = region.bbox[3] + region_first_col
                         cell_info.at[cell_label - 1, "valid"] = MIN_CELL_AREA < region.area < MAX_CELL_AREA
+                        if hc_marker_image is not None:
+                            mean_intensity = region.mean_intensity
+                            if mean_intensity > hc_threshold * max_intensity:
+                                cell_info.at[cell_label - 1, "type"] = "HC"
+                                if cell_types is not None:
+                                    cell_types[labels == cell_label] = HC_TYPE
+                            else:
+                                cell_info.at[cell_label - 1, "type"] = "SC"
+                                if cell_types is not None:
+                                    cell_types[labels == cell_label] = SC_TYPE
                     elif region.label == new_label:
                         new_cell_info = {"area": region.area,
+                                         "label": new_label,
                                          "perimeter": region.perimeter,
-                                         "cx": region.centroid[1],
-                                         "cy": region.centroid[0],
-                                         "bounding_box_min_row": region.bbox[0],
-                                         "bounding_box_min_col": region.bbox[1],
-                                         "bounding_box_max_row": region.bbox[2],
-                                         "bounding_box_max_col": region.bbox[3],
+                                         "cx": region.centroid[1] + region_first_col,
+                                         "cy": region.centroid[0] + region_first_row,
+                                         "bounding_box_min_row": region.bbox[0] + region_first_row,
+                                         "bounding_box_min_col": region.bbox[1] + region_first_col,
+                                         "bounding_box_max_row": region.bbox[2] + region_first_row,
+                                         "bounding_box_max_col": region.bbox[3] + region_first_col,
                                          "valid": MIN_CELL_AREA < region.area < MAX_CELL_AREA,
                                          "empty_cell": 0,
-                                         "neighbors": set()}
+                                         "neighbors": set(),
+                                         "n_neighbors": 0}
+                        if hc_marker_image is not None:
+                            mean_intensity = region.mean_intensity
+                            if mean_intensity > hc_threshold * max_intensity:
+                                new_cell_info["type"] = "HC"
+                                if cell_types is not None:
+                                    cell_types[labels == new_label] = HC_TYPE
+                            else:
+                                new_cell_info["type"] = "SC"
+                                if cell_types is not None:
+                                    cell_types[labels == new_label] = SC_TYPE
                         cell_info.loc[new_label - 1] = pd.Series(new_cell_info)
                 old_cell_neighbors = list(cell_info.neighbors[cell_label - 1].copy())
                 for neighbor_label in old_cell_neighbors:
                     cell_info.at[neighbor_label - 1, "neighbors"].remove(cell_label)
                 cell_info.at[cell_label - 1, "neighbors"] = set()
-                need_to_update_neighbors = list(cell_info.neighbors[cell_label]) + [cell_label + new_label]
+                need_to_update_neighbors = list(cell_info.neighbors[cell_label]) + [cell_label, new_label]
                 self.find_neighbors(frame, labels_region=cell_region, only_for_labels=need_to_update_neighbors)
-                if hc_marker_image is not None:
-                    max_intensity = np.max(hc_marker_image[hc_marker_image > 0])
-                    for i in [new_label, cell_label]:
-                        mean_intensity = np.mean(hc_marker_image[labels == i])
-                        if mean_intensity > hc_threshold * max_intensity:
-                            cell_info.at[i - 1, "type"] = "HC"
-                            if cell_types is not None:
-                                cell_types[labels == i] = HC_TYPE
-                        else:
-                            cell_info.at[i - 1, "type"] = "SC"
-                            if cell_types is not None:
-                                cell_types[labels == i] = SC_TYPE
 
     def update_labels(self, frame):
         labels = self.get_labels(frame)
@@ -905,6 +1088,8 @@ class Tissue(object):
 
     def undo_line_removal(self, frame, hc_marker_image=None):
         labels = self.get_labels(frame)
+        if labels is None:
+            return
         line_pixels = np.argwhere(labels == -1)
         first_pixel = line_pixels[0]
         neighborhood = labels[first_pixel[0]-1:first_pixel[0]+2, first_pixel[1]-1:first_pixel[1]+2]
@@ -934,8 +1119,8 @@ class Tissue(object):
                 for i in range(y-distance, y+distance+1):
                     if labels[i, j] == 0:
                         return j, i
-        if distance_limit:
-            return None
+        if distance_limit > 0:
+            return None, None
         else:
             edges = [0, labels.shape[1], 0, labels.shape[2]]
             if nearest_edge < 2:
@@ -963,7 +1148,7 @@ class Tissue(object):
             self.cell_types = np.load(file_path)
         else:
             self.cell_types = None
-        self.labels_frame = frame_number
+        self.cell_types_frame = frame_number
         return self.cell_types
 
     def load_cells_info(self, frame_number):
@@ -974,6 +1159,21 @@ class Tissue(object):
             self.cells_info = None
         self.cells_info_frame = frame_number
         return self.cells_info
+
+    def remove_labels(self):
+        file_path = os.path.join(self.working_dir, "frame_%d_labels.npy" % self.labels_frame)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+
+    def remove_cell_types(self):
+        file_path = os.path.join(self.working_dir, "frame_%d_types.npy" % self.cell_types_frame)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+
+    def remove_cells_info(self):
+        file_path = os.path.join(self.working_dir, "frame_%d_data.pkl" % self.cells_info_frame)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
 
     def save_labels(self):
         if self.labels is not None:
