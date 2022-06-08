@@ -6,5 +6,6 @@ save_non_project_files = False
 
 [main]
 version = 0.2.0
-recent_files = ['basic_image_manipulations.py', 'Tests.py', 'tissue_info.py']
+recent_files = ['basic_image_manipulations.py', 'Tests.py', 'surface_projection.py']
+
 
