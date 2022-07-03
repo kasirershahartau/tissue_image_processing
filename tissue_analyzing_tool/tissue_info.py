@@ -148,9 +148,21 @@ class Tissue(object):
         self._finished_last_line_addition = True
         self._labels_copy_for_line_addition = None
         self.cells_number = 0
+        self.valid_frames = np.ones((number_of_frames,)).astype(int)
 
     def __del__(self):
         shutil.rmtree(self.working_dir)
+
+    def is_valid_frame(self, frame):
+        if 0 < frame <= self.number_of_frames:
+            return self.valid_frames[frame - 1]
+        else:
+            return 0
+
+    def set_validity_of_frame(self, frame, valid=True):
+        if 0 < frame <= self.number_of_frames:
+            self.valid_frames[frame - 1] = int(valid)
+        return 0
 
     def reset_all_data(self):
         self.cells_info = None
@@ -1237,6 +1249,12 @@ class Tissue(object):
             self.drifts = np.load(file_path)
         return self.drifts
 
+    def load_valid_frames(self):
+        file_path = os.path.join(self.working_dir, "valid_frames.npy")
+        if os.path.isfile(file_path):
+            self.valid_frames = np.load(file_path)
+        return self.valid_frames
+
     def remove_labels(self):
         file_path = os.path.join(self.working_dir, "frame_%d_labels.npy" % self.labels_frame)
         if os.path.isfile(file_path):
@@ -1268,6 +1286,14 @@ class Tissue(object):
             np.save(file_path, self.drifts)
         return 0
 
+    def save_valid_frames(self):
+        if self.drifts is not None:
+            file_path = os.path.join(self.working_dir, "valid_frames.npy")
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+            np.save(file_path, self.valid_frames)
+        return 0
+
     def save_cell_types(self):
         if self.cell_types is not None:
             file_path = os.path.join(self.working_dir, "frame_%d_types.npy" % self.cell_types_frame)
@@ -1296,6 +1322,7 @@ class Tissue(object):
         self.save_cell_types()
         self.save_events()
         self.save_drifts()
+        self.save_valid_frames()
         for percent_done in pack_archive_with_progress(self.working_dir, path.replace(".seg", "") + ".seg"):
             yield percent_done
         return 0
@@ -1318,6 +1345,7 @@ class Tissue(object):
             self.load_cells_info(self.cells_info_frame)
         self.load_events()
         self.load_drifts()
+        self.load_valid_frames()
         return 0
 
 

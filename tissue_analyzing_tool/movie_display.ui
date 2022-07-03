@@ -1119,6 +1119,19 @@ memory</string>
      <string>Abort</string>
     </property>
    </widget>
+   <widget class="QCheckBox" name="valid_frame_check_box">
+    <property name="geometry">
+     <rect>
+      <x>930</x>
+      <y>870</y>
+      <width>81</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>valid frame</string>
+    </property>
+   </widget>
    <zorder>track_cells_button</zorder>
    <zorder>open_file_pb</zorder>
    <zorder>zo_check_box</zorder>
@@ -1199,6 +1212,7 @@ memory</string>
    <zorder>load_to_memory_check_box</zorder>
    <zorder>show_events_button</zorder>
    <zorder>abort_event_marking_button</zorder>
+   <zorder>valid_frame_check_box</zorder>
   </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">

@@ -189,7 +189,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.mark_event_combo_box.clear()
         self.mark_event_combo_box.addItems(tissue_info.EVENT_TYPES)
         self.abort_event_marking_button.clicked.connect(self.abort_event_marking)
-
+        self.valid_frame_check_box.stateChanged.connect(self.change_frame_validity)
 
     def open_file(self):
         global img
@@ -272,6 +272,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         QI.setColorTable(COLORTABLE)
         self.image_display.setPhoto(QtGui.QPixmap.fromImage(QI))
         self.display_histogram()
+        valid_frame = self.tissue_info.is_valid_frame(frame_number)
+        self.valid_frame_check_box.setChecked(valid_frame)
 
     def display_histogram(self):
         channel = self.img_dimensions.C
@@ -303,6 +305,10 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         if self.current_segmentation is None:
             self.show_segmentation_check_box.setEnabled(False)
 
+    def change_frame_validity(self):
+        frame_number = self.frame_slider.value()
+        valid = self.valid_frame_check_box.isChecked()
+        self.tissue_info.set_validity_of_frame(frame_number, valid)
 
     def cells_number_changed(self):
         cells_num = self.tissue_info.get_cells_number()
@@ -541,6 +547,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.segmentation_kernel_std_label.setEnabled(True)
             self.load_segmentation_button.setEnabled(True)
             self.pixel_info.setEnabled(True)
+            self.valid_frame_check_box.setEnabled(True)
         else:
             segmentation = False
             analysis = False
@@ -584,6 +591,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.mark_event_combo_box.setEnabled(False)
             self.show_events_check_box.setEnabled(False)
             self.show_events_button.setEnabled(False)
+            self.valid_frame_check_box.setEnabled(False)
         if segmentation:
             self.show_segmentation_check_box.setEnabled(True)
             self.save_segmentation_button.setEnabled(True)
