@@ -106,6 +106,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.setState()
         self.saveFile = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+S"), self)
         self.undo = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+Z"), self)
+        self.next = QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Right), self)
+        self.previous = QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Left), self)
+        self.toggle_valid = QtWidgets.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_V), self)
         self.connect_methods()
         self.hide_progress_bars()
         self.img = None
@@ -169,6 +172,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.show_events_button.clicked.connect(self.display_events)
         self.saveFile.activated.connect(self.save_data)
         self.undo.activated.connect(self.undo_last_action)
+        self.next.activated.connect(self.next_frame)
+        self.previous.activated.connect(self.previous_frame)
+        self.toggle_valid.activated.connect(self.toggle_valid_frame)
         self.save_segmentation_button.clicked.connect(self.save_data)
         self.load_segmentation_button.clicked.connect(self.load_data)
         self.analyze_segmentation_button.clicked.connect(self.analyze_segmentation)
@@ -274,6 +280,16 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.display_histogram()
         valid_frame = self.tissue_info.is_valid_frame(frame_number)
         self.valid_frame_check_box.setChecked(valid_frame)
+
+    def next_frame(self):
+        self.frame_slider.setValue(self.frame_slider.value() + 1)
+
+    def previous_frame(self):
+        self.frame_slider.setValue(self.frame_slider.value() - 1)
+
+    def toggle_valid_frame(self):
+        self.valid_frame_check_box.setChecked(not self.valid_frame_check_box.isChecked())
+
 
     def display_histogram(self):
         channel = self.img_dimensions.C
