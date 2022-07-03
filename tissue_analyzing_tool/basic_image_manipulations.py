@@ -56,7 +56,7 @@ def read_whole_image(path, dims_order="TCZYX"):
     data = img.get_image_data(dims_order)
     return data, img.dims, img.metadata
 
-def read_virtual_image(path, dims_order="TCZXY"):
+def read_virtual_image(path, dims_order="TCZYX"):
     img = AICSImage(path)
     data = img.get_image_dask_data(dims_order)
     return data, img.dims, img.metadata
