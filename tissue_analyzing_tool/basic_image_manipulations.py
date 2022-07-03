@@ -15,12 +15,8 @@ from tifffile import TiffFile, imwrite
 from aicsimageio import AICSImage
 from aicsimageio.readers import czi_reader, bioformats_reader
 from aicsimageio.writers import ome_tiff_writer
-from matplotlib import pyplot as plt
-from cv2 import GaussianBlur as gaus
-import cv2
 import skimage.segmentation as skim
 from skimage.filters import difference_of_gaussians, threshold_local
-from scipy.fftpack import fftshift, fftn
 from skimage.transform import resize
 from skimage.registration import phase_cross_correlation
 
