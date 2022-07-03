@@ -17,7 +17,7 @@
    <widget class="QPushButton" name="open_file_pb">
     <property name="geometry">
      <rect>
-      <x>1340</x>
+      <x>1290</x>
       <y>40</y>
       <width>75</width>
       <height>23</height>
@@ -1079,6 +1079,46 @@ Middle mouse button -  delete line
      <string>Press on the correct cell</string>
     </property>
    </widget>
+   <widget class="QCheckBox" name="load_to_memory_check_box">
+    <property name="geometry">
+     <rect>
+      <x>1370</x>
+      <y>30</y>
+      <width>81</width>
+      <height>41</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Load to
+memory</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="show_events_button">
+    <property name="geometry">
+     <rect>
+      <x>1300</x>
+      <y>680</y>
+      <width>75</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Show events</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="abort_event_marking_button">
+    <property name="geometry">
+     <rect>
+      <x>1300</x>
+      <y>650</y>
+      <width>75</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Abort</string>
+    </property>
+   </widget>
    <zorder>track_cells_button</zorder>
    <zorder>open_file_pb</zorder>
    <zorder>zo_check_box</zorder>
@@ -1156,6 +1196,9 @@ Middle mouse button -  delete line
    <zorder>mark_event_combo_box</zorder>
    <zorder>fix_tracking_button</zorder>
    <zorder>fix_tracking_label</zorder>
+   <zorder>load_to_memory_check_box</zorder>
+   <zorder>show_events_button</zorder>
+   <zorder>abort_event_marking_button</zorder>
   </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">

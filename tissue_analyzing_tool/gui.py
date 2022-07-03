@@ -1,11 +1,5 @@
-
-import vispy
-
+from PyQt5 import QtCore, uic, QtWidgets, QtGui
 import tissue_info
-
-# vispy.use('PyQt5')
-from PyQt5.QtWidgets import *
-from PyQt5.uic import loadUi
 import matplotlib
 matplotlib.use('Qt5Agg')
 import os.path, shutil
@@ -13,18 +7,13 @@ import re
 from basic_image_manipulations import *
 from tissue_info import Tissue
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-import matplotlib.pyplot as plt
-from PyQt5.QtWidgets import QDialog, QFileDialog, QMessageBox, QProgressBar, QShortcut, QVBoxLayout, QWidget
-from PyQt5.QtGui import QIcon, QPixmap, QImage, qRgb, QKeySequence
-from PyQt5.QtCore import QTimer, QThread, pyqtSignal, Qt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
-
-
+import cv2
 
 COLORTABLE=[]
 WORKING_DIR = "D:\\Kasirer\\experimental_results\\"
+BASEDIR = os.path.dirname(__file__)
 from numexpr import utils
 
 utils.MAX_THREADS = 8
@@ -52,13 +41,13 @@ class CustomNavigationToolbar(NavigationToolbar):
             matplotlib.rcParams['savefig.directory'] = self.working_dir
         super(CustomNavigationToolbar, self).save_figure(*args)
         if self.data is not None:
-            file_path = QFileDialog.getSaveFileName(self, 'Choose a file name to save data',
+            file_path = QtWidgets.QFileDialog.getSaveFileName(self, 'Choose a file name to save data',
                                                     directory=matplotlib.rcParams['savefig.directory'])[0]
             if file_path:
                 self.data.to_pickle(file_path)
 
 
-class PlotDataWindow(QMainWindow):
+class PlotDataWindow(QtWidgets.QMainWindow):
     def __init__(self, parent=None, working_dir=None):
         super(PlotDataWindow, self).__init__(parent)
         self.setWindowTitle("Data plot")
@@ -69,12 +58,12 @@ class PlotDataWindow(QMainWindow):
     def create_toolbar(self, data):
         # Create toolbar, passing canvas as first parament, parent (self, the MainWindow) as second.
         toolbar = CustomNavigationToolbar(self.canvas, self, data, self.working_dir)
-        layout = QVBoxLayout()
+        layout = QtWidgets.QVBoxLayout()
         layout.addWidget(toolbar)
         layout.addWidget(self.canvas)
 
         # Create a placeholder widget to hold our toolbar and canvas.
-        widget = QWidget()
+        widget = QtWidgets.QWidget()
         widget.setLayout(layout)
         self.setCentralWidget(widget)
 
@@ -86,17 +75,41 @@ class PlotDataWindow(QMainWindow):
         super(PlotDataWindow, self).show()
 
 
-class FormImageProcessing(QMainWindow):
+class PandasModel(QtCore.QAbstractTableModel):
+    def __init__(self, data):
+        QtCore.QAbstractTableModel.__init__(self)
+        self._data = data
+
+    def rowCount(self, parent=None):
+        return self._data.shape[0]
+
+    def columnCount(self, parnet=None):
+        return self._data.shape[1]
+
+    def data(self, index, role=QtCore.Qt.DisplayRole):
+        if index.isValid():
+            if role == QtCore.Qt.DisplayRole:
+                return str(self._data.iloc[index.row(), index.column()])
+        return None
+
+    def headerData(self, col, orientation, role):
+        if orientation == QtCore.Qt.Horizontal and role == QtCore.Qt.DisplayRole:
+            return self._data.columns[col]
+        return None
+
+
+class FormImageProcessing(QtWidgets.QMainWindow):
     def __init__(self, parent=None):
         super(FormImageProcessing, self).__init__(parent)
-        loadUi("movie_display.ui", self)
+        uic.loadUi(os.path.join(BASEDIR, "movie_display.ui"), self)
         self.setWindowTitle("Movie Segmentation")
         self.setState()
-        self.saveFile = QShortcut(QKeySequence("Ctrl+S"), self)
-        self.undo = QShortcut(QKeySequence("Ctrl+Z"), self)
+        self.saveFile = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+S"), self)
+        self.undo = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+Z"), self)
         self.connect_methods()
         self.hide_progress_bars()
         self.img = None
+        self.img_in_memory = False
         self.img_dimensions = None
         self.img_metadata = None
         self.current_frame = None
@@ -153,6 +166,7 @@ class FormImageProcessing(QMainWindow):
         self.cell_tracking_spin_box.valueChanged.connect(self.analysis_related_widget_changed)
         self.show_neighbors_check_box.stateChanged.connect(self.analysis_related_widget_changed)
         self.show_events_check_box.stateChanged.connect(self.analysis_related_widget_changed)
+        self.show_events_button.clicked.connect(self.display_events)
         self.saveFile.activated.connect(self.save_data)
         self.undo.activated.connect(self.undo_last_action)
         self.save_segmentation_button.clicked.connect(self.save_data)
@@ -173,19 +187,25 @@ class FormImageProcessing(QMainWindow):
         self.fix_tracking_button.clicked.connect(self.correct_tracking)
         self.mark_event_button.clicked.connect(self.mark_event)
         self.mark_event_combo_box.clear()
-        self.mark_event_combo_box.addItems(tissue_info.EVENTS_COLOR.keys())
+        self.mark_event_combo_box.addItems(tissue_info.EVENT_TYPES)
+        self.abort_event_marking_button.clicked.connect(self.abort_event_marking)
 
 
     def open_file(self):
         global img
-        fname = QFileDialog.getOpenFileName(caption='Open File',
+        fname = QtWidgets.QFileDialog.getOpenFileName(caption='Open File',
                                             directory=self.working_directory, filter="images (*.czi, *.tif)")[0]
         if not fname or os.path.isdir(fname):
             return 0
         try:
-            self.img, self.img_dimensions, self.img_metadata = read_virtual_image(fname)
+            if self.load_to_memory_check_box.isChecked():
+                self.img, self.img_dimensions, self.img_metadata = read_whole_image(fname)
+                self.img_in_memory = True
+            else:
+                self.img, self.img_dimensions, self.img_metadata = read_virtual_image(fname)
+                self.img_in_memory = False
         except PermissionError or ValueError:
-            message_box = QMessageBox
+            message_box = QtWidgets.QMessageBox
             message_box.about(self,'', 'An error has occurd while oppening file %s' % fname)
             return 0
         self.working_directory = os.path.dirname(fname)
@@ -207,14 +227,22 @@ class FormImageProcessing(QMainWindow):
         if self.zo_changed:
             if self.zo_check_box.isChecked():
                 zo_channel = self.zo_spin_box.value()
-                self.current_frame[1, :, :] = 0.1*self.zo_level_scroll_bar.value()*self.img[frame_number - 1, zo_channel, 0, :, :].compute()
+                if self.img_in_memory:
+                    self.current_frame[1, :, :] = 0.1 * self.zo_level_scroll_bar.value() * self.img[frame_number - 1,
+                                                                                           zo_channel, 0, :, :]
+                else:
+                    self.current_frame[1, :, :] = 0.1*self.zo_level_scroll_bar.value()*self.img[frame_number - 1, zo_channel, 0, :, :].compute()
             else:
                 self.current_frame[1, :, :] = 0
             self.zo_changed = False
         if self.atoh_changed:
             if self.atoh_check_box.isChecked():
                 atoh_channel = self.atoh_spin_box.value()
-                self.current_frame[2, :, :] = 0.01*self.atoh_level_scroll_bar.value()*self.img[frame_number - 1, atoh_channel, 0, :, :].compute()
+                if self.img_in_memory:
+                    self.current_frame[2, :, :] = 0.01 * self.atoh_level_scroll_bar.value() * self.img[frame_number - 1,
+                                                                                              atoh_channel, 0, :, :]
+                else:
+                    self.current_frame[2, :, :] = 0.01*self.atoh_level_scroll_bar.value()*self.img[frame_number - 1, atoh_channel, 0, :, :].compute()
             else:
                 self.current_frame[2, :, :] = 0
             self.atoh_changed = False
@@ -240,9 +268,9 @@ class FormImageProcessing(QMainWindow):
         else:
             disp_image = np.transpose(self.current_frame, (1, 2, 0))
         disp_image = cv2.cvtColor(disp_image, cv2.COLOR_BGR2RGB)
-        QI = QImage(bytes(disp_image), self.img_dimensions.Y, self.img_dimensions.X, 3*self.img_dimensions.Y, QImage.Format_RGB888)
+        QI = QtGui.QImage(bytes(disp_image), self.img_dimensions.Y, self.img_dimensions.X, 3*self.img_dimensions.Y, QtGui.QImage.Format_RGB888)
         QI.setColorTable(COLORTABLE)
-        self.image_display.setPhoto(QPixmap.fromImage(QI))
+        self.image_display.setPhoto(QtGui.QPixmap.fromImage(QI))
         self.display_histogram()
 
     def display_histogram(self):
@@ -307,19 +335,29 @@ class FormImageProcessing(QMainWindow):
         self.plot_compare_frame_data_cell_type_combo_box.addItems(self.tissue_info.CELL_TYPES)
 
     def mark_event(self, pos=None):
+        self.mark_event_button.setEnabled(False)
+        self.mark_event_button.hide()
+        self.abort_event_marking_button.setEnabled(True)
+        self.abort_event_marking_button.show()
+        self.mark_event_combo_box.setEnabled(False)
         if self.mark_event_combo_box.currentIndex() < 0:
             return 0
         if self.mark_event_stage == 0:
-            message_box = QMessageBox
+            message_box = QtWidgets.QMessageBox
             message_box.about(self, '', 'Go to the first frame of the event\nand click on the relevant cell')
             self.mark_event_stage = 1
         elif self.mark_event_stage == 1:
             self.event_start_position = pos
             self.event_start_frame = self.frame_slider.value()
-            message_box = QMessageBox
-            message_box.about(self, '',
-                              'Go to the last frame of the event\nand click on the relevant cell\n(or cells, in case of division)')
-            self.mark_event_stage = 2
+            if self.mark_event_combo_box.currentText() == "delete event":
+                self.tissue_info.add_event(self.mark_event_combo_box.currentText(), self.event_start_frame,
+                                           0, self.event_start_position, (0,0))
+                self.mark_event_stage = 0
+            else:
+                message_box = QtWidgets.QMessageBox
+                message_box.about(self, '',
+                                  'Go to the last frame of the event\nand click on the relevant cell\n(or cells, in case of division)')
+                self.mark_event_stage = 2
         elif self.mark_event_stage == 2:
             self.event_end_position = pos
             self.event_end_frame = self.frame_slider.value()
@@ -335,9 +373,24 @@ class FormImageProcessing(QMainWindow):
                                        self.event_end_frame, self.event_start_position, self.event_end_position,
                                        pos)
             self.mark_event_stage = 0
+        if self.mark_event_stage == 0:
+            self.abort_event_marking_button.setEnabled(False)
+            self.abort_event_marking_button.hide()
+            self.mark_event_button.setEnabled(True)
+            self.mark_event_button.show()
+            self.mark_event_combo_box.setEnabled(True)
+            self.analysis_changed = True
+            self.display_frame()
+        return 0
 
-
-
+    def abort_event_marking(self):
+        self.mark_event_stage = 0
+        self.abort_event_marking_button.setEnabled(False)
+        self.abort_event_marking_button.hide()
+        self.mark_event_button.setEnabled(True)
+        self.mark_event_button.show()
+        self.mark_event_combo_box.setEnabled(True)
+        return 0
 
     def slider_changed(self):
         text = "%d/%d" % (self.frame_slider.value(), self.number_of_frames)
@@ -349,17 +402,19 @@ class FormImageProcessing(QMainWindow):
         pos = click_info.point
         button = click_info.button
         double_click = click_info.doubleClick
-        if self.image_display.dragMode() == QGraphicsView.NoDrag:
+        if self.image_display.dragMode() == QtWidgets.QGraphicsView.NoDrag:
             if self.fixing_segmentation_mode == FIX_SEGMENTATION_ON:
                 frame = self.frame_slider.value()
-                if button == Qt.LeftButton:
+                if button == QtCore.Qt.LeftButton:
                     if double_click:
                         if self.fix_segmentation_last_position is not None:
                             self.fix_segmentation_last_position = None
+                            if self.img_in_memory:
+                                hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :]
+                            else:
+                                hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].compute()
                             self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()), final=True,
-                                                                   hc_marker_image=self.img[frame - 1,
-                                                                                   self.atoh_spin_box.value(),
-                                                                                   0, :, :].compute(),
+                                                                   hc_marker_image=hc_marker_img,
                                                                    hc_threshold=self.hc_threshold_spin_box.value()/100,
                                                                    use_existing_types=self.use_existing_cell_types_check_box.isChecked())
                     else:
@@ -370,11 +425,13 @@ class FormImageProcessing(QMainWindow):
                             self.fix_segmentation_last_position = None
                         else:
                             self.fix_segmentation_last_position = (pos.x(), pos.y())
-                elif button == Qt.MiddleButton:
+                elif button == QtCore.Qt.MiddleButton:
+                    if self.img_in_memory:
+                        hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :]
+                    else:
+                        hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].compute()
                     self.tissue_info.remove_segmentation_line(frame, (pos.x(), pos.y()),
-                                                              hc_marker_image=self.img[frame - 1,
-                                                                                       self.atoh_spin_box.value(),
-                                                                                       0, :, :].compute(),
+                                                              hc_marker_image=hc_marker_img,
                                                               hc_threshold=self.hc_threshold_spin_box.value()/100,
                                                               use_existing_types=self.use_existing_cell_types_check_box.isChecked())
                 self.segmentation_changed = True
@@ -382,9 +439,9 @@ class FormImageProcessing(QMainWindow):
                 self.display_frame()
             elif self.fix_cell_types_on:
                 frame = self.frame_slider.value()
-                if button == Qt.LeftButton:
+                if button == QtCore.Qt.LeftButton:
                     self.tissue_info.change_cell_type(frame, (pos.x(), pos.y()))
-                elif button == Qt.MiddleButton:
+                elif button == QtCore.Qt.MiddleButton:
                     self.tissue_info.make_invalid_cell(frame, (pos.x(), pos.y()))
                 self.analysis_changed = True
                 self.display_frame()
@@ -392,6 +449,7 @@ class FormImageProcessing(QMainWindow):
                 frame = self.frame_slider.value()
                 new_label = self.cell_tracking_spin_box.value()
                 self.tissue_info.fix_cell_label(frame, (pos.x(), pos.y()), new_label)
+                self.track_cells(initial_frame=frame, final_frame=self.number_of_frames)
                 self.analysis_changed = True
                 self.correct_tracking(off=True)
                 self.display_frame()
@@ -525,6 +583,7 @@ class FormImageProcessing(QMainWindow):
             self.mark_event_button.setEnabled(False)
             self.mark_event_combo_box.setEnabled(False)
             self.show_events_check_box.setEnabled(False)
+            self.show_events_button.setEnabled(False)
         if segmentation:
             self.show_segmentation_check_box.setEnabled(True)
             self.save_segmentation_button.setEnabled(True)
@@ -563,6 +622,7 @@ class FormImageProcessing(QMainWindow):
             self.mark_event_button.setEnabled(True)
             self.mark_event_combo_box.setEnabled(True)
             self.show_events_check_box.setEnabled(True)
+            self.show_events_button.setEnabled(True)
         else:
             self.show_cell_types_check_box.setEnabled(False)
             self.show_cell_tracking_check_box.setEnabled(False)
@@ -584,6 +644,9 @@ class FormImageProcessing(QMainWindow):
             self.mark_event_button.setEnabled(False)
             self.mark_event_combo_box.setEnabled(False)
             self.show_events_check_box.setEnabled(False)
+            self.show_events_button.setEnabled(False)
+            self.abort_event_marking_button.setEnabled(False)
+            self.abort_event_marking_button.hide()
 
 
 
@@ -609,10 +672,22 @@ class FormImageProcessing(QMainWindow):
         data, error_message = self.tissue_info.plot_single_frame_data(frame, x_feature, y_feature, plot_window.get_ax(),
                                                                       cell_type)
         if error_message:
-            message_box = QMessageBox
+            message_box = QtWidgets.QMessageBox
             message_box.question(self, '', error_message, message_box.Close)
         else:
             plot_window.show(data)
+
+    def display_events(self):
+        events = self.tissue_info.get_events()
+        model = PandasModel(events)
+        window = QtWidgets.QMainWindow(self)
+        window.setWindowTitle("Events table")
+        view = QtWidgets.QTableView(window)
+        view.setModel(model)
+        view.resize(1500, 600)
+        window.resize(1500, 600)
+        window.show()
+
 
     def plot_compare_frames_data(self):
         if self.compare_frames_combo_box.currentIndex() < 0:
@@ -627,7 +702,7 @@ class FormImageProcessing(QMainWindow):
         data, error_message = self.tissue_info.plot_compare_frames_data(frames, feature, plot_window.get_ax(),
                                                                       cell_type)
         if error_message:
-            message_box = QMessageBox
+            message_box = QtWidgets.QMessageBox
             message_box.question(self, '', error_message, message_box.Close)
         else:
             plot_window.show(data)
@@ -659,7 +734,7 @@ class FormImageProcessing(QMainWindow):
         std = self.segmentation_kernel_std_spin_box.value()
         block_size = self.segmentation_block_size_spin_box.value()
         self.segmentation_thread = SegmentAllThread(self.img, zo_channel, threshold, std, block_size,
-                                                    frame_numbers, self.tissue_info)
+                                                    frame_numbers, self.tissue_info, self.img_in_memory)
         self.segmentation_thread._signal.connect(self.frame_segmentation_done)
         self.segment_all_frames_button.setEnabled(False)
         self.frame_slider.setEnabled(False)
@@ -676,7 +751,7 @@ class FormImageProcessing(QMainWindow):
         self.segment_frames([frame_number])
 
     def this_might_take_a_while_message(self):
-        message_box = QMessageBox
+        message_box = QtWidgets.QMessageBox
         ret = message_box.question(self, '', "Are you sure? this might take a while...",
                                    message_box.Yes | message_box.No)
         return ret == message_box.Yes
@@ -715,7 +790,7 @@ class FormImageProcessing(QMainWindow):
         atoh_channel = self.atoh_spin_box.value()
         hc_threshold = self.hc_threshold_spin_box.value()/100
         self.analysis_thread = AnalysisThread(self.img, self.tissue_info, frame_numbers, atoh_channel, hc_threshold,
-                                              self.use_existing_cell_types_check_box.isChecked())
+                                              self.use_existing_cell_types_check_box.isChecked(), self.img_in_memory)
         self.analysis_thread._signal.connect(self.frame_analysis_done)
         self.analyze_segmentation_button.setEnabled(False)
         self.frame_slider.setEnabled(False)
@@ -783,11 +858,19 @@ class FormImageProcessing(QMainWindow):
             self.fix_tracking_label.show()
             self.fix_tracking_on = True
 
-    def track_cells(self):
+    def track_cells(self, initial_frame=-1, final_frame=-1):
         self.track_cells_progress_bar.reset()
         self.track_cells_progress_bar.show()
+        if initial_frame == -1 and final_frame == -1:
+            initial_frame = 1
+            final_frame = self.number_of_frames
         self.cancel_tracking_button.show()
-        self.tracking_thread = TrackingThread(self.tissue_info, self.img)
+        if initial_frame >=0 and final_frame > 0:
+            img_for_tracking = self.img[initial_frame-1:final_frame, :, :,:,:]
+        else:
+            img_for_tracking = self.img
+        self.tracking_thread = TrackingThread(self.tissue_info, img_for_tracking, self.img_in_memory,
+                                              initial_frame=initial_frame, final_frame=final_frame)
         self.tracking_thread._signal.connect(self.cells_tracking_done)
         self.track_cells_button.setEnabled(False)
         self.frame_slider.setEnabled(False)
@@ -811,16 +894,19 @@ class FormImageProcessing(QMainWindow):
 
 
     def finish_fixing_segmentation(self):
+        frame = self.frame_slider.value()
         if self.fix_segmentation_last_position is not None:
-            frame = self.frame_slider.value()
+            if self.img_in_memory:
+                hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :]
+            else:
+                hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].compute()
             self.tissue_info.add_segmentation_line(frame, self.fix_segmentation_last_position, final=True,
-                                                   hc_marker_image=self.img[frame - 1,
-                                                                   self.atoh_spin_box.value(),
-                                                                   0, :, :].compute(),
+                                                   hc_marker_image=hc_marker_img,
                                                    hc_threshold=self.hc_threshold_spin_box.value()/100,
                                                    use_existing_types=self.use_existing_cell_types_check_box.isChecked())
             self.fix_segmentation_last_position = None
         self.tissue_info.update_labels(self.frame_slider.value())
+        # self.track_cells(initial_frame=frame - 1, final_frame=self.number_of_frames)
         self.segmentation_changed = True
         self.current_segmentation = self.tissue_info.get_segmentation(self.frame_slider.value())
         self.display_frame()
@@ -860,7 +946,7 @@ class FormImageProcessing(QMainWindow):
         self.fix_segmentation_button.setEnabled(True)
 
     def save_data(self):
-        name = QFileDialog.getSaveFileName(self, 'Save File', directory=self.working_directory)[0]
+        name = QtWidgets.QFileDialog.getSaveFileName(self, 'Save File', directory=self.working_directory)[0]
         if name:
             self.save_data_progress_bar.reset()
             self.save_data_progress_bar.show()
@@ -885,7 +971,7 @@ class FormImageProcessing(QMainWindow):
             self.waiting_for_data_save = []
 
     def data_lost_warning(self, calling_function):
-        message_box = QMessageBox
+        message_box = QtWidgets.QMessageBox
         if not self.segmentation_saved or not self.analysis_saved:
             ret = message_box.question(self, '', "Current data will be lost, do you want to save it first?",
                                        message_box.Save | message_box.Discard | message_box.Cancel)
@@ -900,7 +986,7 @@ class FormImageProcessing(QMainWindow):
     def load_data(self):
         if not self.data_lost_warning(self.load_data):
             return 0
-        name = QFileDialog.getOpenFileName(caption='Open File',
+        name = QtWidgets.QFileDialog.getOpenFileName(caption='Open File',
                                             directory=self.working_directory, filter="*.seg")[0]
         if name:
             self.load_data_progress_bar.reset()
@@ -910,7 +996,7 @@ class FormImageProcessing(QMainWindow):
             try:
                 self.load_thread.start()
             except shutil.ReadError:
-                message_box = QMessageBox
+                message_box = QtWidgets.QMessageBox
                 message_box.about(self, '', 'Could not load file %s' % name[0])
         return 0
 
@@ -930,10 +1016,10 @@ class FormImageProcessing(QMainWindow):
 
 
 
-class SegmentAllThread(QThread):
-    _signal = pyqtSignal(str)
+class SegmentAllThread(QtCore.QThread):
+    _signal = QtCore.pyqtSignal(str)
 
-    def __init__(self, img, zo_channel, threshold, std, block_size, frame_numbers, out):
+    def __init__(self, img, zo_channel, threshold, std, block_size, frame_numbers, out, img_in_memory=False):
         super(SegmentAllThread, self).__init__()
         self.img = img
         self.zo_channel = zo_channel
@@ -943,6 +1029,7 @@ class SegmentAllThread(QThread):
         self.std = std
         self.block_size = block_size
         self.is_killed = False
+        self.img_in_memory = img_in_memory
 
     def __del__(self):
         self.wait()
@@ -950,7 +1037,10 @@ class SegmentAllThread(QThread):
     def run(self):
         done_frames = 0
         for frame in self.frame_numbers:
-            zo_img = self.img[frame - 1, self.zo_channel, 0, :, :].compute()
+            if self.img_in_memory:
+                zo_img = self.img[frame - 1, self.zo_channel, 0, :, :]
+            else:
+                zo_img = self.img[frame - 1, self.zo_channel, 0, :, :].compute()
             labels = watershed_segmentation(zo_img, self.threshold, self.std, self.block_size)
             self.out.set_labels(frame, labels, reset_data=True)
             done_frames += 1
@@ -967,10 +1057,11 @@ class SegmentAllThread(QThread):
         self.is_killed = True
 
 
-class AnalysisThread(QThread):
-    _signal = pyqtSignal(str)
+class AnalysisThread(QtCore.QThread):
+    _signal = QtCore.pyqtSignal(str)
 
-    def __init__(self, img, tissue_info, frame_numbers, atoh_channel, hc_threshold, use_existing_types=False):
+    def __init__(self, img, tissue_info, frame_numbers, atoh_channel, hc_threshold, use_existing_types=False,
+                 img_in_memory=False):
         super(AnalysisThread, self).__init__()
         self.tissue_info = tissue_info
         self.img = img
@@ -979,6 +1070,7 @@ class AnalysisThread(QThread):
         self.hc_threshold = hc_threshold
         self.is_killed = False
         self.use_existing_types = use_existing_types
+        self.img_in_memory = img_in_memory
 
     def __del__(self):
         self.wait()
@@ -986,7 +1078,10 @@ class AnalysisThread(QThread):
     def run(self):
         done_frames = 0
         for frame in self.frame_numbers:
-            atoh_img = self.img[frame - 1, self.atoh_channel, 0, :, :].compute()
+            if self.img_in_memory:
+                atoh_img = self.img[frame - 1, self.atoh_channel, 0, :, :]
+            else:
+                atoh_img = self.img[frame - 1, self.atoh_channel, 0, :, :].compute()
             self.tissue_info.calculate_frame_cellinfo(frame, atoh_img, self.hc_threshold, self.use_existing_types)
             done_frames += 1
             percentage_done = np.round(100*done_frames/len(self.frame_numbers))
@@ -1002,20 +1097,26 @@ class AnalysisThread(QThread):
         self.is_killed = True
 
 
-class TrackingThread(QThread):
-    _signal = pyqtSignal(str)
+class TrackingThread(QtCore.QThread):
+    _signal = QtCore.pyqtSignal(str)
 
-    def __init__(self, tissue_info, images):
+    def __init__(self, tissue_info, images, img_in_memory=False, initial_frame=-1, final_frame=-1):
         super(TrackingThread, self).__init__()
         self.tissue_info = tissue_info
         self.images = images
         self.is_killed = False
+        self.img_in_memory = img_in_memory
+        self.initial_frame = initial_frame
+        self.final_frame = final_frame
 
     def __del__(self):
         self.wait()
 
     def run(self):
-        tracking_generator = self.tissue_info.track_cells(images=self.images)
+        tracking_generator = self.tissue_info.track_cells_iterator(initial_frame=self.initial_frame,
+                                                                   final_frame=self.final_frame,
+                                                                   images=self.images,
+                                                                   image_in_memory=self.img_in_memory)
         for frame in tracking_generator:
             percentage_done = np.round(100 * frame / self.tissue_info.number_of_frames)
             self.emit("%d" % percentage_done)
@@ -1030,8 +1131,8 @@ class TrackingThread(QThread):
         self.is_killed = True
 
 
-class SaveDataThread(QThread):
-    _signal = pyqtSignal(int)
+class SaveDataThread(QtCore.QThread):
+    _signal = QtCore.pyqtSignal(int)
 
     def __init__(self, tissue_info, file_path):
         super(SaveDataThread, self).__init__()
@@ -1050,8 +1151,8 @@ class SaveDataThread(QThread):
         self._signal.emit(int(msg))
 
 
-class LoadDataThread(QThread):
-    _signal = pyqtSignal(int)
+class LoadDataThread(QtCore.QThread):
+    _signal = QtCore.pyqtSignal(int)
 
     def __init__(self, tissue_info, file_path):
         super(LoadDataThread, self).__init__()
@@ -1073,7 +1174,7 @@ class LoadDataThread(QThread):
 if __name__ == "__main__":
     import sys
 
-    app = QApplication(sys.argv)
+    app = QtWidgets.QApplication(sys.argv)
     w = FormImageProcessing()
     w.show()
     sys.exit(app.exec_())

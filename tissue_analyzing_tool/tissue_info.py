@@ -8,9 +8,6 @@ Methods to analyze cells
 """
 import os.path
 import shutil
-from basic_image_manipulations import calculate_drift
-import re
-import cv2
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
@@ -43,12 +40,24 @@ CELL_INFO_SPECS = {"area": 0,
                    "bounding_box_max_row": 0,
                    "bounding_box_max_col": 0,
                    "empty_cell": 0}
+EVENTS_INFO_SPEC = {"type": "TBA",
+                    "start_frame": 0,
+                    "end_frame": 0,
+                    "start_pos_x": 0,
+                    "start_pos_y": 0,
+                    "end_pos_x": 0,
+                    "end_pos_y": 0,
+                    "daughter_pos_x": 0,
+                    "daughter_pos_y": 0,
+                    "cell_id": 0,
+                    "daughter_id": 0}
 
 
 TRACK_COLOR = (0, 1, 0)
 NEIGHBORS_COLOR = (1, 1, 1)
 HC_COLOR = (1, 0, 1)
 SC_COLOR = (1, 1, 0)
+EVENT_TYPES = ["division", "delamination", "differentiation", "delete event"]
 EVENTS_COLOR = {"division": (0,0,1), "delamination": (1,0,0), "differentiation": (0,1,1)}
 
 
@@ -57,15 +66,18 @@ def make_df(number_of_lines, specs):
     Creates a table based on pandas DataFrame where each line holds the information in "specs".
     """
     dtypes = np.dtype([(name, type(val)) for name, val in specs.items()])
-    arr = np.empty(number_of_lines, dtype=dtypes)
-    df = pd.DataFrame.from_records(arr, index=np.arange(number_of_lines))
-    for name, val in specs.items():
-        df[name] = [set() for i in range(number_of_lines)] if isinstance(val, set) else\
-                   [list() for i in range(number_of_lines)] if isinstance(val, list) else val
+    if number_of_lines > 0:
+        arr = np.empty(number_of_lines, dtype=dtypes)
+        df = pd.DataFrame.from_records(arr, index=np.arange(number_of_lines))
+        for name, val in specs.items():
+            df[name] = [set() for i in range(number_of_lines)] if isinstance(val, set) else\
+                       [list() for i in range(number_of_lines)] if isinstance(val, list) else val
+    else:
+        df = pd.DataFrame(columns=specs.keys())
     return df
 
 
-def get_temp_direcory(name):
+def get_temp_directory(name):
     postfix = 1
     temp_dir = name + "_temp%d" % postfix
     while os.path.exists(temp_dir):
@@ -122,7 +134,7 @@ class Tissue(object):
         self.cells_info = None
         self.labels = None
         self.cell_types = None
-        self.events = {"differentiation": [], "delamination": [], "division": []}
+        self.events = make_df(0, EVENTS_INFO_SPEC)
         self.drifts = np.zeros((number_of_frames, 2))
         self.cells_info_frame = 0
         self.labels_frame = 0
@@ -233,6 +245,9 @@ class Tissue(object):
             return list(cells_info.columns)
         return []
 
+    def get_events(self):
+        return self.events
+
     def is_segmented(self, frame_number):
         labels = self.get_labels(frame_number)
         return labels is not None
@@ -265,51 +280,70 @@ class Tissue(object):
         return cells_info.label[cell_idx]
 
     def add_event(self, event_type, start_frame, end_frame, start_pos, end_pos, second_end_pos=None):
-            """
-            Adding new event to records.
-            @param resulting_cells_id: only for cell division
-            """
-            if event_type not in self.events.keys():
-                return 0
-            start_cell_id = self.get_cell_id_by_position(start_frame, start_pos)
-            end_cell_id = self.get_cell_id_by_position(end_frame, end_pos)
-            if second_end_pos is not None:
-                second_cell_id = self.get_cell_id_by_position(end_frame, second_end_pos)
-                if start_cell_id != end_cell_id and start_cell_id == second_cell_id:
-                    second_cell_id = end_cell_id
-                self.events[event_type].append({"start": start_frame, "end": end_frame, "cell": start_cell_id,
-                                                "resulting_cell": second_cell_id})
-            else:
-                if start_cell_id != end_cell_id and event_type == "differentiation":
-                    self.fix_cell_label(end_frame, end_pos, start_cell_id)
-                self.events[event_type].append({"start": start_frame, "end": end_frame, "cell": start_cell_id})
+        """
+        Adding new event to records.
+        @param resulting_cells_id: only for cell division
+        """
+        if start_frame is None:
+            return 0
+        if event_type == "delete event":
+            self.delete_event(start_frame, start_pos)
+            return 0
+        start_cell_id = self.get_cell_id_by_position(start_frame, start_pos)
+        end_cell_id = self.get_cell_id_by_position(end_frame, end_pos)
+        if start_cell_id != end_cell_id and event_type == "differentiation":
+            self.fix_cell_label(end_frame, end_pos, start_cell_id)
+        new_event = {"type": event_type,
+                "start_frame": start_frame,
+                "end_frame": end_frame,
+                "start_pos_x": start_pos[0],
+                "start_pos_y": start_pos[1],
+                "end_pos_x": end_pos[0],
+                "end_pos_y": end_pos[1],
+                "daughter_pos_x": 0,
+                "daughter_pos_y": 0,
+                "cell_id": start_cell_id,
+                "daughter_id": 0}
+        if second_end_pos is not None:
+            second_cell_id = self.get_cell_id_by_position(end_frame, second_end_pos)
+            if start_cell_id != end_cell_id and start_cell_id == second_cell_id:
+                second_cell_id = end_cell_id
+            new_event["daughter_pos_x"] = second_end_pos[0]
+            new_event["daughter_pos_y"] = second_end_pos[1]
+            new_event["daughter_id"] = second_cell_id
+        self.events = self.events.append(new_event, ignore_index=True)
+        return 0
 
+    def delete_event(self, start_frame, start_pos):
+        cell_id = self.get_cell_id_by_position(start_frame, start_pos)
+        to_delete = self.events.query("start_frame == %d and (cell_id == %d or daughter_id == %d)" %(start_frame, cell_id, cell_id))
+        if to_delete.size > 0:
+            self.events.drop(to_delete.index, inplace=True)
+        return 0
 
     def draw_events(self, frame, radius=5):
         labels = self.get_labels(frame)
         if labels is None:
             return 0
         final_image = np.zeros((3,) + labels.shape)
-        for event_type in self.events.keys():
-            img = np.zeros(labels.shape)
-            color = EVENTS_COLOR[event_type]
-            for event in self.events[event_type]:
-                if event["start"] <= frame <= event["end"]:
-                    cell_label = event["cell"]
-                    cell = self.get_cell_data_by_label(cell_label, frame)
-                    if cell is None:
-                        return img
-                    else:
-                        rr, cc = disk((cell.cy, cell.cx), radius, shape=img.shape)
-                        img[rr, cc] = 1
-                        if event_type == "division":
-                            resulting_cell_label = event["resulting_cell"]
-                            resulting_cell = self.get_cell_data_by_label(resulting_cell_label, frame)
-                            if cell is None:
-                                continue
-                            rr, cc = disk((resulting_cell.cy, resulting_cell.cx), radius, shape=img.shape)
-                            img[rr, cc] = 1
-            final_image = final_image + img[np.newaxis, :, :] * np.array(color).reshape((3,1,1))
+        for event_idx, event in self.events.iterrows():
+            color = EVENTS_COLOR[event.type]
+            if event.start_frame <= frame <= event.end_frame:
+                cell_label = event.cell_id
+                cell = self.get_cell_data_by_label(cell_label, frame)
+                if cell is None or cell.empty_cell == 1:
+                    continue
+                else:
+                    rr, cc = disk((cell.cy, cell.cx), radius, shape=labels.shape)
+                    for i in range(3):
+                        final_image[i, rr, cc] = color[i]
+                    if event.type == "division":
+                        resulting_cell_label = event.daughter_id
+                        resulting_cell = self.get_cell_data_by_label(resulting_cell_label, frame)
+                        if resulting_cell is not None and resulting_cell.empty_cell == 0:
+                            for i in range(3):
+                                rr, cc = disk((resulting_cell.cy, resulting_cell.cx), radius, shape=labels.shape)
+                                final_image[i, rr, cc] = color[i]
         return final_image
 
     def calculate_frame_cellinfo(self, frame_number, hc_marker_image=None, hc_threshold=0.01, use_existing_types=False):
@@ -347,12 +381,6 @@ class Tissue(object):
         self.find_neighbors(frame_number)
         if hc_marker_image is not None:
             self.calc_cell_types(hc_marker_image, frame_number, properties, hc_threshold)
-
-    def calculate_movie_cell_info(self, hc_marker_movie):
-        for frame in range(self.number_of_frames):
-            self.calculate_frame_cellinfo(frame, hc_marker_movie[frame].compute())
-        tracking_last_frame = self.track_cells()
-        return tracking_last_frame
 
     def get_cell_data_by_label(self, cell_id, frame):
         cells_info = self.get_cells_info(frame)
@@ -585,7 +613,14 @@ class Tissue(object):
             contact_length.append(np.sum(np.logical_and(max_filtered_region == max_label, min_filtered_region == min_label)).astype(int))
         return neighbor_labels, contact_length
 
-    def track_cells(self, initial_frame=1, final_frame=-1, images=None):
+    def track_cells(self, initial_frame=1, final_frame=-1, images=None, image_in_memory=False):
+        iter = self.track_cells_iterator(initial_frame, final_frame, images, image_in_memory)
+        last_frame = initial_frame
+        for frame in iter:
+            last_frame = frame
+        return last_frame
+
+    def track_cells_iterator(self, initial_frame=1, final_frame=-1, images=None, image_in_memory=False):
         if final_frame == -1:
             final_frame = self.number_of_frames
         cells_info = self.get_cells_info(initial_frame)
@@ -598,6 +633,7 @@ class Tissue(object):
         cx_previous_frame = np.copy(cells_info.cx.to_numpy())
         cy_previous_frame = np.copy(cells_info.cy.to_numpy())
         labels_previous_frame = cells_info.label.to_numpy()
+        empty_cells_previous_frame = cells_info.empty_cell.to_numpy()
         previous_frame = initial_frame
         self.cells_number = max(self.cells_number, cells_info.label.max())
         for frame in range(initial_frame + 1, final_frame + 1):
@@ -605,23 +641,27 @@ class Tissue(object):
                 cx_previous_frame -= self.drifts[frame - 1, 1]
                 cy_previous_frame -= self.drifts[frame - 1, 0]
             elif images is not None:
-                previous_img = images[previous_frame-1, :, 0, :, :].compute()
-                current_img = images[frame-1, :, 0, :, :].compute()
+                if image_in_memory:
+                    previous_img = images[previous_frame - 1, :, 0, :, :]
+                    current_img = images[frame - 1, :, 0, :, :]
+                else:
+                    previous_img = images[previous_frame-1, :, 0, :, :].compute()
+                    current_img = images[frame-1, :, 0, :, :].compute()
                 shift, error, diffphase = phase_cross_correlation(previous_img, current_img, upsample_factor=100)
                 self.drifts[frame-1, :] = shift[-2:]
                 cx_previous_frame -= shift[-1]
                 cy_previous_frame -= shift[-2]
 
             cells_info = self.get_cells_info(frame)
-            labels = self.get_labels(frame)
+            labels = maximum_filter(self.get_labels(frame), (3, 3), mode='constant')
             if cells_info is None or labels is None:
                 continue
             cells_info.at[:, "label"] = 0
             indices_in_current_frame = -1 * np.ones(cy_previous_frame.shape)
             y_locations = np.round(cy_previous_frame).astype(int)
             x_locations = np.round(cx_previous_frame).astype(int)
-            valid_locations = np.logical_and(np.logical_and(0 <= y_locations, y_locations < labels.shape[0]),
-                              np.logical_and(0 <= x_locations, x_locations < labels.shape[1]))
+            valid_locations = np.logical_and(np.logical_and(np.logical_and(0 <= y_locations, y_locations < labels.shape[0]),
+                              np.logical_and(0 <= x_locations, x_locations < labels.shape[1])), empty_cells_previous_frame == 0)
             indices_in_current_frame[valid_locations] = labels[np.round(cy_previous_frame[valid_locations]).astype(int),
                                               np.round(cx_previous_frame[valid_locations]).astype(int)] - 1
             cells_info.at[indices_in_current_frame[indices_in_current_frame >= 0], "label"] = \
@@ -635,9 +675,12 @@ class Tissue(object):
             cx_previous_frame = np.copy(cells_info.cx.to_numpy())
             cy_previous_frame = np.copy(cells_info.cy.to_numpy())
             labels_previous_frame = cells_info.label.to_numpy()
+            empty_cells_previous_frame = cells_info.empty_cell.to_numpy()
             previous_frame = frame
             yield frame
         yield previous_frame
+        self.fix_cell_id_in_events()
+        return 0
 
     def fix_cell_label(self, frame, position, new_label):
         if new_label <= 0:
@@ -656,10 +699,31 @@ class Tissue(object):
             if len(cells_with_same_label_index) > 0:
                 cells_info.at[cells_with_same_label_index[0],"label"] = current_label
             cells_info.at[cell_idx, "label"] = new_label
-            tracking_iterator = self.track_cells(initial_frame=frame)
-            for frame in tracking_iterator:
-                continue
         return 0
+
+    def fix_cell_id_in_events(self):
+        for event_idx in self.events.index:
+            start_frame = self.events.start_frame[event_idx]
+            end_frame = self.events.end_frame[event_idx]
+            start_pos = (self.events.start_pos_x[event_idx], self.events.start_pos_y[event_idx])
+            end_pos = (self.events.end_pos_x[event_idx], self.events.end_pos_y[event_idx])
+            daughter_pos = (self.events.daughter_pos_x[event_idx], self.events.daughter_pos_y[event_idx])
+            cell_id = self.get_cell_id_by_position(start_frame, start_pos)
+            cell_end_id = self.get_cell_id_by_position(end_frame, end_pos)
+
+            self.events.at[event_idx, "cell_id"] = cell_id
+            if daughter_pos != (0,0):
+                daughter_id = self.get_cell_id_by_position(end_frame, daughter_pos)
+                if cell_id == daughter_id:
+                    daughter_id = cell_end_id
+                elif cell_end_id != cell_end_id:
+                    self.fix_cell_label(end_frame, end_pos, cell_id)
+                self.events.at[event_idx, "daughter_id"] = daughter_id
+            else:
+                if cell_end_id != cell_id:
+                    self.fix_cell_label(end_frame, end_pos, cell_id)
+        return 0
+
 
     def calc_cell_types(self, hc_marker_image, frame_number, properties=None, hc_threshold=0.1):
         cells_info = self.get_cells_info(frame_number)
@@ -765,7 +829,7 @@ class Tissue(object):
         if labels is None:
             return img
         cell = self.get_cell_data_by_label(cell_label, frame_number)
-        if cell is None:
+        if cell is None or cell.empty_cell == 1:
             return img
         else:
             rr, cc = disk((cell.cy, cell.cx), radius, shape=img.shape)
@@ -958,6 +1022,7 @@ class Tissue(object):
                     cell_info.at[delete_label - 1, "empty_cell"] = 1
                     cell_info.at[delete_label - 1, "neighbors"] = set()
                     cell_info.at[delete_label - 1, "n_neighbors"] = 0
+                    cell_info.at[delete_label - 1, "label"] = 0
             else:
                 new_label = cell1_label
                 if part_of_undo:
@@ -1073,7 +1138,6 @@ class Tissue(object):
         self.last_action = []
         self._neighbors_labels = (0,0)
         self.last_added_line = []
-        self.track_cells(initial_frame=max(1, self.labels_frame-1), final_frame=self.number_of_frames)
         return 0
 
     def undo_last_action(self, frame):
@@ -1129,7 +1193,7 @@ class Tissue(object):
                 return x, edges[nearest_edge]
 
     def initialize_working_space(self):
-        working_dir = get_temp_direcory(self.data_path)
+        working_dir = get_temp_directory(self.data_path)
         os.mkdir(working_dir)
         return working_dir
 
@@ -1160,6 +1224,19 @@ class Tissue(object):
         self.cells_info_frame = frame_number
         return self.cells_info
 
+    def load_events(self):
+        file_path = os.path.join(self.working_dir, "events_data.pkl")
+        if os.path.isfile(file_path):
+            self.events = self.events.append(pd.read_pickle(file_path))
+            self.events.drop_duplicates(inplace=True, ignore_index=True)
+        return self.events
+
+    def load_drifts(self):
+        file_path = os.path.join(self.working_dir, "drifts.npy")
+        if os.path.isfile(file_path):
+            self.drifts = np.load(file_path)
+        return self.drifts
+
     def remove_labels(self):
         file_path = os.path.join(self.working_dir, "frame_%d_labels.npy" % self.labels_frame)
         if os.path.isfile(file_path):
@@ -1183,6 +1260,14 @@ class Tissue(object):
             np.save(file_path, self.labels)
         return 0
 
+    def save_drifts(self):
+        if self.drifts is not None:
+            file_path = os.path.join(self.working_dir, "drifts.npy")
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+            np.save(file_path, self.drifts)
+        return 0
+
     def save_cell_types(self):
         if self.cell_types is not None:
             file_path = os.path.join(self.working_dir, "frame_%d_types.npy" % self.cell_types_frame)
@@ -1199,10 +1284,18 @@ class Tissue(object):
             self.cells_info.to_pickle(file_path)
         return 0
 
+    def save_events(self):
+        file_path = os.path.join(self.working_dir, "events_data.pkl")
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+        self.events.to_pickle(file_path)
+
     def save(self, path):
         self.save_labels()
         self.save_cells_info()
         self.save_cell_types()
+        self.save_events()
+        self.save_drifts()
         for percent_done in pack_archive_with_progress(self.working_dir, path.replace(".seg", "") + ".seg"):
             yield percent_done
         return 0
@@ -1223,6 +1316,8 @@ class Tissue(object):
             self.load_cell_types(self.cell_types_frame)
         if self.cells_info_frame > 0:
             self.load_cells_info(self.cells_info_frame)
+        self.load_events()
+        self.load_drifts()
         return 0
 
 
