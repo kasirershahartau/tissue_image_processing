@@ -51,12 +51,12 @@ def read_tiff(path):
     return image, axes, image.shape, metadata
 
 
-def read_whole_image(path, dims_order="TCZYX"):
+def read_whole_image(path, dims_order="TCZXY"):
     img = AICSImage(path)
     data = img.get_image_data(dims_order)
     return data, img.dims, img.metadata
 
-def read_virtual_image(path, dims_order="TCZYX"):
+def read_virtual_image(path, dims_order="TCZXY"):
     img = AICSImage(path)
     data = img.get_image_dask_data(dims_order)
     return data, img.dims, img.metadata
@@ -89,7 +89,7 @@ def get_image_metadata(path, series=0):
 def read_image_in_chunks(path, series=0, dx=0, dy=0, dz=0, dc=0, dt=0, apply_function=None, output=None,
                          **apply_function_params):
     img = AICSImage(path,  reader=bioformats_reader.BioformatsReader, series=series, dask_tiles=True)
-    default_dims_order = "TCZYX"
+    default_dims_order = "TCZXY"
     if series == 0:  # There is an error with reading dask data for multi series image so we can only virtually read
         data = img.get_image_dask_data(default_dims_order)
     else:
@@ -117,13 +117,13 @@ def read_image_in_chunks(path, series=0, dx=0, dy=0, dz=0, dc=0, dt=0, apply_fun
     while t < max_t:
         while c < max_c:
             while z < max_z:
-                while y < max_y:
-                    while x < max_x:
+                while x < max_x:
+                    while y < max_y:
                         chunk = data[t:min(t+dt, max_t),
                                      c:min(c+dc, max_c),
                                      z:min(z+dz, max_z),
-                                     y:min(y+dy, max_y),
-                                     x:min(x+dx, max_x)]
+                                     x:min(x+dx, max_x),
+                                     y:min(y+dy, max_y)]
                         if series == 0:
                             chunk = chunk.compute()
                         if apply_function is None:
@@ -141,24 +141,24 @@ def read_image_in_chunks(path, series=0, dx=0, dy=0, dz=0, dc=0, dt=0, apply_fun
                                     output[i][min(t, out_t):min(t+dt, max_t, out_t),
                                          min(c, out_c):min(c+dc, max_c, out_c),
                                          min(z, out_z):min(z+dz, max_z, out_z),
-                                         min(y, out_y):min(y+dy, max_y, out_y),
-                                         min(x, out_x):min(x+dx, max_x, out_x)] = result[i].reshape((min(t+dt, max_t, out_t)-min(t, out_t),
+                                         min(x, out_x):min(x+dx, max_x, out_x),
+                                         min(y, out_y):min(y+dy, max_y, out_y)] = result[i].reshape((min(t+dt, max_t, out_t)-min(t, out_t),
                                                                                                   min(c+dc, max_c, out_c)-min(c, out_c),
                                                                                                   min(z+dz, max_z, out_z)-min(z, out_z),
-                                                                                                  min(y+dy, max_y, out_y)-min(y, out_y),
-                                                                                                  min(x+dx, max_x, out_x)-min(x, out_x)))
+                                                                                                  min(x+dx, max_x, out_x)-min(x, out_x),
+                                                                                                  min(y+dy, max_y, out_y)-min(y, out_y)))
                                 if deflate:
                                     result = result[0]
                                 yield result
-                        x+=dx
-                    x=0
-                    y+=dy
-                y=0
-                z+=dz
-            z=0    
-            c+=dc
-        c=0    
-        t+=dt
+                        y += dy
+                    y = 0
+                    x += dx
+                x = 0
+                z += dz
+            z = 0
+            c += dc
+        c = 0
+        t += dt
     return
 
 

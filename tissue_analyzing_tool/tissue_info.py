@@ -648,8 +648,9 @@ class Tissue(object):
         empty_cells_previous_frame = cells_info.empty_cell.to_numpy()
         previous_frame = initial_frame
         self.cells_number = max(self.cells_number, cells_info.label.max())
+        use_existing_drifts = (self.drifts > 0).any()
         for frame in range(initial_frame + 1, final_frame + 1):
-            if (self.drifts > 0).any():
+            if use_existing_drifts:
                 cx_previous_frame -= self.drifts[frame - 1, 1]
                 cy_previous_frame -= self.drifts[frame - 1, 0]
             elif images is not None:
@@ -1348,5 +1349,42 @@ class Tissue(object):
         self.load_valid_frames()
         return 0
 
+    def flip_all_data(self):
+        for frame in range(1, self.number_of_frames + 1):
+            self.flip_frame_data(frame)
+        self.drifts[:, [0, 1]] = self.drifts[:, [1, 0]]
+        self.events.at[:, ["start_pos_y", "start_pos_x", "end_pos_y", "end_pos_x",
+                           "daughter_pos_y", "daughter_pos_x"]] = self.events.loc[:, ["start_pos_x",
+                           "start_pos_y", "end_pos_x", "end_pos_y", "daughter_pos_x", "daughter_pos_y"]].values
+        self.save_events()
+        self.save_drifts()
+        return 0
+
+    def flip_frame_data(self, frame):
+        """
+        A method to flip X and Y data, to fix analyses made on flipped images (mostly to fix a specific bug)
+        """
+        labels = self.get_labels(frame)
+        cell_types = self.get_cell_types(frame)
+        cell_info = self.get_cells_info(frame)
+        if labels is not None:
+            self.labels = np.transpose(labels)
+        else:
+            print("labels on frame %d are none" % frame)
+        if cell_types is not None:
+            self.cell_types = np.transpose(cell_types)
+        else:
+            print("cell types on frame %d are none" % frame)
+        # Flipping the required columns in cell info table
+        if cell_info is not None:
+            self.cells_info.at[:,["cy", "cx", "bounding_box_min_col", "bounding_box_min_row",
+                                  "bounding_box_max_col", "bounding_box_max_row"]] = self.cells_info.loc[:,
+                                 ["cx", "cy", "bounding_box_min_row", "bounding_box_min_col",
+                                  "bounding_box_max_row", "bounding_box_max_col"]].values
+        else:
+            print("cell info on frame %d are none" % frame)
+        self.save_labels()
+        self.save_cell_types()
+        self.save_cells_info()
 
 
