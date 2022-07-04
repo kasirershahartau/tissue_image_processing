@@ -885,11 +885,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
     def track_cells(self, initial_frame=-1, final_frame=-1):
         self.track_cells_progress_bar.reset()
         self.track_cells_progress_bar.show()
-        if initial_frame == -1 and final_frame == -1:
+        if (initial_frame == -1 or not initial_frame) and final_frame == -1:
             initial_frame = 1
             final_frame = self.number_of_frames
         self.cancel_tracking_button.show()
-        if initial_frame >=0 and final_frame > 0:
+        if initial_frame > 0 and final_frame >= 0:
             img_for_tracking = self.img[initial_frame-1:final_frame, :, :,:,:]
         else:
             img_for_tracking = self.img
