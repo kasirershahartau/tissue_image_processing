@@ -164,7 +164,7 @@ def find_pixel_plane(score, chozen_z, pixel_row, pixel_col, max_row, max_col, ma
 
 
 def movie_surface_projection(files, reference_channel, position_final_movie, initial_positions_number, output_dir,
-                             method, bin_size):
+                             method, bin_size, build_manifold, only_position):
     """
     @param files: list of movie czi files in order
     @param reference_channel: Index of channel that will be used for projection
@@ -184,6 +184,8 @@ def movie_surface_projection(files, reference_channel, position_final_movie, ini
         remove_positions = []
         dims = get_image_dimensions(file)
         for position_num, position in enumerate(positions):
+            if only_position > 0 and position != only_position - 1:
+                continue
             if position_final_movie[position] == file_num + 1:
                 remove_positions.append(position)
             projection_path = os.path.join(output_dir, "position%d_movie%d_projection.npy" % (position,file_num))
@@ -200,7 +202,7 @@ def movie_surface_projection(files, reference_channel, position_final_movie, ini
                                              apply_function=time_point_surface_projection,
                                              output=[current_projection, current_zmap], axes='TCZYX',
                                              reference_channel=reference_channel, z_map=True, method=method,
-                                             bin_size=bin_size, atoh_shift=0)
+                                             bin_size=bin_size, atoh_shift=0, build_manifold=build_manifold)
             for time_point_index, time_point in enumerate(projector):
                 print("Projecting timepoint %d" % (time_point_index + 1))
             current_projection = current_projection.reshape((dims.T, dims.C, dims.Y, dims.X))
@@ -211,6 +213,8 @@ def movie_surface_projection(files, reference_channel, position_final_movie, ini
             positions.remove(to_delete)
     #  Updating meta data and saving projections
     for position in range(initial_positions_number):
+        if only_position > 0 and position != only_position - 1:
+            continue
         former_metadata = get_image_metadata(files[0], series=position)
         new_metadata = update_projection_metadata(former_metadata, np.sum(time_points_number[position, :]),
                                                   series=position)
@@ -328,6 +332,12 @@ def getOptions():
     parser.add_option("-b", "--bin-size", dest="bin_size",
                       help="Bin size for average/std calculation [default: 1]",
                       type=int, default=1)
+    parser.add_option("--manifold", dest="build_manifold",
+                      help="If true will build a continuous manifold instead of doing a pixel-wise projection [default:False]",
+                      default=False, action="store_true")
+    parser.add_option("--only-position", dest="only_position",
+                      help="Project only the given position [default: all positions]",
+                      type=int, default=0)
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -341,6 +351,8 @@ if __name__ == "__main__":
     position_number = options.position_number
     reference_channel = options.reference_channel
     bin_size = options.bin_size
+    build_manifold = options.build_manifold
+    only_position = options.only_position
     if options.fixed_sample:
         file_name = options.file_name
         chunk_size = options.chunk_size
@@ -356,7 +368,7 @@ if __name__ == "__main__":
             position_final_movie = list(literal_eval(options.position_final_movie))
         files = [os.path.join(input_dir,"m%d.czi" %(i + 1)) for i in range(movie_number)]
         movie_surface_projection(files, reference_channel, position_final_movie, position_number, output_dir,
-                                 method, bin_size)
+                                 method, bin_size, build_manifold, only_position)
     exit(0)
 
 
