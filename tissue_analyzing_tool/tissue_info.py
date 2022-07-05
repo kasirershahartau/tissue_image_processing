@@ -247,7 +247,7 @@ class Tissue(object):
             if index > 0:
                 return cells_info.iloc[index - 1]
             else:
-                return pd.Series([])
+                return pd.Series([],dtype='float64')
         else:
             return None
 
@@ -1055,10 +1055,10 @@ class Tissue(object):
             if cell_info is None:
                 new_label = np.max(labels) + 1
                 cell_indices = np.argwhere(labels == cell_label)
-                bounding_box_min_row = np.min(cell_indices[:, 0])
-                bounding_box_min_col = np.min(cell_indices[:, 1])
-                bounding_box_max_row = np.max(cell_indices[:, 0]) + 1
-                bounding_box_max_col = np.max(cell_indices[:, 1]) + 1
+                bounding_box_min_row = np.min(cell_indices[:, 0]).astype(int)
+                bounding_box_min_col = np.min(cell_indices[:, 1]).astype(int)
+                bounding_box_max_row = np.max(cell_indices[:, 0]).astype(int) + 1
+                bounding_box_max_col = np.max(cell_indices[:, 1]).astype(int) + 1
             else:
                 empty_indices = np.argwhere(cell_info.empty_cell.to_numpy() == 1)
                 if len(empty_indices) > 0:
@@ -1066,10 +1066,10 @@ class Tissue(object):
                 else:
                     new_label = cell_info.shape[0] + 1
                 cell = cell_info.iloc[cell_label - 1]
-                bounding_box_min_row = cell.bounding_box_min_row
-                bounding_box_min_col = cell.bounding_box_min_col
-                bounding_box_max_row = cell.bounding_box_max_row
-                bounding_box_max_col = cell.bounding_box_max_col
+                bounding_box_min_row = int(cell.bounding_box_min_row)
+                bounding_box_min_col = int(cell.bounding_box_min_col)
+                bounding_box_max_row = int(cell.bounding_box_max_row)
+                bounding_box_max_col = int(cell.bounding_box_max_col)
             region_first_row = max(0,bounding_box_min_row-2)
             region_first_col = max(0,bounding_box_min_col-2)
             region_last_row = bounding_box_max_row+2
@@ -1240,7 +1240,7 @@ class Tissue(object):
     def load_events(self):
         file_path = os.path.join(self.working_dir, "events_data.pkl")
         if os.path.isfile(file_path):
-            self.events = self.events.append(pd.read_pickle(file_path))
+            self.events = pd.concat([self.events, pd.read_pickle(file_path)])
             self.events.drop_duplicates(inplace=True, ignore_index=True)
         return self.events
 
