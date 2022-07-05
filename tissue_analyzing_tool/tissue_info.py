@@ -1136,7 +1136,7 @@ class Tissue(object):
                                 new_cell_info["type"] = "SC"
                                 if cell_types is not None:
                                     cell_types[labels == new_label] = SC_TYPE
-                        cell_info.at[new_label - 1] = pd.Series(new_cell_info)
+                        cell_info.loc[new_label - 1] = pd.Series(new_cell_info)
                 old_cell_neighbors = list(cell_info.neighbors[cell_label - 1].copy())
                 for neighbor_label in old_cell_neighbors:
                     cell_info.at[neighbor_label - 1, "neighbors"].remove(cell_label)
