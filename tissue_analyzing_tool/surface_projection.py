@@ -184,10 +184,10 @@ def movie_surface_projection(files, reference_channel, position_final_movie, ini
         remove_positions = []
         dims = get_image_dimensions(file)
         for position_num, position in enumerate(positions):
-            if only_position > 0 and position != only_position - 1:
-                continue
             if position_final_movie[position] == file_num + 1:
                 remove_positions.append(position)
+            if only_position > 0 and position != only_position - 1:
+                continue
             projection_path = os.path.join(output_dir, "position%d_movie%d_projection.npy" % (position,file_num))
             zmap_path = os.path.join(output_dir, "position%d_movie%d_zmap.npy" % (position, file_num))
             projection_files[position].append(projection_path)
@@ -267,7 +267,7 @@ def save_stage_positions(files, position_final_movie, initial_positions_number, 
 
 
 def large_image_projection(input_dir, output_dir, input_file_name, position=0, reference_channel=0, chunk_size=0,
-                           bin_size=1, channels_shift=0, min_z=0, max_z=0, method=""):
+                           bin_size=1, channels_shift=0, min_z=0, max_z=0, method="", build_manifold=False):
     path = os.path.join(input_dir, input_file_name)
     if not os.path.exists(path):
         return 0
@@ -278,7 +278,7 @@ def large_image_projection(input_dir, output_dir, input_file_name, position=0, r
                                      apply_function=time_point_surface_projection,
                                      output=[projection, zmap], axes='TCZYX', min_z=min_z, max_z=max_z,
                                      reference_channel=reference_channel, series=position, z_map=True, method=method,
-                                     bin_size=bin_size, atoh_shift=channels_shift)
+                                     bin_size=bin_size, atoh_shift=channels_shift, build_manifold=build_manifold)
     for chunk_num, chunk in enumerate(projector):
         print("Projecting chunk %d" % (chunk_num + 1), flush=True)
     projection = projection.reshape((dims.C, dims.Y, dims.X))
@@ -353,15 +353,17 @@ if __name__ == "__main__":
     bin_size = options.bin_size
     build_manifold = options.build_manifold
     only_position = options.only_position
+    method = options.method
     if options.fixed_sample:
         file_name = options.file_name
         chunk_size = options.chunk_size
-        large_image_projection(input_dir, output_dir, file_name, position_number, reference_channel, chunk_size,
-                               bin_size)
+        large_image_projection(input_dir, output_dir, file_name, position=only_position,
+                               reference_channel=reference_channel, chunk_size=chunk_size,
+                               bin_size=bin_size, method=method,build_manifold=build_manifold)
+
     else:
         movie_number = options.movie_number
         position_final_movie = options.position_final_movie
-        method = options.method
         if not options.position_final_movie:
             position_final_movie = [movie_number]*position_number
         else:
