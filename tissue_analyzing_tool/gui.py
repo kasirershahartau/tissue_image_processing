@@ -1,8 +1,8 @@
-from PyQt5 import QtCore, uic, QtWidgets, QtGui
+from PyQt5 import QtCore, uic, QtWidgets, QtGui, QtWebEngineWidgets
 import tissue_info
 import matplotlib
 matplotlib.use('Qt5Agg')
-import os.path, shutil
+import os.path, shutil, sys
 import re
 from basic_image_manipulations import *
 from tissue_info import Tissue
@@ -10,6 +10,9 @@ from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as Navigatio
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 import cv2
+from watchdog.observers import Observer
+from watchdog.events import PatternMatchingEventHandler
+import time
 
 COLORTABLE=[]
 WORKING_DIR = "D:\\Kasirer\\experimental_results\\"
@@ -138,6 +141,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.event_start_position = None
         self.event_end_position = None
         self.working_directory = WORKING_DIR
+        self.epyseg_dir = None
+        self.epyseg = None
 
     def closeEvent(self, event):
         if self.data_lost_warning(self.close):
@@ -179,9 +184,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.load_segmentation_button.clicked.connect(self.load_data)
         self.analyze_segmentation_button.clicked.connect(self.analyze_segmentation)
         self.track_cells_button.clicked.connect(self.track_cells)
+        self.find_events_button.clicked.connect(self.find_events)
         self.cancel_segmentation_button.clicked.connect(self.cancel_segmentation)
         self.cancel_analysis_button.clicked.connect(self.cancel_analysis)
         self.cancel_tracking_button.clicked.connect(self.cancel_tracking)
+        self.cancel_event_finding_button.clicked.connect(self.cancel_event_finding)
         self.plot_single_cell_data_button.clicked.connect(self.plot_single_cell_data)
         self.plot_single_frame_data_button.clicked.connect(self.plot_single_frame_data)
         self.plot_compare_frames_button.clicked.connect(self.plot_compare_frames_data)
@@ -196,6 +203,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.mark_event_combo_box.addItems(tissue_info.EVENT_TYPES)
         self.abort_event_marking_button.clicked.connect(self.abort_event_marking)
         self.valid_frame_check_box.stateChanged.connect(self.change_frame_validity)
+        self.cell_size_spin_box_min.valueChanged.connect(self.update_min_max_cell_area)
+        self.cell_size_spin_box_max.valueChanged.connect(self.update_min_max_cell_area)
 
     def open_file(self):
         global img
@@ -222,7 +231,10 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.zo_spin_box.setMaximum(self.img_dimensions.C-1)
         self.frame_slider.setMaximum(self.number_of_frames)
         self.current_frame = np.zeros((3, self.img_dimensions.X, self.img_dimensions.Y), dtype="uint8")
-        self.tissue_info = Tissue(self.number_of_frames, fname)
+        max_cell_area = self.cell_size_spin_box_max.value() / 100
+        min_cell_area = self.cell_size_spin_box_min.value() / 100
+        self.tissue_info = Tissue(self.number_of_frames, fname, max_cell_area=max_cell_area,
+                                  min_cell_area=min_cell_area)
         self.frame_line_edit.setText("%d/%d" % (self.frame_slider.value(), self.number_of_frames))
         self.setWindowTitle(fname)
         self.display_frame()
@@ -331,6 +343,12 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.cell_tracking_spin_box.setMaximum(cells_num)
         self.plot_single_cell_data_spin_box.setMaximum(cells_num)
 
+    def update_min_max_cell_area(self):
+        if self.tissue_info is not None:
+            max_cell_area = self.cell_size_spin_box_max.value() / 100
+            min_cell_area = self.cell_size_spin_box_min.value() / 100
+            self.tissue_info.set_valid_cell_area(min_cell_area, max_cell_area)
+
     def update_single_cell_features(self):
         features = self.tissue_info.get_cells_features(self.frame_slider.value())
         self.plot_single_cell_data_combo_box.clear()
@@ -347,6 +365,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.compare_frames_combo_box.addItems(self.tissue_info.SPECIAL_FEATURES)
         self.compare_frames_combo_box.addItems(self.tissue_info.SPECIAL_X_ONLY_FEATURES)
         self.compare_frames_combo_box.addItems(self.tissue_info.SPECIAL_Y_ONLY_FEATURES)
+        self.compare_frames_combo_box.addItems(self.tissue_info.GLOBAL_FEATURES)
         self.plot_single_frame_data_y_combo_box.clear()
         self.plot_single_frame_data_y_combo_box.addItems(features)
         self.plot_single_frame_data_y_combo_box.addItems(self.tissue_info.SPECIAL_FEATURES)
@@ -420,6 +439,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.frame_line_edit.setText(text)
             self.frame_changed()
 
+
     def image_clicked(self, click_info):
         pos = click_info.point
         button = click_info.button
@@ -438,7 +458,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                             self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()), final=True,
                                                                    hc_marker_image=hc_marker_img,
                                                                    hc_threshold=self.hc_threshold_spin_box.value()/100,
-                                                                   use_existing_types=self.use_existing_cell_types_check_box.isChecked())
+                                                                   use_existing_types=self.use_existing_cell_types_check_box.isChecked(),
+                                                                   percentile_above_threshold=self.hc_threshold_percentage_spin_box.value())
                     else:
                         points_too_far = self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()),
                                                                self.fix_segmentation_last_position,
@@ -455,7 +476,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                     self.tissue_info.remove_segmentation_line(frame, (pos.x(), pos.y()),
                                                               hc_marker_image=hc_marker_img,
                                                               hc_threshold=self.hc_threshold_spin_box.value()/100,
-                                                              use_existing_types=self.use_existing_cell_types_check_box.isChecked())
+                                                              use_existing_types=self.use_existing_cell_types_check_box.isChecked(),
+                                                              percentage_above_threshold=self.hc_threshold_percentage_spin_box.value())
                 self.segmentation_changed = True
                 self.current_segmentation = self.tissue_info.get_segmentation(frame)
                 self.display_frame()
@@ -535,9 +557,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.save_data_progress_bar.hide()
         self.load_data_progress_bar.hide()
         self.track_cells_progress_bar.hide()
+        self.find_events_progress_bar.hide()
         self.cancel_segmentation_button.hide()
         self.cancel_analysis_button.hide()
         self.cancel_tracking_button.hide()
+        self.cancel_event_finding_button.hide()
         self.finish_fixing_segmentation_button.hide()
         self.fix_segmentation_label.hide()
         self.finish_fixing_cell_types_button.hide()
@@ -585,6 +609,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.segmentation_kernel_std_label.setEnabled(False)
             self.load_segmentation_button.setEnabled(False)
             self.track_cells_button.setEnabled(False)
+            self.find_events_button.setEnabled(False)
             self.plot_single_cell_data_spin_box.setEnabled(False)
             self.plot_single_cell_data_combo_box.setEnabled(False)
             self.plot_single_cell_data_button.setEnabled(False)
@@ -616,6 +641,12 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.fix_segmentation_button.setEnabled(True)
             self.hc_threshold_label.setEnabled(True)
             self.hc_threshold_spin_box.setEnabled(True)
+            self.hc_thresholod_percentage_label.setEnabled(True)
+            self.hc_threshold_percentage_spin_box.setEnabled(True)
+            self.cell_size_label_max.setEnabled(True)
+            self.cell_size_label_min.setEnabled(True)
+            self.cell_size_spin_box_min.setEnabled(True)
+            self.cell_size_spin_box_max.setEnabled(True)
         else:
             self.show_segmentation_check_box.setEnabled(False)
             self.save_segmentation_button.setEnabled(False)
@@ -623,6 +654,12 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.analyze_segmentation_button.setEnabled(False)
             self.hc_threshold_label.setEnabled(False)
             self.hc_threshold_spin_box.setEnabled(False)
+            self.hc_thresholod_percentage_label.setEnabled(False)
+            self.hc_threshold_percentage_spin_box.setEnabled(False)
+            self.cell_size_label_max.setEnabled(False)
+            self.cell_size_label_min.setEnabled(False)
+            self.cell_size_spin_box_min.setEnabled(False)
+            self.cell_size_spin_box_max.setEnabled(False)
             analysis = False
         if analysis:
             self.show_cell_types_check_box.setEnabled(True)
@@ -630,6 +667,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.cell_tracking_spin_box.setEnabled(True)
             self.show_neighbors_check_box.setEnabled(True)
             self.track_cells_button.setEnabled(True)
+            self.find_events_button.setEnabled(True)
             self.plot_single_cell_data_spin_box.setEnabled(True)
             self.plot_single_cell_data_combo_box.setEnabled(True)
             self.plot_single_cell_data_button.setEnabled(True)
@@ -653,6 +691,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.cell_tracking_spin_box.setEnabled(False)
             self.show_neighbors_check_box.setEnabled(False)
             self.track_cells_button.setEnabled(False)
+            self.find_events_button.setEnabled(False)
             self.plot_single_cell_data_spin_box.setEnabled(False)
             self.plot_single_cell_data_combo_box.setEnabled(False)
             self.plot_single_cell_data_button.setEnabled(False)
@@ -711,7 +750,6 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         view.resize(1500, 600)
         window.resize(1500, 600)
         window.show()
-
 
     def plot_compare_frames_data(self):
         if self.compare_frames_combo_box.currentIndex() < 0:
@@ -772,7 +810,46 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             frame_number = self.frame_slider.value()
         else:
             self.frame_slider.setValue(frame_number)
-        self.segment_frames([frame_number])
+        if self.segment_using_epyseg_question():
+            self.segment_frames_using_epyseg([frame_number])
+        else:
+            self.segment_frames([frame_number])
+
+    def segment_frames_using_epyseg(self, frames):
+        self.segment_all_frames_progress_bar.reset()
+        self.segment_all_frames_progress_bar.show()
+        self.cancel_segmentation_button.show()
+        self.epyseg_dir = os.path.join(self.working_directory, "epyseg_temp_folder")
+        if not os.path.exists(self.epyseg_dir):
+            os.mkdir(self.epyseg_dir)
+        zo_channel = self.zo_spin_box.value()
+        self.segmentation_thread = SaveImagesThread(self.img, self.epyseg_dir, frames, zo_channel, self.img_in_memory)
+        self.segmentation_thread._signal.connect(self.saving_segmentation_images_done)
+        self.segment_all_frames_button.setEnabled(False)
+        self.segmentation_thread.start()
+
+    def saving_segmentation_images_done(self, msg):
+        percentage_done = int(msg)
+        self.segmentation_saved = False
+        self.segment_all_frames_progress_bar.setValue(percentage_done)
+        if percentage_done == 100:
+            frames = self.segmentation_thread.frames
+            self.segment_all_frames_button.setEnabled(True)
+            self.cancel_segmentation_button.hide()
+            self.segment_all_frames_progress_bar.hide()
+            message_box = QtWidgets.QMessageBox
+            message_box.about(self, '', "Loading EPySeg. Use predict on input folder %s" % self.epyseg_dir)
+            sys.path.insert(1, '..\\EPySeg')
+            from epyseg.epygui import EPySeg
+            self.epyseg = EPySeg()
+            self.epyseg.show()
+            self.segment_all_frames_progress_bar.reset()
+            self.segment_all_frames_progress_bar.show()
+            self.cancel_segmentation_button.show()
+            self.segmentation_thread = ExternalSegmentationThread(self.tissue_info, self.epyseg_dir, frames)
+            self.segmentation_thread._signal.connect(self.frame_segmentation_done)
+            self.segment_all_frames_button.setEnabled(False)
+            self.segmentation_thread.start()
 
     def this_might_take_a_while_message(self):
         message_box = QtWidgets.QMessageBox
@@ -783,11 +860,21 @@ class FormImageProcessing(QtWidgets.QMainWindow):
     def segment_all_frames(self):
         if not self.data_lost_warning(self.segment_all_frames):
             return 0
-        if self.this_might_take_a_while_message():
-            self.segment_frames(np.arange(1,self.number_of_frames+1))
+        if self.segment_using_epyseg_question():
+            self.segment_frames_using_epyseg(np.arange(1,self.number_of_frames+1))
+        else:
+            if self.this_might_take_a_while_message():
+                self.segment_frames(np.arange(1,self.number_of_frames+1))
 
     def cancel_segmentation(self):
         self.segmentation_thread.kill()
+
+    def segment_using_epyseg_question(self):
+        message_box = QtWidgets.QMessageBox
+        ret = message_box.question(self, '',
+                                   "Do you want to use epySeg (Deep-Learning based segmentation, will open up in a new window)?",
+                                   message_box.Yes | message_box.No)
+        return ret == message_box.Yes
 
     def frame_analysis_done(self, msg):
         split_msg = msg.split("/")
@@ -813,7 +900,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.cancel_analysis_button.show()
         atoh_channel = self.atoh_spin_box.value()
         hc_threshold = self.hc_threshold_spin_box.value()/100
+        hc_threshold_percentage = self.hc_threshold_percentage_spin_box.value()
         self.analysis_thread = AnalysisThread(self.img, self.tissue_info, frame_numbers, atoh_channel, hc_threshold,
+                                              hc_threshold_percentage,
                                               self.use_existing_cell_types_check_box.isChecked(), self.img_in_memory)
         self.analysis_thread._signal.connect(self.frame_analysis_done)
         self.analyze_segmentation_button.setEnabled(False)
@@ -865,6 +954,21 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.setState(image=True, segmentation=True, analysis=True)
             self.frame_slider.setEnabled(True)
             self.frame_line_edit.setEnabled(True)
+            self.tissue_info.fix_cell_id_in_events()
+
+    def event_finding_done(self, msg):
+        percentage_done = int(msg)
+        self.analysis_saved = False
+        self.find_events_progress_bar.setValue(percentage_done)
+
+        if percentage_done == 100:
+            self.cancel_event_finding_button.hide()
+            self.find_events_progress_bar.hide()
+            self.setState(image=True, segmentation=True, analysis=True)
+            self.frame_slider.setEnabled(True)
+            self.frame_line_edit.setEnabled(True)
+            self.show_events_button.show()
+            self.show_events_button.setEnabled(True)
 
     def correct_tracking(self, off=False):
         if off:
@@ -904,6 +1008,26 @@ class FormImageProcessing(QtWidgets.QMainWindow):
     def cancel_tracking(self):
         self.tracking_thread.kill()
 
+    def find_events(self, initial_frame=-1, final_frame=-1):
+        self.find_events_progress_bar.reset()
+        self.find_events_progress_bar.show()
+        if (initial_frame == -1 or not initial_frame) and final_frame == -1:
+            initial_frame = 1
+            final_frame = self.number_of_frames
+        self.cancel_event_finding_button.show()
+        self.event_finding_thread = EventFindingThread(self.tissue_info, initial_frame, final_frame)
+        self.event_finding_thread._signal.connect(self.event_finding_done)
+        self.find_events_button.setEnabled(False)
+        self.find_events_button.hide()
+        self.frame_slider.setEnabled(False)
+        self.frame_line_edit.setEnabled(False)
+        self.show_events_button.setEnabled(False)
+        self.show_events_button.hide()
+        self.event_finding_thread.start()
+
+    def cancel_event_finding(self):
+        self.event_finding_thread.kill()
+
     def fix_segmentation(self):
         self.fix_segmentation_button.setEnabled(False)
         self.fix_segmentation_button.hide()
@@ -927,7 +1051,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.tissue_info.add_segmentation_line(frame, self.fix_segmentation_last_position, final=True,
                                                    hc_marker_image=hc_marker_img,
                                                    hc_threshold=self.hc_threshold_spin_box.value()/100,
-                                                   use_existing_types=self.use_existing_cell_types_check_box.isChecked())
+                                                   use_existing_types=self.use_existing_cell_types_check_box.isChecked(),
+                                                   percentile_above_threshold=self.hc_threshold_percentage_spin_box.value())
             self.fix_segmentation_last_position = None
         self.tissue_info.update_labels(self.frame_slider.value())
         # self.track_cells(initial_frame=frame - 1, final_frame=self.number_of_frames)
@@ -1084,7 +1209,9 @@ class SegmentAllThread(QtCore.QThread):
 class AnalysisThread(QtCore.QThread):
     _signal = QtCore.pyqtSignal(str)
 
-    def __init__(self, img, tissue_info, frame_numbers, atoh_channel, hc_threshold, use_existing_types=False,
+    def __init__(self, img, tissue_info, frame_numbers, atoh_channel, hc_threshold,
+                 percentage_above_threshold,
+                 use_existing_types=False,
                  img_in_memory=False):
         super(AnalysisThread, self).__init__()
         self.tissue_info = tissue_info
@@ -1092,6 +1219,7 @@ class AnalysisThread(QtCore.QThread):
         self.frame_numbers = frame_numbers
         self.atoh_channel = atoh_channel
         self.hc_threshold = hc_threshold
+        self.percentage_above_threshold = percentage_above_threshold
         self.is_killed = False
         self.use_existing_types = use_existing_types
         self.img_in_memory = img_in_memory
@@ -1106,7 +1234,8 @@ class AnalysisThread(QtCore.QThread):
                 atoh_img = self.img[frame - 1, self.atoh_channel, 0, :, :]
             else:
                 atoh_img = self.img[frame - 1, self.atoh_channel, 0, :, :].compute()
-            self.tissue_info.calculate_frame_cellinfo(frame, atoh_img, self.hc_threshold, self.use_existing_types)
+            self.tissue_info.calculate_frame_cellinfo(frame, atoh_img, self.hc_threshold, self.use_existing_types,
+                                                      self.percentage_above_threshold)
             done_frames += 1
             percentage_done = np.round(100*done_frames/len(self.frame_numbers))
             self.emit("%d/%d" % (frame, percentage_done))
@@ -1154,6 +1283,34 @@ class TrackingThread(QtCore.QThread):
     def kill(self):
         self.is_killed = True
 
+class EventFindingThread(QtCore.QThread):
+    _signal = QtCore.pyqtSignal(str)
+
+    def __init__(self, tissue_info, initial_frame=-1, final_frame=-1):
+        super(EventFindingThread, self).__init__()
+        self.tissue_info = tissue_info
+        self.is_killed = False
+        self.initial_frame = initial_frame
+        self.final_frame = final_frame
+
+    def __del__(self):
+        self.wait()
+
+    def run(self):
+        event_finding_generator = self.tissue_info.find_events_iterator(initial_frame=self.initial_frame,
+                                                                        final_frame=self.final_frame)
+        for frame in event_finding_generator:
+            percentage_done = np.round(100 * frame / self.tissue_info.number_of_frames)
+            self.emit("%d" % percentage_done)
+            if self.is_killed:
+                break
+        self.emit("%d" % 100)
+
+    def emit(self, msg):
+        self._signal.emit(msg)
+
+    def kill(self):
+        self.is_killed = True
 
 class SaveDataThread(QtCore.QThread):
     _signal = QtCore.pyqtSignal(int)
@@ -1193,6 +1350,94 @@ class LoadDataThread(QtCore.QThread):
 
     def emit(self, msg):
         self._signal.emit(int(msg))
+
+class SaveImagesThread(QtCore.QThread):
+    _signal = QtCore.pyqtSignal(int)
+
+    def __init__(self, img, output_folder, frames, channel, img_in_memory=False):
+        super(SaveImagesThread, self).__init__()
+        self.img = img
+        self.output = output_folder
+        self.frames = frames
+        self.frames_done = 0
+        self.kill = False
+        self.channel = channel
+        self.img_in_memory = img_in_memory
+
+    def __del__(self):
+        self.wait()
+
+    def run(self):
+        for frame in self.frames:
+            save_path = os.path.join(self.output, "frame_%d_zo.tif"%frame)
+            if not os.path.isfile(save_path):
+                if self.img_in_memory:
+                    frame_img = self.img[frame - 1, self.channel, 0, :, :]
+                else:
+                    frame_img = self.img[frame - 1, self.channel, 0, :, :].compute()
+                save_tiff(save_path, frame_img, axes="YX", data_type="uint16")
+            self.frames_done += 1
+            self.emit(100*self.frames_done/len(self.frames))
+
+    def emit(self, msg):
+        self._signal.emit(int(msg))
+
+
+class ExternalSegmentationThread(QtCore.QThread):
+    _signal = QtCore.pyqtSignal(str)
+
+    def __init__(self, tissue_info, output_folder, frames):
+        super(ExternalSegmentationThread, self).__init__()
+        self.tissue_info = tissue_info
+        self.output = output_folder
+        self.frames = frames
+        self.frames_done = 0
+        self.kill = False
+        self.event_handler = PatternMatchingEventHandler(['*'], None, True, True)
+        self.event_handler.on_created = self.on_created
+        self.observer = Observer()
+        self.observer.schedule(self.event_handler, self.output, recursive=True)
+
+    def on_created(self, event):
+        path = event.src_path
+        old_size = -1
+        file_size = os.path.getsize(path)
+        while old_size != file_size:
+            old_size = file_size
+            time.sleep(1)
+            file_size = os.path.getsize(path)
+        self.load_file(path)
+
+    def __del__(self):
+        self.observer.stop()
+        self.observer.join()
+        self.wait()
+
+    def load_file(self, path):
+        file_name = os.path.basename(path)
+        if file_name.startswith("frame"):
+            frame_number = int(file_name.split("_")[1])
+            self.tissue_info.load_labels_from_external_file(frame_number, path)
+            self.frames_done += 1
+            self.emit("%d/%d" %(frame_number,100*self.frames_done/len(self.frames)))
+
+    def load_existing_files(self):
+        path = os.path.join(self.output, "predict")
+        if os.path.isdir(path):
+            for filename in os.listdir(path):
+                f = os.path.join(path, filename)
+                if os.path.isfile(f):
+                    self.load_file(f)
+
+    def run(self):
+        self.load_existing_files()
+        self.observer.start()
+        while not self.kill:
+            time.sleep(1)
+
+
+    def emit(self, msg):
+        self._signal.emit(msg)
 
 
 if __name__ == "__main__":
