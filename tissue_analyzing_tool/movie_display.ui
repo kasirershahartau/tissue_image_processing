@@ -520,7 +520,7 @@
     <property name="geometry">
      <rect>
       <x>1100</x>
-      <y>840</y>
+      <y>870</y>
       <width>21</width>
       <height>21</height>
      </rect>
@@ -533,7 +533,7 @@
     <property name="geometry">
      <rect>
       <x>1130</x>
-      <y>840</y>
+      <y>870</y>
       <width>42</width>
       <height>21</height>
      </rect>
@@ -546,7 +546,7 @@
     <property name="geometry">
      <rect>
       <x>1300</x>
-      <y>840</y>
+      <y>870</y>
       <width>111</width>
       <height>16</height>
      </rect>
@@ -559,7 +559,7 @@
     <property name="geometry">
      <rect>
       <x>1410</x>
-      <y>840</y>
+      <y>870</y>
       <width>41</width>
       <height>23</height>
      </rect>
@@ -572,7 +572,7 @@
     <property name="geometry">
      <rect>
       <x>1180</x>
-      <y>840</y>
+      <y>870</y>
       <width>111</width>
       <height>22</height>
      </rect>
@@ -792,7 +792,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>1100</x>
-      <y>820</y>
+      <y>850</y>
       <width>91</width>
       <height>16</height>
      </rect>
@@ -909,7 +909,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>1100</x>
-      <y>780</y>
+      <y>810</y>
       <width>91</width>
       <height>21</height>
      </rect>
@@ -922,7 +922,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>910</x>
-      <y>800</y>
+      <y>830</y>
       <width>47</width>
       <height>13</height>
      </rect>
@@ -935,7 +935,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>940</x>
-      <y>798</y>
+      <y>828</y>
       <width>111</width>
       <height>20</height>
      </rect>
@@ -948,7 +948,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>1060</x>
-      <y>800</y>
+      <y>830</y>
       <width>47</width>
       <height>16</height>
      </rect>
@@ -961,7 +961,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>1100</x>
-      <y>801</y>
+      <y>831</y>
       <width>131</width>
       <height>20</height>
      </rect>
@@ -977,7 +977,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>1410</x>
-      <y>802</y>
+      <y>832</y>
       <width>41</width>
       <height>21</height>
      </rect>
@@ -990,7 +990,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>1240</x>
-      <y>800</y>
+      <y>830</y>
       <width>51</width>
       <height>21</height>
      </rect>
@@ -1003,7 +1003,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>1290</x>
-      <y>800</y>
+      <y>830</y>
       <width>111</width>
       <height>22</height>
      </rect>
@@ -1256,6 +1256,132 @@ memory</string>
      <number>1000</number>
     </property>
    </widget>
+   <widget class="QPushButton" name="delete_events_button">
+    <property name="geometry">
+     <rect>
+      <x>1254</x>
+      <y>710</y>
+      <width>81</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Delete events</string>
+    </property>
+   </widget>
+   <widget class="QCheckBox" name="delete_events_frame_check_box">
+    <property name="geometry">
+     <rect>
+      <x>1340</x>
+      <y>700</y>
+      <width>111</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>current frame only</string>
+    </property>
+    <property name="checked">
+     <bool>true</bool>
+    </property>
+   </widget>
+   <widget class="QCheckBox" name="delete_events_aout_detected_check_box">
+    <property name="geometry">
+     <rect>
+      <x>1340</x>
+      <y>720</y>
+      <width>111</width>
+      <height>17</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>auto-detected only</string>
+    </property>
+    <property name="checked">
+     <bool>true</bool>
+    </property>
+   </widget>
+   <widget class="QLabel" name="window_radius_label">
+    <property name="geometry">
+     <rect>
+      <x>1010</x>
+      <y>790</y>
+      <width>131</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>window radius (pixels):</string>
+    </property>
+   </widget>
+   <widget class="QSpinBox" name="window_radius_spin_box">
+    <property name="geometry">
+     <rect>
+      <x>1130</x>
+      <y>790</y>
+      <width>42</width>
+      <height>22</height>
+     </rect>
+    </property>
+    <property name="minimum">
+     <number>1</number>
+    </property>
+   </widget>
+   <widget class="QLabel" name="spatial_resolution_label">
+    <property name="geometry">
+     <rect>
+      <x>1180</x>
+      <y>790</y>
+      <width>121</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>spatial resolution (pixels):</string>
+    </property>
+   </widget>
+   <widget class="QSpinBox" name="spatial_resolution_spin_box">
+    <property name="geometry">
+     <rect>
+      <x>1310</x>
+      <y>790</y>
+      <width>42</width>
+      <height>22</height>
+     </rect>
+    </property>
+    <property name="minimum">
+     <number>1</number>
+    </property>
+    <property name="value">
+     <number>1</number>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="plot_spatial_map_button">
+    <property name="geometry">
+     <rect>
+      <x>1360</x>
+      <y>790</y>
+      <width>91</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Plot spatial map</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="open_console_push_button">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>700</y>
+      <width>91</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Open console</string>
+    </property>
+   </widget>
    <zorder>track_cells_button</zorder>
    <zorder>open_file_pb</zorder>
    <zorder>zo_check_box</zorder>
@@ -1346,6 +1472,15 @@ memory</string>
    <zorder>cell_size_spin_box_min</zorder>
    <zorder>cell_size_label_max</zorder>
    <zorder>cell_size_spin_box_max</zorder>
+   <zorder>delete_events_button</zorder>
+   <zorder>delete_events_frame_check_box</zorder>
+   <zorder>delete_events_aout_detected_check_box</zorder>
+   <zorder>window_radius_label</zorder>
+   <zorder>window_radius_spin_box</zorder>
+   <zorder>spatial_resolution_label</zorder>
+   <zorder>spatial_resolution_spin_box</zorder>
+   <zorder>plot_spatial_map_button</zorder>
+   <zorder>open_console_push_button</zorder>
   </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">

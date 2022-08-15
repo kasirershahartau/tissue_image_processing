@@ -1,3 +1,7 @@
+import logging
+
+import numpy as np
+import pandas as pd
 from PyQt5 import QtCore, uic, QtWidgets, QtGui, QtWebEngineWidgets
 import tissue_info
 import matplotlib
@@ -13,6 +17,9 @@ import cv2
 from watchdog.observers import Observer
 from watchdog.events import PatternMatchingEventHandler
 import time
+from qtconsole.rich_jupyter_widget import RichJupyterWidget
+from qtconsole.inprocess import QtInProcessKernelManager
+from IPython.lib import guisupport
 
 COLORTABLE=[]
 WORKING_DIR = "D:\\Kasirer\\experimental_results\\"
@@ -47,8 +54,10 @@ class CustomNavigationToolbar(NavigationToolbar):
             file_path = QtWidgets.QFileDialog.getSaveFileName(self, 'Choose a file name to save data',
                                                     directory=matplotlib.rcParams['savefig.directory'])[0]
             if file_path:
-                self.data.to_pickle(file_path)
-
+                if isinstance(self.data, pd.DataFrame):
+                    self.data.to_pickle(file_path)
+                elif isinstance(self.data, np.ndarray):
+                    np.save(file_path, self.data)
 
 class PlotDataWindow(QtWidgets.QMainWindow):
     def __init__(self, parent=None, working_dir=None):
@@ -99,6 +108,54 @@ class PandasModel(QtCore.QAbstractTableModel):
         if orientation == QtCore.Qt.Horizontal and role == QtCore.Qt.DisplayRole:
             return self._data.columns[col]
         return None
+
+
+class ConsoleWidget(RichJupyterWidget):
+    def __init__(self, customBanner=None, *args, **kwargs):
+        super(ConsoleWidget, self).__init__(*args, **kwargs)
+
+        if customBanner is not None:
+            self.banner = customBanner
+
+        self.font_size = 10
+        self.kernel_manager = QtInProcessKernelManager()
+        self.kernel_manager.start_kernel(show_banner=False)
+        self.kernel_manager.kernel.log.setLevel(logging.CRITICAL)
+        self.kernel_manager.kernel.gui = 'qt'
+        self.kernel_client = self._kernel_manager.client()
+        self.kernel_client.start_channels()
+
+        def stop():
+            self.kernel_client.stop_channels()
+            self.kernel_manager.shutdown_kernel()
+            guisupport.get_app_qt4().exit()
+
+        self.exit_requested.connect(stop)
+
+    def push_vars(self, variableDict):
+        """
+        Given a dictionary containing name / value pairs, push those variables
+        to the Jupyter console widget
+        """
+        self.kernel_manager.kernel.shell.push(variableDict)
+
+    def clear(self):
+        """
+        Clears the terminal
+        """
+        self._control.clear()
+
+    def print_text(self, text):
+        """
+        Prints some plain text to the console
+        """
+        self._append_plain_text(text)
+
+    def execute_command(self, command):
+        """
+        Execute a command in the frame of the console widget
+        """
+        self._execute(command, False)
 
 
 class FormImageProcessing(QtWidgets.QMainWindow):
@@ -153,13 +210,28 @@ class FormImageProcessing(QtWidgets.QMainWindow):
 
     def close(self):
         del self.tissue_info
+        time.sleep(3)
         super(FormImageProcessing, self).close()
 
+    def open_console(self):
+        window = QtWidgets.QMainWindow(parent=self)
+        console = ConsoleWidget(parent=window)
+        vars = {"img": self.img, "img_dimensions": self.img_dimensions, "current_frame": self.current_frame,
+                "tissue_info": self.tissue_info, "number_of_frames": self.number_of_frames,
+                "image_in_memory":self.img_in_memory, "working_directory":self.working_directory,
+                "img_metadata":self.img_metadata}
+        console.push_vars(vars)
+        window.resize(1500, 600)
+        console.resize(1500, 600)
+        window.show()
+
+
     def connect_methods(self):
+        self.open_console_push_button.clicked.connect(self.open_console)
         self.zo_check_box.stateChanged.connect(self.zo_related_widget_changed)
         self.atoh_check_box.stateChanged.connect(self.atoh_related_widget_changed)
         self.frame_slider.valueChanged.connect(self.slider_changed)
-        self.frame_line_edit.textChanged.connect(self.frame_line_edit_changed)
+        self.frame_line_edit.editingFinished.connect(self.frame_line_edit_changed)
         self.zo_spin_box.valueChanged.connect(self.zo_related_widget_changed)
         self.atoh_spin_box.valueChanged.connect(self.atoh_related_widget_changed)
         self.zo_level_scroll_bar.valueChanged.connect(self.zo_related_widget_changed)
@@ -191,6 +263,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.cancel_event_finding_button.clicked.connect(self.cancel_event_finding)
         self.plot_single_cell_data_button.clicked.connect(self.plot_single_cell_data)
         self.plot_single_frame_data_button.clicked.connect(self.plot_single_frame_data)
+        self.plot_spatial_map_button.clicked.connect(self.plot_spatial_map)
         self.plot_compare_frames_button.clicked.connect(self.plot_compare_frames_data)
         self.image_display.photoClicked.connect(self.image_clicked)
         self.fix_segmentation_button.clicked.connect(self.fix_segmentation)
@@ -199,6 +272,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.finish_fixing_cell_types_button.clicked.connect(self.finish_fixing_cell_types)
         self.fix_tracking_button.clicked.connect(self.correct_tracking)
         self.mark_event_button.clicked.connect(self.mark_event)
+        self.delete_events_button.clicked.connect(self.delete_events)
         self.mark_event_combo_box.clear()
         self.mark_event_combo_box.addItems(tissue_info.EVENT_TYPES)
         self.abort_event_marking_button.clicked.connect(self.abort_event_marking)
@@ -238,6 +312,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.frame_line_edit.setText("%d/%d" % (self.frame_slider.value(), self.number_of_frames))
         self.setWindowTitle(fname)
         self.display_frame()
+        min_planar_dimension = min(self.img_dimensions.X, self.img_dimensions.Y)
+        self.window_radius_spin_box.setMaximum(min_planar_dimension)
+        self.spatial_resolution_spin_box.setMaximum(min_planar_dimension)
         self.setState(image=True)
 
     def display_frame(self):
@@ -378,6 +455,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
     def mark_event(self, pos=None):
         self.mark_event_button.setEnabled(False)
         self.mark_event_button.hide()
+        self.delete_events_button.setEnabled(False)
         self.abort_event_marking_button.setEnabled(True)
         self.abort_event_marking_button.show()
         self.mark_event_combo_box.setEnabled(False)
@@ -392,7 +470,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.event_start_frame = self.frame_slider.value()
             if self.mark_event_combo_box.currentText() == "delete event":
                 self.tissue_info.add_event(self.mark_event_combo_box.currentText(), self.event_start_frame,
-                                           0, self.event_start_position, (0,0))
+                                           0, self.event_start_position, (0,0), source='manual')
                 self.mark_event_stage = 0
             else:
                 message_box = QtWidgets.QMessageBox
@@ -406,19 +484,21 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                 self.mark_event_stage = 3
             else:
                 self.tissue_info.add_event(self.mark_event_combo_box.currentText(), self.event_start_frame,
-                                           self.event_end_frame, self.event_start_position, self.event_end_position)
+                                           self.event_end_frame, self.event_start_position, self.event_end_position,
+                                           source='manual')
                 self.mark_event_stage = 0
         elif self.mark_event_stage == 3:
             self.event_end_frame = self.frame_slider.value()
             self.tissue_info.add_event(self.mark_event_combo_box.currentText(), self.event_start_frame,
                                        self.event_end_frame, self.event_start_position, self.event_end_position,
-                                       pos)
+                                       pos, source='manual')
             self.mark_event_stage = 0
         if self.mark_event_stage == 0:
             self.abort_event_marking_button.setEnabled(False)
             self.abort_event_marking_button.hide()
             self.mark_event_button.setEnabled(True)
             self.mark_event_button.show()
+            self.delete_events_button.setEnabled(True)
             self.mark_event_combo_box.setEnabled(True)
             self.analysis_changed = True
             self.display_frame()
@@ -430,7 +510,19 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.abort_event_marking_button.hide()
         self.mark_event_button.setEnabled(True)
         self.mark_event_button.show()
+        self.delete_events_button.setEnabled(True)
         self.mark_event_combo_box.setEnabled(True)
+        return 0
+
+    def delete_events(self):
+        if not self.data_lost_warning(self.delete_events):
+            return 0
+        source = 'automatic' if self.delete_events_aout_detected_check_box.isChecked() else 'all'
+        if self.delete_events_frame_check_box.isChecked():
+            frame = self.frame_slider.value()
+            self.tissue_info.delete_all_events_in_frame(frame, source=source)
+        else:
+            self.tissue_info.delete_all_events(source=source)
         return 0
 
     def slider_changed(self):
@@ -614,6 +706,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.plot_single_cell_data_combo_box.setEnabled(False)
             self.plot_single_cell_data_button.setEnabled(False)
             self.plot_single_frame_data_button.setEnabled(False)
+            self.plot_spatial_map_button.setEnabled(False)
+            self.spatial_resolution_spin_box.setEnabled(False)
+            self.spatial_resolution_label.setEnabled(False)
+            self.window_radius_spin_box.setEnabled(False)
+            self.window_radius_label.setEnabled(False)
             self.plot_single_frame_data_x_combo_box.setEnabled(False)
             self.plot_single_frame_data_y_combo_box.setEnabled(False)
             self.plot_single_frame_data_cell_type_combo_box.setEnabled(False)
@@ -629,6 +726,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.fix_cell_types_label.setEnabled(False)
             self.fix_cell_types_button.setEnabled(False)
             self.mark_event_button.setEnabled(False)
+            self.delete_events_button.setEnabled(False)
+            self.delete_events_frame_check_box.setEnabled(False)
+            self.delete_events_aout_detected_check_box.setEnabled(False)
             self.mark_event_combo_box.setEnabled(False)
             self.show_events_check_box.setEnabled(False)
             self.show_events_button.setEnabled(False)
@@ -672,6 +772,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.plot_single_cell_data_combo_box.setEnabled(True)
             self.plot_single_cell_data_button.setEnabled(True)
             self.plot_single_frame_data_button.setEnabled(True)
+            self.plot_spatial_map_button.setEnabled(True)
+            self.spatial_resolution_spin_box.setEnabled(True)
+            self.spatial_resolution_label.setEnabled(True)
+            self.window_radius_spin_box.setEnabled(True)
+            self.window_radius_label.setEnabled(True)
             self.plot_single_frame_data_x_combo_box.setEnabled(True)
             self.plot_single_frame_data_y_combo_box.setEnabled(True)
             self.plot_single_frame_data_cell_type_combo_box.setEnabled(True)
@@ -682,6 +787,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.use_existing_cell_types_check_box.setEnabled(True)
             self.fix_cell_types_button.setEnabled(True)
             self.mark_event_button.setEnabled(True)
+            self.delete_events_button.setEnabled(True)
+            self.delete_events_frame_check_box.setEnabled(True)
+            self.delete_events_aout_detected_check_box.setEnabled(True)
             self.mark_event_combo_box.setEnabled(True)
             self.show_events_check_box.setEnabled(True)
             self.show_events_button.setEnabled(True)
@@ -696,6 +804,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.plot_single_cell_data_combo_box.setEnabled(False)
             self.plot_single_cell_data_button.setEnabled(False)
             self.plot_single_frame_data_button.setEnabled(False)
+            self.plot_spatial_map_button.setEnabled(False)
+            self.spatial_resolution_spin_box.setEnabled(False)
+            self.spatial_resolution_label.setEnabled(False)
+            self.window_radius_spin_box.setEnabled(False)
+            self.window_radius_label.setEnabled(False)
             self.plot_single_frame_data_x_combo_box.setEnabled(False)
             self.plot_single_frame_data_y_combo_box.setEnabled(False)
             self.plot_single_frame_data_cell_type_combo_box.setEnabled(False)
@@ -705,13 +818,14 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.plot_compare_frame_data_cell_type_combo_box.setEnabled(False)
             self.use_existing_cell_types_check_box.setEnabled(False)
             self.mark_event_button.setEnabled(False)
+            self.delete_events_button.setEnabled(False)
+            self.delete_events_frame_check_box.setEnabled(False)
+            self.delete_events_aout_detected_check_box.setEnabled(False)
             self.mark_event_combo_box.setEnabled(False)
             self.show_events_check_box.setEnabled(False)
             self.show_events_button.setEnabled(False)
             self.abort_event_marking_button.setEnabled(False)
             self.abort_event_marking_button.hide()
-
-
 
     def plot_single_cell_data(self):
         if self.plot_single_cell_data_combo_box.currentIndex() < 0:
@@ -734,6 +848,24 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         plot_window = PlotDataWindow(self, working_dir=self.working_directory)
         data, error_message = self.tissue_info.plot_single_frame_data(frame, x_feature, y_feature, plot_window.get_ax(),
                                                                       cell_type)
+        if error_message:
+            message_box = QtWidgets.QMessageBox
+            message_box.question(self, '', error_message, message_box.Close)
+        else:
+            plot_window.show(data)
+
+    def plot_spatial_map(self):
+        if self.compare_frames_combo_box.currentIndex() < 0 or \
+                self.plot_compare_frame_data_cell_type_combo_box.currentIndex() < 0:
+            return 0
+        feature = self.compare_frames_combo_box.currentText()
+        cell_type = self.plot_compare_frame_data_cell_type_combo_box.currentText()
+        window_radius = self.window_radius_spin_box.value()
+        spatial_resolution = self.spatial_resolution_spin_box.value()
+        frame = self.frame_slider.value()
+        plot_window = PlotDataWindow(self, working_dir=self.working_directory)
+        data, error_message = self.tissue_info.plot_spatial_map(frame, feature, window_radius, spatial_resolution,
+                                                                plot_window.get_ax(), cells_type=cell_type)
         if error_message:
             message_box = QtWidgets.QMessageBox
             message_box.question(self, '', error_message, message_box.Close)
@@ -911,6 +1043,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.analysis_thread.start()
 
     def analyze_frame(self, frame_number=0):
+        if not self.data_lost_warning(self.analyze_frame):
+            return 0
         if frame_number == 0:
             frame_number = self.frame_slider.value()
         else:

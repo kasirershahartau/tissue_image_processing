@@ -10,9 +10,12 @@ import os.path
 import shutil
 import numpy as np
 import pandas as pd
+import copy
 from matplotlib import pyplot as plt
+from matplotlib import cm as colormap
 from matplotlib.patches import Circle
 from scipy.ndimage.filters import maximum_filter, minimum_filter
+from scipy.spatial import Voronoi
 from skimage.draw import line, disk
 from skimage.measure import regionprops_table, regionprops
 from skimage.measure import label as label_image_regions
@@ -49,7 +52,8 @@ EVENTS_INFO_SPEC = {"type": "TBA",
                     "daughter_pos_x": 0,
                     "daughter_pos_y": 0,
                     "cell_id": 0,
-                    "daughter_id": 0}
+                    "daughter_id": 0,
+                    "source": "manual"}
 
 
 TRACK_COLOR = (0, 1, 0)
@@ -122,7 +126,7 @@ class Tissue(object):
          The tissue class holds the cells of a tissue, and organizes information
          according to cell area and centroid location.
     """
-    SPECIAL_FEATURES = ["roundness", "neighbors from the same type", "HC neighbors", "SC neighbors", "contact length",
+    SPECIAL_FEATURES = ["shape index", "roundness", "neighbors from the same type", "HC neighbors", "SC neighbors", "contact length",
                         "HC contact length", "SC contact length"]
     SPECIAL_X_ONLY_FEATURES = ["psi6"]
     SPECIAL_Y_ONLY_FEATURES = ["histogram"]
@@ -307,7 +311,7 @@ class Tissue(object):
         return cell.cx.values[0], cell.cy.values[0]
 
     def add_event(self, event_type, start_frame, end_frame, start_pos=None, end_pos=None, second_end_pos=None,
-                  start_cell_id=None, daughter_cell_id=None):
+                  start_cell_id=None, daughter_cell_id=None, source='manual'):
         """
         Adding new event to records.
         @param resulting_cells_id: only for cell division
@@ -345,7 +349,8 @@ class Tissue(object):
                 "daughter_pos_x": 0,
                 "daughter_pos_y": 0,
                 "cell_id": start_cell_id,
-                "daughter_id": 0}
+                "daughter_id": 0,
+                "source": source}
         if second_end_pos is not None or daughter_cell_id is not None:
             if daughter_cell_id is None:
                 second_cell_id = self.get_cell_id_by_position(end_frame, second_end_pos)
@@ -368,6 +373,24 @@ class Tissue(object):
         to_delete = self.events.query("start_frame == %d and (cell_id == %d or daughter_id == %d)" %(start_frame, cell_id, cell_id))
         if to_delete.size > 0:
             self.events.drop(to_delete.index, inplace=True)
+        return 0
+
+    def delete_all_events_in_frame(self, frame, source='all'):
+        if source == 'all':
+            to_delete = self.events.query("start_frame <= %d <= end_frame" % frame)
+        else:
+            to_delete = self.events.query("(start_frame <= %d <= end_frame) and source == \"%s\"" % (frame, source))
+        if to_delete.size > 0:
+            self.events.drop(to_delete.index, inplace=True)
+        return 0
+
+    def delete_all_events(self, source='all'):
+        if source == 'all':
+            self.events = make_df(0, EVENTS_INFO_SPEC)
+        else:
+            to_delete = self.events.query("source == \"%s\"" % source)
+            if to_delete.size > 0:
+                self.events.drop(to_delete.index, inplace=True)
         return 0
 
     def draw_events(self, frame, radius=5):
@@ -398,7 +421,7 @@ class Tissue(object):
     @staticmethod
     def detect_edge_cells(labels):
         edge_pixels = np.hstack([labels[0,:], labels[:,0], labels[-1,:], labels[:,-1]])
-        return np.unique(edge_pixels[edge_pixels > 0])
+        return np.unique(edge_pixels[edge_pixels > 0]) - 1
 
     def find_valid_frames(self, initial_frame, final_frame):
         initial_frame = max(1, initial_frame)
@@ -428,7 +451,7 @@ class Tissue(object):
         id_previous_frame = valid_cells_last_frame.label
         HC_id_previous_frame = valid_cells_last_frame.query("type == \"HC\"").label
         labels_previous_frame = np.copy(labels)
-        edge_cells_id_previous_frame = cells_info.label[self.detect_edge_cells(labels) - 1]
+        edge_cells_id_previous_frame = cells_info.label[self.detect_edge_cells(labels)]
         for frame in range(initial_frame + 1, final_frame + 1):
             if not self.valid_frames[frame - 1]:
                 continue
@@ -439,7 +462,7 @@ class Tissue(object):
             cells_info = self.get_cells_info(frame)
             valid_cells_current_frame = cells_info.query("valid == 1 and empty_cell == 0")
             id_current_frame = valid_cells_current_frame.label
-            edge_cells_id_current_frame = cells_info.label[self.detect_edge_cells(labels) - 1]
+            edge_cells_id_current_frame = cells_info.label[self.detect_edge_cells(labels)]
             HC_id_current_frame = valid_cells_last_frame.query("type == \"HC\"").label
 
             # Looking for delaminations
@@ -464,7 +487,7 @@ class Tissue(object):
                         delamination_detected = False
                         break
                 if delamination_detected:
-                    self.add_event("delamination", start_frame, frame, start_cell_id=id)
+                    self.add_event("delamination", start_frame, frame, start_cell_id=id, source='automatic')
 
             exist_in_both_frames = np.intersect1d(id_current_frame.values, id_previous_frame.values)
             # Looking for differentiations
@@ -489,8 +512,7 @@ class Tissue(object):
                         differentiation_detected = False
                         break
                 if differentiation_detected:
-                    self.add_event("differentiation", start_frame, end_frame,
-                                    start_cell_id=id)
+                    self.add_event("differentiation", start_frame, end_frame, start_cell_id=id, source='automatic')
 
             # Looking for divisions
             exist_but_not_before = np.setdiff1d(id_current_frame.values, id_previous_frame.values)
@@ -549,7 +571,7 @@ class Tissue(object):
                 if division_detected:
                     self.add_event("division", start_frame, division_end_frame,
                                    start_cell_id=dividing_cell_id, daughter_cell_id=id,
-                                   second_end_pos=dividing_cell_position)
+                                   second_end_pos=dividing_cell_position, source='automatic')
             valid_cells_last_frame = valid_cells_current_frame
             id_previous_frame = id_current_frame
             HC_id_previous_frame = HC_id_current_frame
@@ -629,11 +651,14 @@ class Tissue(object):
         return pd.DataFrame({"Time": t, feature: data})
 
     def get_frame_data(self, frame, feature, valid_cells, special_features, global_features=[],
-                       cells_type='all', for_histogram=False):
+                       cells_type='all', for_histogram=False, reference=None):
         if feature in special_features:
             if feature == "psi6":
-                second_order_neighbors = self.find_second_order_neighbors(frame, valid_cells, cell_type=cells_type)
-                data = self.calc_psin(frame, valid_cells, second_order_neighbors, n=6, for_histogram=for_histogram)
+                # nearest_HCs = self.find_second_order_neighbors(frame, valid_cells, cell_type=cells_type)
+                nearest_HCs = self.find_nearest_neighbors_using_voroni_tesselation(valid_cells)
+                data = self.calc_psin(frame, valid_cells, nearest_HCs, n=6, for_histogram=for_histogram)
+            elif feature == "shape index":
+                data = self.calculate_cells_shape_index(valid_cells)
             elif feature == "roundness":
                 data = self.calculate_cells_roundness(valid_cells)
             elif feature == "neighbors from the same type":
@@ -673,12 +698,62 @@ class Tissue(object):
             if feature == "total_area":
                 data = self.calculate_total_area(valid_cells)
             elif feature == "density":
-                data = self.calculate_density(frame, valid_cells)
+                data = self.calculate_density(frame, valid_cells, reference)
             elif feature == "type_fraction":
-                data = self.calculate_type_fraction(frame, valid_cells)
+                data = self.calculate_type_fraction(frame, valid_cells, reference)
         else:
             data = valid_cells[feature].to_numpy()
         return data, ""
+
+    def get_valid_non_edge_cells(self, frame):
+        cells_info = self.get_cells_info(frame)
+        labels = self.get_labels(frame)
+        if cells_info is None or labels is None:
+            return None
+        edge_cells_index = self.detect_edge_cells(self.labels)
+        valid_cells = cells_info.query("valid == 1 and empty_cell == 0")
+        return valid_cells[~valid_cells.index.isin(edge_cells_index)]
+
+    def calculate_spatial_data(self, frame, window_radius, step_size, feature, cells_type='all'):
+        labels = self.get_labels(frame)
+        res = np.zeros(labels.shape)
+        valid_cells = self.get_valid_non_edge_cells(frame)
+        reference = None
+        for y in range(step_size//2, res.shape[0], step_size):
+            for x in range(step_size//2, res.shape[1], step_size):
+                relevant_cells = self.get_cells_inside_a_circle(valid_cells, (y,x), window_radius)
+                if feature == "density":
+                    reference = np.sum(relevant_cells.area)
+                elif feature == "type_fraction":
+                    reference = relevant_cells.shape[0]
+                if cells_type != 'all':
+                    relevant_cells = relevant_cells.query("type == \"%s\"" % cells_type)
+                # Calculate feature average
+                if relevant_cells.shape[0] > 0:
+                    data, err_msg = self.get_frame_data(frame, feature, relevant_cells,
+                                                        special_features=self.SPECIAL_FEATURES + self.SPECIAL_X_ONLY_FEATURES,
+                                                        global_features=self.GLOBAL_FEATURES,
+                                                        cells_type=cells_type, for_histogram=True, reference=reference)
+                else:
+                    data, err_msg = 0, ""
+                if err_msg:
+                    return None, err_msg
+                if hasattr(data, "__len__"):
+                    if len(data) > 0:
+                        data = np.average(data)
+                    else:
+                        data = 0
+                # fill up result
+                res[y - step_size//2:y + step_size//2, x-step_size//2:x+step_size//2] = data
+        return res, ""
+
+
+
+    @staticmethod
+    def get_cells_inside_a_circle(cells, center, radius):
+        center_x = center[1]
+        center_y = center[0]
+        return cells.query("(cx - %f)**2 + (cy - %f)**2 < %f" % (center_x, center_y, radius**2))
 
 
     def plot_single_frame_data(self, frame, x_feature, y_feature, ax, cells_type='all'):
@@ -719,11 +794,23 @@ class Tissue(object):
         ax.set_title(title)
         return res, ""
 
+    def plot_spatial_map(self, frame, feature, window_radius, window_step, ax, cells_type='all'):
+        map, msg = self.calculate_spatial_data(frame, window_radius, window_step, feature, cells_type=cells_type)
+        labels = self.get_labels(frame)
+        palette = copy.copy(colormap.RdBu)
+        palette.set_bad('k')
+        palette.set_under('k')
+        vmin = np.min(map[map > 0])
+        map_masked = np.ma.masked_where(labels == 0, map)
+        im = ax.imshow(map_masked, cmap=palette, vmin=vmin)
+        cbar = ax.figure.colorbar(im, ax=ax)
+        cbar.ax.set_ylabel(feature, rotation=270)
+        return map, msg
+
     def plot_compare_frames_data(self, frames, feature, ax, cells_type='all'):
         data = []
         err = []
         n_results = []
-        current_cell_info_frame = self.cells_info_frame
         for frame in frames:
             cell_info = self.get_cells_info(frame)
             if cell_info is None:
@@ -733,8 +820,9 @@ class Tissue(object):
             else:
                 valid_cells = cell_info.query("valid == 1 and type ==\"%s\"" % cells_type)
             raw_data, msg = self.get_frame_data(frame, feature, valid_cells,
-                                              self.SPECIAL_FEATURES + self.SPECIAL_X_ONLY_FEATURES + self.SPECIAL_Y_ONLY_FEATURES,
-                                              global_features=self.GLOBAL_FEATURES, cells_type=cells_type, for_histogram=True)
+                                              self.SPECIAL_FEATURES + self.SPECIAL_X_ONLY_FEATURES,
+                                              global_features=self.GLOBAL_FEATURES, cells_type=cells_type,
+                                              for_histogram=True)
             if raw_data is None:
                 return None, msg
             data.append(np.average(raw_data))
@@ -762,23 +850,36 @@ class Tissue(object):
         return cells.eval("perimeter ** (3/2) / ( area * 3.14 ** (1/2) * 6 )").to_numpy()
 
     @staticmethod
+    def calculate_cells_shape_index(cells):
+        return cells.eval("perimeter / (area ** (1/2))").to_numpy()
+
+    @staticmethod
     def calculate_total_area(cells):
         return np.sum(cells.area.to_numpy())
 
-    def calculate_density(self, frame, cells):
+    def calculate_density(self, frame, relevant_cells, reference_area=None):
         cells_info = self.get_cells_info(frame)
         if cells_info is None:
             return -1
-        all_cells = cells_info.query("empty_cell == 0")
-        total_area = self.calculate_total_area(all_cells)
-        return cells.shape[0]/total_area
+        if reference_area is None:
+            all_cells = cells_info.query("empty_cell == 0")
+            reference_area = self.calculate_total_area(all_cells)
+        if reference_area > 0:
+            return relevant_cells.shape[0]/reference_area
+        else:
+            return 0
 
-    def calculate_type_fraction(self, frame, cells):
+    def calculate_type_fraction(self, frame, relevant_cells, reference_cell_num=None):
         cells_info = self.get_cells_info(frame)
         if cells_info is None:
             return -1
-        all_valid_cells = cells_info.query("valid == 1")
-        return cells.shape[0] / all_valid_cells.shape[0]
+        if reference_cell_num is None:
+            all_cells = cells_info.query("valid == 1")
+            reference_cell_num = all_cells.shape[0]
+        if reference_cell_num > 0:
+            return relevant_cells.shape[0] / reference_cell_num
+        else:
+            return 0
 
     def calculate_n_neighbors_from_type(self, frame, cells, cell_type='same'):
         cell_info = self.get_cells_info(frame)
@@ -1021,7 +1122,7 @@ class Tissue(object):
             return None
         if cells is None:
             cells = cell_info.query("valid == 1")
-        second_order_neighbors = [set()]*cells.shape[0]
+        second_order_neighbors = [set() for i in range(cells.shape[0])]
         index = 0
         for i, row in cells.iterrows():
             for neighbor in list(row.neighbors):
@@ -1040,6 +1141,24 @@ class Tissue(object):
                 second_order_neighbors[index].remove(i + 1)
             index += 1
         return second_order_neighbors
+
+    @staticmethod
+    def find_nearest_neighbors_using_voroni_tesselation(cells):
+        neighbors = [set() for i in range(cells.shape[0])]
+        if cells.shape[0] < 4: # not enough points for Voroni tesselation
+            return neighbors
+        indices_in_original_table = cells.index.to_numpy()
+        centers_x = cells.cx.to_numpy()
+        centers_y = cells.cy.to_numpy()
+        centers = np.hstack((centers_x.reshape((centers_x.size, 1)), centers_y.reshape(centers_y.size, 1)))
+        neighbors = [set() for i in range(cells.shape[0])]
+        voroni_diagram = Voronoi(centers)
+        for neighbors_pair in voroni_diagram.ridge_points:
+            first, second = neighbors_pair
+            neighbors[first].add(indices_in_original_table[second] + 1)
+            neighbors[second].add(indices_in_original_table[first] + 1)
+        return neighbors
+
 
     def calc_psin(self, frame, cells, second_order_neighbors, n=6, for_histogram=False):
         cell_info = self.get_cells_info(frame)
@@ -1526,6 +1645,7 @@ class Tissue(object):
         file_path = os.path.join(self.working_dir, "events_data.pkl")
         if os.path.isfile(file_path):
             self.events = pd.concat([self.events, pd.read_pickle(file_path)])
+            self.events['source'] = self.events['source'].fillna('manual')
             self.events.drop_duplicates(inplace=True, ignore_index=True)
         return self.events
 
