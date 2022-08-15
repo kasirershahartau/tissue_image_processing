@@ -7,7 +7,7 @@ Created on Sun Jun 20 12:53:47 2021
 Methods to analyze cells    
 """
 import os.path
-import shutil
+from shutil import rmtree
 import numpy as np
 import pandas as pd
 import copy
@@ -156,8 +156,8 @@ class Tissue(object):
         self.max_cell_area = max_cell_area
         self.min_cell_area = min_cell_area
 
-    def __del__(self):
-        shutil.rmtree(self.working_dir)
+    def clean_up(self):
+        rmtree(self.working_dir)
 
     def is_valid_frame(self, frame):
         if 0 < frame <= self.number_of_frames:
@@ -179,7 +179,7 @@ class Tissue(object):
         self.cell_types_frame = 0
         old_working_dir = self.working_dir
         self.working_dir = self.initialize_working_space()
-        shutil.rmtree(old_working_dir)
+        rmtree(old_working_dir)
         return 0
 
     def reset_frame_data(self):
@@ -1788,7 +1788,7 @@ class Tissue(object):
         for file in old_files_list:
             if not os.path.exists(os.path.join(self.working_dir, file)):
                 os.rename(os.path.join(old_working_dir, file), os.path.join(self.working_dir, file))
-        shutil.rmtree(old_working_dir)
+        rmtree(old_working_dir)
         if self.labels_frame > 0:
             self.load_labels(self.labels_frame)
         if self.cell_types_frame > 0:

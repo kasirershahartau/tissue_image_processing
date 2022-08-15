@@ -203,14 +203,12 @@ class FormImageProcessing(QtWidgets.QMainWindow):
 
     def closeEvent(self, event):
         if self.data_lost_warning(self.close):
-            del self.tissue_info
+            self.tissue_info.clean_up()
             event.accept()  # let the window close
         else:
             event.ignore()
 
     def close(self):
-        del self.tissue_info
-        time.sleep(3)
         super(FormImageProcessing, self).close()
 
     def open_console(self):
@@ -307,6 +305,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.current_frame = np.zeros((3, self.img_dimensions.X, self.img_dimensions.Y), dtype="uint8")
         max_cell_area = self.cell_size_spin_box_max.value() / 100
         min_cell_area = self.cell_size_spin_box_min.value() / 100
+        if self.tissue_info is not None:
+            self.tissue_info.clean_up()
         self.tissue_info = Tissue(self.number_of_frames, fname, max_cell_area=max_cell_area,
                                   min_cell_area=min_cell_area)
         self.frame_line_edit.setText("%d/%d" % (self.frame_slider.value(), self.number_of_frames))
@@ -890,6 +890,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         if re.match("(\d+,\s*)*\d(,\s*)?", frames_string):
             frames_list = re.split(",\s*", frames_string)
             frames = [int(f) for f in frames_list]
+        else:
+            return 0
         feature = self.compare_frames_combo_box.currentText()
         cell_type = self.plot_compare_frame_data_cell_type_combo_box.currentText()
         plot_window = PlotDataWindow(self, working_dir=self.working_directory)
