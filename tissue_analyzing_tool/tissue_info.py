@@ -23,6 +23,7 @@ from skimage.registration import phase_cross_correlation
 import zipfile
 from basic_image_manipulations import read_tiff
 from time import sleep
+import json
 
 HC_TYPE = 1
 SC_TYPE = 2
@@ -60,6 +61,7 @@ TRACK_COLOR = (0, 1, 0)
 NEIGHBORS_COLOR = (1, 1, 1)
 HC_COLOR = (1, 0, 1)
 SC_COLOR = (1, 1, 0)
+MARKING_COLOR = (0.5, 0.5, 0.5)
 EVENT_TYPES = ["ablation","division", "delamination", "differentiation", "delete event"]
 EVENTS_COLOR = {"ablation": (1,1,0), "division": (0,0,1), "delamination": (1,0,0), "differentiation": (0,1,1)}
 PIXEL_LENGTH = 0.1  # in microns. TODO: get from image metadata
@@ -132,6 +134,7 @@ class Tissue(object):
     SPECIAL_Y_ONLY_FEATURES = ["histogram"]
     GLOBAL_FEATURES = ["density", "type_fraction", "total_area"]
     CELL_TYPES = ["all", "HC", "SC"]
+    FITTING_SHAPES = ["ellipse", "circle arc", "line"]
 
     def __init__(self, number_of_frames, data_path, max_cell_area=10, min_cell_area=0.1):
         self.number_of_frames = number_of_frames
@@ -155,6 +158,12 @@ class Tissue(object):
         self.valid_frames = np.ones((number_of_frames,)).astype(int)
         self.max_cell_area = max_cell_area
         self.min_cell_area = min_cell_area
+        self.shape_fitting_points = None
+        self.shape_fitting_results = [dict() for frame in range(self.number_of_frames)]
+        self.shape_fitting_normalization = []
+
+    def is_frame_valid(self, frame):
+        return self.valid_frames[frame - 1] == 1
 
     def clean_up(self):
         rmtree(self.working_dir)
@@ -244,10 +253,9 @@ class Tissue(object):
             return (labels == 0).astype("int")
 
     def get_cells_number(self):
-        if self.cells_info is None:
-            return self.cells_number
-        else:
-            return max(self.cells_number, self.cells_info.label.max())
+        if self.cells_info is not None:
+            self.cells_number = max(self.cells_number, self.cells_info.label.max())
+        return self.cells_number
 
     def get_cell_by_pixel(self, x, y, frame_number):
         labels = self.get_labels(frame_number)
@@ -264,7 +272,7 @@ class Tissue(object):
     def get_cells_features(self, frame):
         cells_info = self.get_cells_info(frame)
         if cells_info is not None:
-            return list(cells_info.columns)
+            return list(cells_info.columns) + self.SPECIAL_FEATURES
         return []
 
     def get_events(self):
@@ -403,16 +411,16 @@ class Tissue(object):
             if event.start_frame <= frame <= event.end_frame:
                 cell_label = event.cell_id
                 cell = self.get_cell_data_by_label(cell_label, frame)
-                if cell is None or cell.empty_cell == 1:
+                if cell is None or cell.empty_cell.values[0] == 1:
                     continue
                 else:
-                    rr, cc = disk((cell.cy, cell.cx), radius, shape=labels.shape)
+                    rr, cc = disk((cell.cy.values[0], cell.cx.values[0]), radius, shape=labels.shape)
                     for i in range(3):
                         final_image[i, rr, cc] = color[i]
                     if event.type == "division":
                         resulting_cell_label = event.daughter_id
                         resulting_cell = self.get_cell_data_by_label(resulting_cell_label, frame)
-                        if resulting_cell is not None and resulting_cell.empty_cell == 0:
+                        if resulting_cell is not None and resulting_cell.empty_cell.values[0] == 0:
                             for i in range(3):
                                 rr, cc = disk((resulting_cell.cy, resulting_cell.cx), radius, shape=labels.shape)
                                 final_image[i, rr, cc] = color[i]
@@ -618,7 +626,7 @@ class Tissue(object):
         mean_area = np.mean(areas)
         max_area = self.max_cell_area * mean_area
         min_area = self.min_cell_area * mean_area
-        cells_info.loc[:, "valid"] = np.logical_and(areas < max_area, areas > min_area)
+        cells_info.loc[:, "valid"] = np.logical_and(areas < max_area, areas > min_area).astype(int)
         self.set_cells_info(frame_number, cells_info)
         self.find_neighbors(frame_number)
         if hc_marker_image is not None:
@@ -628,33 +636,86 @@ class Tissue(object):
         cells_info = self.get_cells_info(frame)
         if cells_info is None:
             return None
-        cells_with_matching_label = (cells_info.label == cell_id).to_numpy()
-        if cells_with_matching_label.any():
-            return cells_info.iloc[np.argmax(cells_with_matching_label)]
+        cells_with_matching_label = cells_info.query("label == %d" % cell_id)
+        if cells_with_matching_label.shape[0] > 0:
+            return cells_with_matching_label
         else:
             return None
 
     def plot_single_cell_data(self, cell_id, feature, ax):
-        current_cell_info_frame = self.cells_info_frame
-        t = []
-        data = []
-        for frame in range(1, self.number_of_frames+1):
-            cell = self.get_cell_data_by_label(cell_id, frame)
-            if cell is not None:
-                t.append((frame-1)*15)
-                data.append(cell[feature])
+        frames = np.arange(1, self.number_of_frames + 1)
+        t = (frames - 1)*15
+        data = self.get_single_cell_data(cell_id, frames, feature)
+        t = t[~np.isnan(data)]
+        data = data[~np.isnan(data)]
         ax.plot(t, data, '*')
         ax.set_xlabel('Time (minutes)')
         ax.set_ylabel(feature)
         ax.set_title("%s of cell number %d" % (feature, cell_id))
-        self.get_cells_info(current_cell_info_frame)
         return pd.DataFrame({"Time": t, feature: data})
 
+    def get_single_cell_data(self, cell_id, frames, feature):
+        current_cell_info_frame = self.cells_info_frame
+        data = np.zeros((len(frames),))
+        for index,frame in enumerate(frames):
+            cell = self.get_cell_data_by_label(cell_id, frame)
+            if self.is_frame_valid(frame) and cell is not None:
+                frame_data, msg = self.get_frame_data(frame, feature, cell, self.SPECIAL_FEATURES)
+                if msg:
+                    return None, msg
+                data[index] = frame_data[0]
+            else:
+                data[index] = np.nan
+        self.get_cells_info(current_cell_info_frame)
+        return data
+
+    def plot_event_related_data(self, cell_id, event_frame, feature, frames_around_event, ax):
+        event_data = self.events.query("cell_id == %d and start_frame <= %d and end_frame >= %d" %(cell_id, event_frame, event_frame))
+        if event_data.shape[0] < 1:
+            return None
+        else:
+            frames = np.arange(max(event_frame - frames_around_event, 0),
+                               min(event_frame + frames_around_event + 1, self.number_of_frames + 1))
+            t = (frames - 1) * 15
+            data = self.get_single_cell_data(cell_id, frames, feature)
+            t = t[~np.isnan(data)]
+            data = data[~np.isnan(data)]
+            ax.plot(t[frames < event_frame], data[frames < event_frame], 'b*', label='before event')
+            ax.plot(t[frames >= event_frame], data[frames >= event_frame], 'g*', label='after event')
+            title = "%s of cell number %d" % (feature, cell_id)
+            event_type = event_data.type.values[0]
+            res = {"Time": t, feature: data, "Event type": [event_type]*t.size, "Cell ID": [cell_id]*t.size}
+            if event_type == "division":
+                daughter_frames = np.arange(event_frame, min(event_frame + frames_around_event + 1, self.number_of_frames + 1))
+                t_daughter = (daughter_frames - 1)*15
+                daughter_id = event_data.daughter_id.values[0]
+                daughter_data = self.get_single_cell_data(daughter_id, daughter_frames, feature)
+                t_daughter = t_daughter[~np.isnan(daughter_data)]
+                daughter_data = daughter_data[~np.isnan(daughter_data)]
+                ax.plot(t_daughter, daughter_data, 'r*', label='daughter cell after event')
+                title += " and daughter cell number %d" % daughter_id
+                res["Daughter time"] = np.hstack((t_daughter, np.zeros((t.size - t_daughter.size,))))
+                res["Daughter data"] = np.hstack((daughter_data,  np.zeros((t.size - daughter_data.size,))))
+                res["Daughter ID"] = [daughter_id]*t.size
+            ax.set_xlabel('Time (minutes)')
+            ax.set_ylabel(feature)
+            ax.set_title(title)
+            ax.legend()
+            return pd.DataFrame(res)
+
+    def find_event_frame(self, event):
+        start_frame = event.start_frame.values[0]
+        end_frame = event.end_frame.values[0]
+        event_type = event.type.values[0]
+        for frame in range(start_frame, end_frame+1):
+
+            if event_type == "delamination":
+                pass
+
     def get_frame_data(self, frame, feature, valid_cells, special_features, global_features=[],
-                       cells_type='all', for_histogram=False, reference=None):
+                      for_histogram=False, reference=None, intensity_img=None):
         if feature in special_features:
             if feature == "psi6":
-                # nearest_HCs = self.find_second_order_neighbors(frame, valid_cells, cell_type=cells_type)
                 nearest_HCs = self.find_nearest_neighbors_using_voroni_tesselation(valid_cells)
                 data = self.calc_psin(frame, valid_cells, nearest_HCs, n=6, for_histogram=for_histogram)
             elif feature == "shape index":
@@ -667,6 +728,8 @@ class Tissue(object):
                 data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='HC')
             elif feature == "SC neighbors":
                 data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='SC')
+            elif feature == "Mean atoh level":
+                data = self.calculate_mean_intensity(frame, valid_cells, intensity_img)
             elif "contact length" in feature:
                 if 'HC' in feature:
                     neighbors_type = 'HC'
@@ -702,22 +765,31 @@ class Tissue(object):
             elif feature == "type_fraction":
                 data = self.calculate_type_fraction(frame, valid_cells, reference)
         else:
-            data = valid_cells[feature].to_numpy()
+            splitted_feature = feature.split(":")
+            shape_name = splitted_feature[0]
+            shape_feature = splitted_feature[1]
+            if shape_name in self.shape_fitting_results[frame - 1]:
+                data = self.shape_fitting_results[frame - 1][shape_name][shape_feature]
+            else:
+                data = valid_cells[feature].to_numpy()
         return data, ""
 
-    def get_valid_non_edge_cells(self, frame):
-        cells_info = self.get_cells_info(frame)
+    def calculate_mean_intensity(self,frame, valid_cells, intensity_img):
         labels = self.get_labels(frame)
-        if cells_info is None or labels is None:
-            return None
-        edge_cells_index = self.detect_edge_cells(self.labels)
-        valid_cells = cells_info.query("valid == 1 and empty_cell == 0")
+        props = regionprops_table(labels, intensity_img, properties=('label', 'intensity_mean'))
+
+
+    def get_valid_non_edge_cells(self, frame, cells):
+        labels = self.get_labels(frame)
+        edge_cells_index = self.detect_edge_cells(labels)
+        valid_cells = cells.query("valid == 1 and empty_cell == 0")
         return valid_cells[~valid_cells.index.isin(edge_cells_index)]
 
     def calculate_spatial_data(self, frame, window_radius, step_size, feature, cells_type='all'):
         labels = self.get_labels(frame)
+        cells_info = self.get_cells_info(frame)
         res = np.zeros(labels.shape)
-        valid_cells = self.get_valid_non_edge_cells(frame)
+        valid_cells = self.get_valid_non_edge_cells(frame, cells_info)
         reference = None
         for y in range(step_size//2, res.shape[0], step_size):
             for x in range(step_size//2, res.shape[1], step_size):
@@ -733,7 +805,7 @@ class Tissue(object):
                     data, err_msg = self.get_frame_data(frame, feature, relevant_cells,
                                                         special_features=self.SPECIAL_FEATURES + self.SPECIAL_X_ONLY_FEATURES,
                                                         global_features=self.GLOBAL_FEATURES,
-                                                        cells_type=cells_type, for_histogram=True, reference=reference)
+                                                        for_histogram=True, reference=reference)
                 else:
                     data, err_msg = 0, ""
                 if err_msg:
@@ -762,12 +834,13 @@ class Tissue(object):
         if cell_info is None:
             return None, "No frame data is available"
         if cells_type == "all":
-            valid_cells = cell_info.query("valid == 1")
+            valid_cells = self.get_valid_non_edge_cells(frame, cell_info)
         else:
-            valid_cells = cell_info.query("valid == 1 and type ==\"%s\"" % cells_type)
+            cells_from_right_type = cell_info.query("type ==\"%s\"" % cells_type)
+            valid_cells = self.get_valid_non_edge_cells(frame, cells_from_right_type)
         plotted = False
         x_data, msg = self.get_frame_data(frame, x_feature, valid_cells,
-                                          self.SPECIAL_FEATURES + self.SPECIAL_X_ONLY_FEATURES, cells_type=cells_type)
+                                          self.SPECIAL_FEATURES + self.SPECIAL_X_ONLY_FEATURES)
         if x_data is None:
             return None, msg
         if y_feature == "histogram":
@@ -779,7 +852,7 @@ class Tissue(object):
             plotted = True
         else:
             y_data, msg = self.get_frame_data(frame, y_feature, valid_cells,
-                                          self.SPECIAL_FEATURES + self.SPECIAL_Y_ONLY_FEATURES, cells_type=cells_type)
+                                          self.SPECIAL_FEATURES + self.SPECIAL_Y_ONLY_FEATURES)
             if y_data is None:
                 return None, msg
 
@@ -816,20 +889,33 @@ class Tissue(object):
             if cell_info is None:
                 return None, "No frame data is available for frame %d" % frame
             if cells_type == "all":
-                valid_cells = cell_info.query("valid == 1")
+                valid_cells = self.get_valid_non_edge_cells(frame, cell_info)
             else:
-                valid_cells = cell_info.query("valid == 1 and type ==\"%s\"" % cells_type)
+                cells_from_right_type = cell_info.query("type ==\"%s\"" % cells_type)
+                valid_cells = self.get_valid_non_edge_cells(frame, cells_from_right_type)
             raw_data, msg = self.get_frame_data(frame, feature, valid_cells,
                                               self.SPECIAL_FEATURES + self.SPECIAL_X_ONLY_FEATURES,
-                                              global_features=self.GLOBAL_FEATURES, cells_type=cells_type,
+                                              global_features=self.GLOBAL_FEATURES,
                                               for_histogram=True)
             if raw_data is None:
                 return None, msg
-            data.append(np.average(raw_data))
-            err.append(np.std(raw_data)/np.sqrt(np.size(raw_data)))
-            n_results.append(np.size(raw_data))
-        if feature in self.GLOBAL_FEATURES:
-            ax.plot(frames, data, "*")
+            bar_plot = True
+            if isinstance(raw_data, tuple): # from shape fitting
+                data.append(raw_data[0])
+                err.append(raw_data[1])
+                n_results.append(1)
+                bar_plot = False
+            elif hasattr(raw_data, "__len__") and len(raw_data) > 1:
+                data.append(np.average(raw_data))
+                err.append(np.std(raw_data)/np.sqrt(np.size(raw_data)))
+                n_results.append(np.size(raw_data))
+            else:
+                data.append(raw_data)
+                err.append(0)
+                n_results.append(1)
+                bar_plot = False
+        if not bar_plot:
+            ax.errorbar(frames, data, yerr = err, fmt="*")
         else:
             x_pos = np.arange(len(frames))
             x_labels = ["frame %d (N = %d)" % (f, n) for f,n in zip(frames, n_results)]
@@ -847,11 +933,11 @@ class Tissue(object):
 
     @staticmethod
     def calculate_cells_roundness(cells):
-        return cells.eval("perimeter ** (3/2) / ( area * 3.14 ** (1/2) * 6 )").to_numpy()
+        return cells.eval("4 * %f * area / (perimeter ** 2)" % np.pi).to_numpy()
 
     @staticmethod
     def calculate_cells_shape_index(cells):
-        return cells.eval("perimeter / (area ** (1/2))").to_numpy()
+        return cells.eval("perimeter/(area**(1/2))").to_numpy()
 
     @staticmethod
     def calculate_total_area(cells):
@@ -1207,12 +1293,22 @@ class Tissue(object):
         if labels is None:
             return img
         cell = self.get_cell_data_by_label(cell_label, frame_number)
-        if cell is None or cell.empty_cell == 1:
+        if cell is None or cell.empty_cell.values[0] == 1:
             return img
         else:
-            rr, cc = disk((cell.cy, cell.cx), radius, shape=img.shape)
+            rr, cc = disk((cell.cy.values[0], cell.cx.values[0]), radius, shape=img.shape)
             img[rr, cc] = 1
         return img[np.newaxis, :,:] * np.array(TRACK_COLOR).reshape((3,1,1))
+
+    def draw_marking_points(self, frame_number, radius=5):
+        labels = self.get_labels(frame_number)
+        img = np.zeros(labels.shape)
+        if labels is None:
+            return img
+        for point in self.shape_fitting_points:
+            rr, cc = disk((point[1], point[0]), radius, shape=img.shape)
+            img[rr, cc] = 1
+        return img[np.newaxis, :, :] * np.array(MARKING_COLOR).reshape((3, 1, 1))
 
     def add_segmentation_line(self, frame, point1, point2=None, initial=False, final=False, hc_marker_image=None,
                               hc_threshold=0.1, use_existing_types=False, percentile_above_threshold=90):
@@ -1452,7 +1548,7 @@ class Tissue(object):
             region_last_row = bounding_box_max_row+2
             region_last_col = bounding_box_max_col+2
             cell_region = labels[region_first_row:region_last_row, region_first_col:region_last_col]
-            new_region_labels = label_image_regions((cell_region > 0).astype(int), connectivity=1, background=0)
+            new_region_labels = label_image_regions((cell_region != 0).astype(int), connectivity=1, background=0)
             cell1_label = np.min(new_region_labels[cell_region == cell_label])
             cell2_label = np.max(new_region_labels[cell_region == cell_label])
             cell_region[new_region_labels == cell1_label] = cell_label
@@ -1487,7 +1583,7 @@ class Tissue(object):
                         cell_info.at[cell_label - 1, "bounding_box_max_row"] = properties["bbox-2"][region_index] + region_first_row
                         cell_info.at[cell_label - 1, "bounding_box_max_col"] = properties["bbox-3"][region_index] + region_first_col
                         cell_valid = min_area < properties["area"][region_index] < max_area
-                        cell_info.at[cell_label - 1, "valid"] = cell_valid
+                        cell_info.at[cell_label - 1, "valid"] = int(cell_valid)
                         if hc_marker_image is not None:
                             if cell_valid:
                                 percentage_intensity = properties["percentile_intensity"][region_index]
@@ -1514,7 +1610,7 @@ class Tissue(object):
                                          "bounding_box_min_col": properties["bbox-1"][region_index] + region_first_col,
                                          "bounding_box_max_row": properties["bbox-2"][region_index] + region_first_row,
                                          "bounding_box_max_col": properties["bbox-3"][region_index] + region_first_col,
-                                         "valid": new_cell_valid,
+                                         "valid": int(new_cell_valid),
                                          "empty_cell": 0,
                                          "neighbors": set(),
                                          "n_neighbors": 0}
@@ -1602,6 +1698,270 @@ class Tissue(object):
             else:
                 return x, edges[nearest_edge]
 
+    def get_shape_fitting_results(self, frame):
+        return self.shape_fitting_results[frame - 1]
+
+    def start_shape_fitting(self):
+        self.shape_fitting_points = []
+        self.shape_fitting_normalization = []
+
+    def add_shape_fitting_point(self, frame, pos, marking_target):
+        if marking_target == "Cells":
+            cell = self.get_cell_by_pixel(pos[0], pos[1], frame)
+            if cell.shape[0] > 0:
+                centroid = (cell.cx, cell.cy)
+            else:
+                return 0
+            area = cell.area
+            self.shape_fitting_points.append(centroid)
+            self.shape_fitting_normalization.append(area)
+        else:
+            self.shape_fitting_points.append(pos)
+        return 0
+
+    def end_shape_fitting(self, frame, shape, ax, name):
+        X = np.array([pos[0] for pos in self.shape_fitting_points])
+        Y = np.array([pos[1] for pos in self.shape_fitting_points])
+        if self.shape_fitting_normalization:
+            norm_factor = np.array(self.shape_fitting_normalization).mean()
+        else:
+            norm_factor = 1
+        if shape == "ellipse":
+            res = self.fit_an_ellipse(X, Y, ax, norm_factor)
+        elif shape == "circle arc":
+            res = self.fit_a_circle_arc(X, Y, ax, norm_factor)
+        elif shape == "line":
+            res = self.fit_a_line(X, Y, ax, norm_factor)
+        self.shape_fitting_results[frame - 1][name] = res
+        return res
+
+    def fit_a_line(self, X, Y, ax, norm_factor):
+
+        horizontal = np.max(X) - np.min(X) > np.max(Y) - np.min(Y)
+
+        # Fitting a line
+        if horizontal:
+            params, cov = np.polyfit(X, Y, 1, rcond=None, cov=True)
+            slope = params[0]
+            y_cross = params[1]
+            x_cross = -params[1]/params[0]
+            params_err =np.sqrt(np.diagonal(cov))
+            slope_err = params_err[0]
+            y_cross_err = params_err[1]
+            x_cross_der = np.array([params[1]/params[0]**2, -1/params[0]])
+            x_cross_err = np.sqrt(np.sum((params_err*x_cross_der)**2))
+            chi_sqr = np.sum((Y - params[0]*X - params[1])**2)/(params[0]**2 + 1)
+        else:
+            params, cov = np.polyfit(Y, X, 1, rcond=None, cov=True)
+            slope = 1/params[0]
+            y_cross = -params[1]/params[0]
+            x_cross = params[1]
+            params_err = np.sqrt(np.diagonal(cov))
+            slope_err = params_err[0]*slope**2
+            x_cross_err = params_err[1]
+            y_cross_der = np.array([params[1] / params[0] ** 2, -1 / params[0]])
+            y_cross_err = np.sqrt(np.sum((params_err * y_cross_der)**2))
+            chi_sqr = np.sum((X - params[0] * Y - params[1]) ** 2)/(params[0]**2 + 1)
+
+        # Normalizing results
+        chi_sqr /= (norm_factor * X.size)
+
+        # plot the image
+        ax.imshow(self.labels == 0)
+
+        # Plot the  data
+        ax.scatter(X, Y, label='Data Points')
+
+        # Plot the least squares line
+
+        if horizontal:
+            x_coord = np.linspace(np.min(X), np.max(X), 300)
+            y_coord = slope*x_coord + y_cross
+        else:
+            y_coord = np.linspace(np.min(Y), np.max(Y), 300)
+            x_coord = y_coord/slope + x_cross
+
+        ax.plot(x_coord, y_coord, 'r', linewidth=2, label="Fit")
+        ax.legend()
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        res = {"slope": (slope, slope_err), "x cross": (x_cross, x_cross_err),
+               "y cross": (y_cross, y_cross_err), "Chi square": (chi_sqr, 0), "N": (X.size, 0)}
+        return res
+
+    def fit_a_circle_arc(self, X, Y, ax, norm_factor):
+        # rescaling coordinates to avoid overflow
+        rescale_factor = np.abs(max(np.max(X), np.max(Y)))
+        rescaled_X = (X - np.mean(X)) / rescale_factor
+        rescaled_Y = (Y - np.mean(Y)) / rescale_factor
+
+        # Formulate and solve the least squares problem ||Ax - b ||^2
+        A = np.column_stack([rescaled_X ** 2 + rescaled_Y ** 2, rescaled_X, rescaled_Y])
+        b = np.ones_like(X)
+        params = np.linalg.lstsq(A, b, rcond=None)[0].squeeze()
+        params_err = np.sqrt(np.diagonal(np.linalg.inv(A.T.dot(A))))
+        fitting_points_max_distance_sqr = (np.max(rescaled_X) - np.min(rescaled_X)) ** 2 + \
+                                          (np.max(rescaled_Y) - np.min(rescaled_Y)) ** 2
+        linear_fit = params[0] * fitting_points_max_distance_sqr < 0.01
+
+        # Obtaining canonical parameters
+        curvature = 1/np.sqrt(1/params[0] + 0.25*(params[1]**2 + params[2]**2)/params[0]**2)
+        slope = -params[1] / params[2]
+
+        if linear_fit:
+            chi_sqr = np.sum((params[1] * X + params[2] * Y - 1) ** 2)/(params[1]**2 + params[2]**2)
+        else:
+            chi_sqr = np.sum((np.sqrt((A.dot(params) - 1)/params[0] + 1/curvature**2) - 1/curvature)**2)
+
+
+        # Obtaining canonical parameters errors
+        curvature_der = -0.5 * curvature**3 * np.array([-1/params[0]**2 - 0.5*(params[1]**2 + params[2]**2)/params[0]**3,
+                                                        0.5*params[1]/params[0]**2, 0.5*params[2]/params[0]**2])
+        slope_der = np.array([0, -1/params[2], params[1]/(params[2]**2)])
+
+        curvature_err = np.sqrt(np.sum((curvature_der * params_err) ** 2))
+        slope_err = np.sqrt(np.sum((slope_der * params_err) ** 2))
+
+        # Rescaling results
+        curvature /= rescale_factor
+        chi_sqr *= (rescale_factor**2)/(norm_factor * X.size)
+        # plot the image
+        ax.imshow(self.labels == 0)
+
+        # Plot the  data
+        ax.scatter(X, Y, label='Data Points')
+
+        # Plot the least squares circle arc
+        horizontal = np.max(rescaled_X) - np.min(rescaled_X) > np.max(rescaled_Y) - np.min(rescaled_Y)
+        if horizontal:
+            x_coord = np.linspace(np.min(rescaled_X), np.max(rescaled_X), 300)
+            if linear_fit:
+                y_coord = (1 - params[1] * x_coord) / params[2]
+            else:
+                y_coord_plus = (-params[2] + np.sqrt(
+                    params[2] ** 2 - 4 * params[0] * (params[0] * x_coord ** 2 + params[1] * x_coord - 1))) \
+                          / (2 * params[0])
+                y_coord_minus = (-params[2] - np.sqrt(
+                    params[2] ** 2 - 4 * params[0] * (params[0] * x_coord ** 2 + params[1] * x_coord - 1))) \
+                               / (2 * params[0])
+                y_coord = y_coord_plus if np.abs(np.min(rescaled_Y) - np.min(y_coord_plus)) < np.abs(np.min(rescaled_Y) - np.min(y_coord_minus)) else y_coord_minus
+        else:
+            y_coord = np.linspace(np.min(rescaled_Y), np.max(rescaled_Y), 300)
+            if linear_fit:
+                x_coord = (1 - params[2] * y_coord) / params[1]
+            else:
+                x_coord_plus = (-params[1] + np.sqrt(
+                    params[1] ** 2 - 4 * params[0] * (params[0] * y_coord ** 2 + params[2] * y_coord - 1))) \
+                          / (2 * params[0])
+                x_coord_minus = (-params[1] - np.sqrt(
+                    params[1] ** 2 - 4 * params[0] * (params[0] * y_coord ** 2 + params[2] * y_coord - 1))) \
+                               / (2 * params[0])
+                x_coord = x_coord_plus if np.abs(np.min(rescaled_X) - np.min(x_coord_plus)) < np.abs(
+                    np.min(rescaled_X) - np.min(x_coord_minus)) else x_coord_minus
+
+        x_coord = x_coord*rescale_factor + np.mean(X)
+        y_coord = y_coord * rescale_factor + np.mean(Y)
+        ax.plot(x_coord, y_coord, 'r', linewidth=2, label="Fit")
+        ax.legend()
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        res = {"curvature": (curvature, curvature_err), "slope": (slope, slope_err),
+               "Chi square": (chi_sqr, 0), "N": (X.size, 0)}
+        return res
+
+
+    def fit_an_ellipse(self, X, Y, ax, norm_factor): # taken from https://stackoverflow.com/questions/47873759/how-to-fit-a-2d-ellipse-to-given-points
+
+        # rescaling coordinates to avoid overflow
+        rescale_factor = np.abs(max(np.max(X), np.max(Y)))
+        rescaled_X = (X - np.mean(X))/rescale_factor
+        rescaled_Y = (Y - np.mean(Y))/rescale_factor
+
+        # Least square fit
+        A = np.column_stack([rescaled_X ** 2, rescaled_X * rescaled_Y, rescaled_Y ** 2, rescaled_X, rescaled_Y])
+        b = np.ones_like(X)
+
+        params, chi_sqr, _, _ = np.linalg.lstsq(A, b, rcond=None)
+        params = params.squeeze()
+        chi_sqr = chi_sqr[0]
+        params_err = np.sqrt(np.diagonal(np.linalg.inv(A.T.dot(A))))
+
+        # Obtaining canonical parameters
+        a = params[0]*(params[4]**2) + params[2]*(params[3]**2) - params[1]*params[3]*params[4] - params[1]**2 + \
+            4*params[0]*params[2]
+        q = np.sqrt((params[0] - params[2]) ** 2 + params[1] ** 2)
+        bplus = params[0] + params[2] + q
+        bminus = params[0] + params[2] - q
+        c = params[1]**2 - 4*params[0]*params[2]
+        sqrt_2abplus = np.sqrt(2 * a * bplus)
+        sqrt_2abminus = np.sqrt(2 * a * bminus)
+        semi_major = -sqrt_2abplus/c
+        semi_minor = -sqrt_2abminus/c
+        center_x = (2*params[2]*params[3] - params[1]*params[4])/c
+        center_y = (2*params[0]*params[4] - params[1]*params[3])/c
+        phi = (params[2] - params[0] - q)/params[1]
+        rotating_angle = np.arctan(phi) if params[1] != 0 else 0 if params[0] < params[2] else np.pi/2
+        eccentricity = 2*(semi_major/semi_minor - 1)/3
+
+        # Obtaining canonical parameters errors
+        ader = np.array([params[4]**2 + 4*params[2], -params[3]*params[4] - 2*params[1], params[3]**2 + 4*params[0],
+                         2*params[2]*params[3] - params[1]*params[4], 2*params[0]*params[4] - params[1]*params[3]])
+        bplusder = np.array([1 + (params[0] - params[2])/q, params[1]/q, 1 - (params[0] - params[2])/q, 0, 0])
+        bminusder = np.array([1 - (params[0] - params[2]) / q, params[1] / q, 1 + (params[0] - params[2]) / q, 0, 0])
+        cder = np.array([-4*params[2], 2*params[1], -4*params[0], 0, 0])
+        phider = np.array([(-1 - (params[0] - params[2])/q)/params[1], -phi/params[1]-1/q,
+                           (1 + (params[0] - params[2])/q)/params[1], 0, 0])
+        semi_minor_der = sqrt_2abminus/(c**2)*cder + (bminus*ader + a*bminusder)/(sqrt_2abminus*c)
+        semi_major_der = sqrt_2abplus/(c**2)*cder + (bplus*ader + a*bplusder)/(sqrt_2abplus*c)
+        center_x_der = np.array([0, -params[4], 2*params[3], 2*params[2], -params[1]])/c - (center_x/c)*cder
+        center_y_der = np.array([2*params[4], -params[3], 0,  - params[1], 2*params[0]])/c - (center_y/c)*cder
+        rotating_angle_der = 1/(1 + phi**2)*phider
+        eccentricity_der = 2*(semi_major_der/semi_minor - semi_minor_der*semi_major/semi_minor**2)/3
+
+        semi_major_err = np.sqrt(np.sum((semi_major_der * params_err) ** 2))
+        semi_minor_err = np.sqrt(np.sum((semi_minor_der * params_err) ** 2))
+        center_x_err = np.sqrt(np.sum((center_x_der * params_err) ** 2))
+        center_y_err = np.sqrt(np.sum((center_y_der * params_err) ** 2))
+        rotating_angle_err = np.sqrt(np.sum((rotating_angle_der * params_err) ** 2))
+        eccentricity_err = np.sqrt(np.sum((eccentricity_der * params_err) ** 2))
+
+        #rescale back
+        center_x = center_x * rescale_factor + np.mean(X)
+        center_y = center_y * rescale_factor + np.mean(Y)
+        center_x_err *= rescale_factor
+        center_y_err *= rescale_factor
+        semi_major *= rescale_factor
+        semi_major_err *= rescale_factor
+        semi_minor *= rescale_factor
+        semi_minor_err *= rescale_factor
+        chi_sqr *= rescale_factor**2 / (norm_factor * X.size)
+
+        # plot the image
+        ax.imshow(self.labels == 0)
+
+        # Plot the data
+        ax.scatter(X, Y, label='Data Points')
+        # Plot the least squares ellipse
+        angle = np.linspace(0, 2*np.pi, 300)
+        x_coord = semi_major*np.cos(angle)*np.cos(rotating_angle) -\
+                  semi_minor*np.sin(angle)*np.sin(rotating_angle) + center_x
+        y_coord = semi_major*np.cos(angle)*np.sin(rotating_angle) +\
+                  semi_minor*np.sin(angle)*np.cos(rotating_angle) + center_y
+
+        ax.plot(x_coord, y_coord, 'r', linewidth=2, label="Fit")
+        ax.plot([-semi_major*np.cos(rotating_angle) + center_x, semi_major*np.cos(rotating_angle) + center_x],
+                [-semi_major*np.sin(rotating_angle) + center_y, semi_major*np.sin(rotating_angle) + center_y], 'm', linewidth=2, label="Major axis")
+        ax.plot([-semi_minor*np.sin(rotating_angle) + center_x, semi_minor*np.sin(rotating_angle) + center_x],
+                [semi_minor*np.cos(rotating_angle) + center_y, -semi_minor*np.cos(rotating_angle) + center_y], 'orange', linewidth=2, label="Minor axis")
+        ax.legend()
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        res = {"semi-major": (semi_major, semi_major_err), "semi-minor": (semi_minor, semi_minor_err),
+               "rotation angle": (-rotating_angle, rotating_angle_err),
+               "center x": (center_x, center_x_err), "center y": (center_y, center_y_err),
+               "eccentricity": (eccentricity, eccentricity_err), "Chi square": (chi_sqr, 0), "N": (X.size, 0)}
+        return res
+
     def initialize_working_space(self):
         working_dir = get_temp_directory(self.data_path)
         os.mkdir(working_dir)
@@ -1660,6 +2020,13 @@ class Tissue(object):
         if os.path.isfile(file_path):
             self.valid_frames = np.load(file_path)
         return self.valid_frames
+
+    def load_shape_fitting(self):
+        file_path = os.path.join(self.working_dir, "shape_fitting_data.json")
+        if os.path.isfile(file_path):
+            with open(file_path) as file:
+                self.shape_fitting_results = json.load(file)
+        return self.shape_fitting_results
 
     def remove_labels(self):
         file_path = os.path.join(self.working_dir, "frame_%d_labels.npy" % self.labels_frame)
@@ -1768,6 +2135,18 @@ class Tissue(object):
             self.save_events()
         return 0
 
+    def save_shape_fitting(self):
+        file_path = os.path.join(self.working_dir, "shape_fitting_data.json")
+        try:
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+            with open(file_path, "w") as file:
+                json.dump(self.shape_fitting_results, file)
+        except OSError as e:
+            print(str(e))
+            sleep(1)
+            self.save_shape_fitting()
+
     def save(self, path):
         self.save_labels()
         self.save_cells_info()
@@ -1775,6 +2154,7 @@ class Tissue(object):
         self.save_events()
         self.save_drifts()
         self.save_valid_frames()
+        self.save_shape_fitting()
         for percent_done in pack_archive_with_progress(self.working_dir, path.replace(".seg", "") + ".seg"):
             yield percent_done
         return 0
@@ -1798,6 +2178,7 @@ class Tissue(object):
         self.load_events()
         self.load_drifts()
         self.load_valid_frames()
+        self.load_shape_fitting()
         return 0
 
     def flip_all_data(self):

@@ -200,6 +200,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.working_directory = WORKING_DIR
         self.epyseg_dir = None
         self.epyseg = None
+        self.fitting_stage = 0
 
     def closeEvent(self, event):
         if self.data_lost_warning(self.close):
@@ -260,6 +261,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.cancel_tracking_button.clicked.connect(self.cancel_tracking)
         self.cancel_event_finding_button.clicked.connect(self.cancel_event_finding)
         self.plot_single_cell_data_button.clicked.connect(self.plot_single_cell_data)
+        self.plot_event_related_data_push_button.clicked.connect(self.plot_event_related_data)
         self.plot_single_frame_data_button.clicked.connect(self.plot_single_frame_data)
         self.plot_spatial_map_button.clicked.connect(self.plot_spatial_map)
         self.plot_compare_frames_button.clicked.connect(self.plot_compare_frames_data)
@@ -277,6 +279,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.valid_frame_check_box.stateChanged.connect(self.change_frame_validity)
         self.cell_size_spin_box_min.valueChanged.connect(self.update_min_max_cell_area)
         self.cell_size_spin_box_max.valueChanged.connect(self.update_min_max_cell_area)
+        self.fit_a_shape_button.clicked.connect(self.fit_a_shape)
+        self.finish_fitting_a_shape_button.clicked.connect(self.finish_fitting_a_shape)
 
     def open_file(self):
         global img
@@ -354,7 +358,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                                                  self.show_neighbors_check_box.isChecked(),
                                                  self.show_cell_tracking_check_box.isChecked(),
                                                  self.cell_tracking_spin_box.value(),
-                                                 self.show_events_check_box.isChecked())
+                                                 self.show_events_check_box.isChecked(),
+                                                 self.fitting_stage > 0)
             if analysis_img is not None:
                 add_analysis = True
         if add_analysis:
@@ -407,6 +412,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.pixel_info.setText('Press the image to get pixel info')
         self.display_frame()
         self.cells_number_changed()
+        self.update_shape_fitting()
         if self.current_segmentation is None:
             self.show_segmentation_check_box.setEnabled(False)
 
@@ -417,8 +423,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
 
     def cells_number_changed(self):
         cells_num = self.tissue_info.get_cells_number()
-        self.cell_tracking_spin_box.setMaximum(cells_num)
-        self.plot_single_cell_data_spin_box.setMaximum(cells_num)
+        self.cell_tracking_spin_box.setMaximum(int(cells_num))
+        self.plot_single_cell_data_spin_box.setMaximum(int(cells_num))
 
     def update_min_max_cell_area(self):
         if self.tissue_info is not None:
@@ -451,6 +457,15 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.plot_single_frame_data_cell_type_combo_box.addItems(self.tissue_info.CELL_TYPES)
         self.plot_compare_frame_data_cell_type_combo_box.clear()
         self.plot_compare_frame_data_cell_type_combo_box.addItems(self.tissue_info.CELL_TYPES)
+
+    def update_shape_fitting(self):
+        shape_fitting_results = self.tissue_info.get_shape_fitting_results(self.frame_slider.value())
+        new_features = ["%s:%s" % (shape_name, key) for shape_name in shape_fitting_results.keys()
+                        for key in shape_fitting_results[shape_name].keys()]
+        for feature in new_features:
+            if self.compare_frames_combo_box.findText(feature) == -1:
+                self.compare_frames_combo_box.addItem(feature)
+
 
     def mark_event(self, pos=None):
         self.mark_event_button.setEnabled(False)
@@ -591,6 +606,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                 self.display_frame()
             elif self.mark_event_stage > 0:
                 self.mark_event((pos.x(), pos.y()))
+            elif self.fitting_stage > 0:
+                self.fit_a_shape((pos.x(), pos.y()))
             if self.pixel_info.isEnabled():
                 text = 'pixel info: x = %d, y = %d' % (pos.x(), pos.y())
                 cell = self.tissue_info.get_cell_by_pixel(pos.x(), pos.y(), self.frame_slider.value())
@@ -705,6 +722,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.plot_single_cell_data_spin_box.setEnabled(False)
             self.plot_single_cell_data_combo_box.setEnabled(False)
             self.plot_single_cell_data_button.setEnabled(False)
+            self.plot_event_related_data_push_button.setEnabled(False)
             self.plot_single_frame_data_button.setEnabled(False)
             self.plot_spatial_map_button.setEnabled(False)
             self.spatial_resolution_spin_box.setEnabled(False)
@@ -733,6 +751,19 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.show_events_check_box.setEnabled(False)
             self.show_events_button.setEnabled(False)
             self.valid_frame_check_box.setEnabled(False)
+            self.fit_a_shape_button.setEnabled(False)
+            self.choose_marking_target_combo_box.setEnabled(False)
+            self.choose_marking_target_combo_box.clear()
+            self.choose_marking_target_combo_box.setCurrentText("Choose marking target")
+            self.choose_marking_target_combo_box.setCurrentIndex(-1)
+            self.choose_fitting_shape_combo_box.clear()
+            self.choose_fitting_shape_combo_box.setCurrentText("Choose shape")
+            self.choose_fitting_shape_combo_box.setCurrentIndex(-1)
+            self.choose_fitting_shape_combo_box.setEnabled(False)
+            self.shape_name_line_edit.setEnabled(False)
+            self.fit_a_shape_label.setEnabled(False)
+            self.finish_fitting_a_shape_button.setEnabled(False)
+            self.finish_fitting_a_shape_button.hide()
         if segmentation:
             self.show_segmentation_check_box.setEnabled(True)
             self.save_segmentation_button.setEnabled(True)
@@ -747,6 +778,15 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.cell_size_label_min.setEnabled(True)
             self.cell_size_spin_box_min.setEnabled(True)
             self.cell_size_spin_box_max.setEnabled(True)
+            self.fit_a_shape_button.setEnabled(True)
+            self.choose_marking_target_combo_box.setEnabled(True)
+            self.choose_marking_target_combo_box.clear()
+            self.choose_marking_target_combo_box.addItem("Points")
+            self.choose_fitting_shape_combo_box.setEnabled(True)
+            self.shape_name_line_edit.setEnabled(True)
+            self.choose_fitting_shape_combo_box.clear()
+            self.choose_fitting_shape_combo_box.addItems(self.tissue_info.FITTING_SHAPES)
+            self.fit_a_shape_label.setEnabled(True)
         else:
             self.show_segmentation_check_box.setEnabled(False)
             self.save_segmentation_button.setEnabled(False)
@@ -760,6 +800,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.cell_size_label_min.setEnabled(False)
             self.cell_size_spin_box_min.setEnabled(False)
             self.cell_size_spin_box_max.setEnabled(False)
+            self.fit_a_shape_button.setEnabled(False)
+            self.choose_marking_target_combo_box.setEnabled(False)
+            self.choose_fitting_shape_combo_box.setEnabled(False)
+            self.shape_name_line_edit.setEnabled(False)
+            self.fit_a_shape_label.setEnabled(False)
             analysis = False
         if analysis:
             self.show_cell_types_check_box.setEnabled(True)
@@ -771,6 +816,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.plot_single_cell_data_spin_box.setEnabled(True)
             self.plot_single_cell_data_combo_box.setEnabled(True)
             self.plot_single_cell_data_button.setEnabled(True)
+            self.plot_event_related_data_push_button.setEnabled(True)
             self.plot_single_frame_data_button.setEnabled(True)
             self.plot_spatial_map_button.setEnabled(True)
             self.spatial_resolution_spin_box.setEnabled(True)
@@ -793,6 +839,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.mark_event_combo_box.setEnabled(True)
             self.show_events_check_box.setEnabled(True)
             self.show_events_button.setEnabled(True)
+            self.choose_marking_target_combo_box.clear()
+            self.choose_marking_target_combo_box.addItems(["Points", "Cells"])
         else:
             self.show_cell_types_check_box.setEnabled(False)
             self.show_cell_tracking_check_box.setEnabled(False)
@@ -803,6 +851,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.plot_single_cell_data_spin_box.setEnabled(False)
             self.plot_single_cell_data_combo_box.setEnabled(False)
             self.plot_single_cell_data_button.setEnabled(False)
+            self.plot_event_related_data_push_button.setEnabled(False)
             self.plot_single_frame_data_button.setEnabled(False)
             self.plot_spatial_map_button.setEnabled(False)
             self.spatial_resolution_spin_box.setEnabled(False)
@@ -826,6 +875,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.show_events_button.setEnabled(False)
             self.abort_event_marking_button.setEnabled(False)
             self.abort_event_marking_button.hide()
+            self.choose_marking_target_combo_box.removeItem(self.choose_marking_target_combo_box.findData("Cells"))
 
     def plot_single_cell_data(self):
         if self.plot_single_cell_data_combo_box.currentIndex() < 0:
@@ -834,6 +884,16 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         feature = self.plot_single_cell_data_combo_box.currentText()
         plot_window = PlotDataWindow(self, working_dir=self.working_directory)
         data = self.tissue_info.plot_single_cell_data(cell_id, feature, plot_window.get_ax())
+        plot_window.show(data)
+
+    def plot_event_related_data(self):
+        if self.plot_single_cell_data_combo_box.currentIndex() < 0:
+            return 0
+        cell_id = self.plot_single_cell_data_spin_box.value()
+        feature = self.plot_single_cell_data_combo_box.currentText()
+        frame = self.frame_slider.value()
+        plot_window = PlotDataWindow(self, working_dir=self.working_directory)
+        data = self.tissue_info.plot_event_related_data(cell_id, frame, feature, 10, plot_window.get_ax())
         plot_window.show(data)
 
     def plot_single_frame_data(self):
@@ -1062,9 +1122,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
     def cancel_analysis(self):
         self.analysis_thread.kill()
 
-    def get_analysis_img(self, types, neighbors, track, track_cell_label=0, events=False):
+    def get_analysis_img(self, types, neighbors, track, track_cell_label=0, events=False, marking_points=False):
         frame_number = self.frame_slider.value()
-        if types or neighbors or track or events:
+        if types or neighbors or track or events or marking_points:
             img = np.zeros(self.current_frame.shape)
             if types:
                 img += self.tissue_info.draw_cell_types(frame_number)
@@ -1074,6 +1134,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                 img += self.tissue_info.draw_cell_tracking(frame_number, track_cell_label)
             if events:
                 img += self.tissue_info.draw_events(frame_number)
+            if marking_points:
+                img += self.tissue_info.draw_marking_points(frame_number)
             return np.clip(img, 0, 1)
         else:
             return None
@@ -1230,6 +1292,44 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.frame_line_edit.setEnabled(True)
         self.fix_segmentation_button.setEnabled(True)
 
+    def fit_a_shape(self, pos=None):
+        if self.fitting_stage == 1:
+            self.tissue_info.add_shape_fitting_point(self.frame_slider.value(),
+                                                     pos, self.choose_marking_target_combo_box.currentText())
+            self.analysis_changed = True
+            self.display_frame()
+        else:
+            self.tissue_info.start_shape_fitting()
+            self.fitting_stage = 1
+            self.finish_fitting_a_shape_button.setEnabled(True)
+            self.choose_marking_target_combo_box.setEnabled(False)
+            self.choose_fitting_shape_combo_box.setEnabled(False)
+            self.shape_name_line_edit.setEnabled(False)
+            self.finish_fitting_a_shape_button.show()
+            message_box = QtWidgets.QMessageBox
+            message_box.about(self, '', 'Mark desired %s. When finished click on \"Finish marking\"' %
+                              self.choose_marking_target_combo_box.currentText())
+
+    def finish_fitting_a_shape(self):
+        self.fitting_stage = 0
+        plot_window = PlotDataWindow(self, working_dir=self.working_directory)
+        shape_name = self.shape_name_line_edit.text()
+        res = self.tissue_info.end_shape_fitting(self.frame_slider.value(),
+                                                 self.choose_fitting_shape_combo_box.currentText(),
+                                                 plot_window.get_ax(), shape_name)
+        new_features = ["%s:%s" % (shape_name, key) for key in res.keys()]
+        for feature in new_features:
+            if self.compare_frames_combo_box.findText(feature) == -1:
+                self.compare_frames_combo_box.addItem(feature)
+        self.finish_fitting_a_shape_button.setEnabled(False)
+        self.finish_fitting_a_shape_button.hide()
+        self.choose_marking_target_combo_box.setEnabled(True)
+        self.choose_fitting_shape_combo_box.setEnabled(True)
+        self.shape_name_line_edit.setEnabled(True)
+        print(res)
+        plot_window.show()
+
+
     def save_data(self):
         name = QtWidgets.QFileDialog.getSaveFileName(self, 'Save File', directory=self.working_directory)[0]
         if name:
@@ -1298,6 +1398,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.cells_number_changed()
             self.update_single_cell_features()
             self.update_single_frame_features()
+            self.update_shape_fitting()
 
 
 

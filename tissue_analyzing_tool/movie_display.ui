@@ -65,7 +65,7 @@
    <widget class="QLineEdit" name="frame_line_edit">
     <property name="geometry">
      <rect>
-      <x>880</x>
+      <x>660</x>
       <y>870</y>
       <width>41</width>
       <height>20</height>
@@ -80,7 +80,7 @@
      <rect>
       <x>50</x>
       <y>740</y>
-      <width>591</width>
+      <width>431</width>
       <height>121</height>
      </rect>
     </property>
@@ -117,7 +117,7 @@
    <widget class="QScrollBar" name="atoh_level_scroll_bar">
     <property name="geometry">
      <rect>
-      <x>700</x>
+      <x>540</x>
       <y>760</y>
       <width>191</width>
       <height>16</height>
@@ -142,7 +142,7 @@
    <widget class="QLabel" name="atoh_level_label">
     <property name="geometry">
      <rect>
-      <x>650</x>
+      <x>490</x>
       <y>760</y>
       <width>47</width>
       <height>13</height>
@@ -155,7 +155,7 @@
    <widget class="QScrollBar" name="zo_level_scroll_bar">
     <property name="geometry">
      <rect>
-      <x>700</x>
+      <x>540</x>
       <y>780</y>
       <width>191</width>
       <height>20</height>
@@ -174,7 +174,7 @@
    <widget class="QLabel" name="zo_level_label">
     <property name="geometry">
      <rect>
-      <x>660</x>
+      <x>500</x>
       <y>780</y>
       <width>41</width>
       <height>16</height>
@@ -502,7 +502,7 @@
      <rect>
       <x>19</x>
       <y>870</y>
-      <width>851</width>
+      <width>631</width>
       <height>20</height>
      </rect>
     </property>
@@ -519,21 +519,21 @@
    <widget class="QLabel" name="plot_single_cell_data_label1">
     <property name="geometry">
      <rect>
-      <x>1100</x>
-      <y>870</y>
-      <width>21</width>
+      <x>930</x>
+      <y>840</y>
+      <width>51</width>
       <height>21</height>
      </rect>
     </property>
     <property name="text">
-     <string>Cell </string>
+     <string>Cell label </string>
     </property>
    </widget>
    <widget class="QSpinBox" name="plot_single_cell_data_spin_box">
     <property name="geometry">
      <rect>
-      <x>1130</x>
-      <y>870</y>
+      <x>980</x>
+      <y>840</y>
       <width>42</width>
       <height>21</height>
      </rect>
@@ -545,10 +545,10 @@
    <widget class="QLabel" name="plot_single_cell_data_label2">
     <property name="geometry">
      <rect>
-      <x>1300</x>
-      <y>870</y>
+      <x>1150</x>
+      <y>840</y>
       <width>111</width>
-      <height>16</height>
+      <height>21</height>
      </rect>
     </property>
     <property name="text">
@@ -558,8 +558,8 @@
    <widget class="QPushButton" name="plot_single_cell_data_button">
     <property name="geometry">
      <rect>
-      <x>1410</x>
-      <y>870</y>
+      <x>1260</x>
+      <y>840</y>
       <width>41</width>
       <height>23</height>
      </rect>
@@ -571,8 +571,8 @@
    <widget class="QFontComboBox" name="plot_single_cell_data_combo_box">
     <property name="geometry">
      <rect>
-      <x>1180</x>
-      <y>870</y>
+      <x>1030</x>
+      <y>840</y>
       <width>111</width>
       <height>22</height>
      </rect>
@@ -765,11 +765,16 @@ Middle mouse button -  delete line
    <widget class="QLabel" name="data_analysis_label">
     <property name="geometry">
      <rect>
-      <x>1230</x>
+      <x>1080</x>
       <y>730</y>
-      <width>71</width>
+      <width>101</width>
       <height>16</height>
      </rect>
+    </property>
+    <property name="font">
+     <font>
+      <pointsize>12</pointsize>
+     </font>
     </property>
     <property name="text">
      <string>Data analysis</string>
@@ -778,34 +783,34 @@ Middle mouse button -  delete line
    <widget class="QLabel" name="single_frame_data_label">
     <property name="geometry">
      <rect>
-      <x>1100</x>
-      <y>740</y>
+      <x>820</x>
+      <y>750</y>
       <width>101</width>
-      <height>16</height>
+      <height>21</height>
      </rect>
     </property>
     <property name="text">
-     <string>Single frame data</string>
+     <string>Single frame data-</string>
     </property>
    </widget>
    <widget class="QLabel" name="movie_dynamics_label">
     <property name="geometry">
      <rect>
-      <x>1100</x>
-      <y>850</y>
-      <width>91</width>
-      <height>16</height>
+      <x>820</x>
+      <y>840</y>
+      <width>101</width>
+      <height>20</height>
      </rect>
     </property>
     <property name="text">
-     <string>Movie dynamics</string>
+     <string>Single cell dynamics-</string>
     </property>
    </widget>
    <widget class="QFontComboBox" name="plot_single_frame_data_x_combo_box">
     <property name="geometry">
      <rect>
       <x>960</x>
-      <y>762</y>
+      <y>752</y>
       <width>111</width>
       <height>20</height>
      </rect>
@@ -818,7 +823,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>1120</x>
-      <y>760</y>
+      <y>750</y>
       <width>111</width>
       <height>22</height>
      </rect>
@@ -831,7 +836,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>920</x>
-      <y>760</y>
+      <y>750</y>
       <width>47</width>
       <height>21</height>
      </rect>
@@ -844,7 +849,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>1080</x>
-      <y>760</y>
+      <y>750</y>
       <width>47</width>
       <height>21</height>
      </rect>
@@ -857,7 +862,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>1410</x>
-      <y>760</y>
+      <y>750</y>
       <width>41</width>
       <height>23</height>
      </rect>
@@ -870,7 +875,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>1240</x>
-      <y>760</y>
+      <y>750</y>
       <width>51</width>
       <height>21</height>
      </rect>
@@ -883,7 +888,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>1290</x>
-      <y>760</y>
+      <y>750</y>
       <width>111</width>
       <height>22</height>
      </rect>
@@ -908,23 +913,23 @@ Middle mouse button -  delete line
    <widget class="QLabel" name="compare_frame_label">
     <property name="geometry">
      <rect>
-      <x>1100</x>
-      <y>810</y>
+      <x>820</x>
+      <y>780</y>
       <width>91</width>
       <height>21</height>
      </rect>
     </property>
     <property name="text">
-     <string>Compare frames</string>
+     <string>Compare frames-</string>
     </property>
    </widget>
    <widget class="QLabel" name="compare_frames_data_label">
     <property name="geometry">
      <rect>
       <x>910</x>
-      <y>830</y>
+      <y>780</y>
       <width>47</width>
-      <height>13</height>
+      <height>21</height>
      </rect>
     </property>
     <property name="text">
@@ -935,7 +940,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>940</x>
-      <y>828</y>
+      <y>780</y>
       <width>111</width>
       <height>20</height>
      </rect>
@@ -947,8 +952,8 @@ Middle mouse button -  delete line
    <widget class="QLabel" name="compare_frames_frame_list_label">
     <property name="geometry">
      <rect>
-      <x>1060</x>
-      <y>830</y>
+      <x>1230</x>
+      <y>780</y>
       <width>47</width>
       <height>16</height>
      </rect>
@@ -960,8 +965,8 @@ Middle mouse button -  delete line
    <widget class="QLineEdit" name="compare_frames_line_edit">
     <property name="geometry">
      <rect>
-      <x>1100</x>
-      <y>831</y>
+      <x>1270</x>
+      <y>780</y>
       <width>131</width>
       <height>20</height>
      </rect>
@@ -977,7 +982,7 @@ Middle mouse button -  delete line
     <property name="geometry">
      <rect>
       <x>1410</x>
-      <y>832</y>
+      <y>782</y>
       <width>41</width>
       <height>21</height>
      </rect>
@@ -989,8 +994,8 @@ Middle mouse button -  delete line
    <widget class="QLabel" name="plot_compare_frame_data_cells_type_label_2">
     <property name="geometry">
      <rect>
-      <x>1240</x>
-      <y>830</y>
+      <x>1060</x>
+      <y>780</y>
       <width>51</width>
       <height>21</height>
      </rect>
@@ -1002,10 +1007,10 @@ Middle mouse button -  delete line
    <widget class="QFontComboBox" name="plot_compare_frame_data_cell_type_combo_box">
     <property name="geometry">
      <rect>
-      <x>1290</x>
-      <y>830</y>
+      <x>1110</x>
+      <y>781</y>
       <width>111</width>
-      <height>22</height>
+      <height>21</height>
      </rect>
     </property>
     <property name="currentText">
@@ -1123,7 +1128,7 @@ memory</string>
    <widget class="QCheckBox" name="valid_frame_check_box">
     <property name="geometry">
      <rect>
-      <x>930</x>
+      <x>710</x>
       <y>870</y>
       <width>81</width>
       <height>21</height>
@@ -1304,8 +1309,8 @@ memory</string>
    <widget class="QLabel" name="window_radius_label">
     <property name="geometry">
      <rect>
-      <x>1010</x>
-      <y>790</y>
+      <x>1070</x>
+      <y>810</y>
       <width>131</width>
       <height>20</height>
      </rect>
@@ -1317,8 +1322,8 @@ memory</string>
    <widget class="QSpinBox" name="window_radius_spin_box">
     <property name="geometry">
      <rect>
-      <x>1130</x>
-      <y>790</y>
+      <x>1180</x>
+      <y>810</y>
       <width>42</width>
       <height>22</height>
      </rect>
@@ -1330,10 +1335,10 @@ memory</string>
    <widget class="QLabel" name="spatial_resolution_label">
     <property name="geometry">
      <rect>
-      <x>1180</x>
-      <y>790</y>
-      <width>121</width>
-      <height>16</height>
+      <x>1230</x>
+      <y>810</y>
+      <width>131</width>
+      <height>21</height>
      </rect>
     </property>
     <property name="text">
@@ -1343,8 +1348,8 @@ memory</string>
    <widget class="QSpinBox" name="spatial_resolution_spin_box">
     <property name="geometry">
      <rect>
-      <x>1310</x>
-      <y>790</y>
+      <x>1360</x>
+      <y>810</y>
       <width>42</width>
       <height>22</height>
      </rect>
@@ -1359,14 +1364,14 @@ memory</string>
    <widget class="QPushButton" name="plot_spatial_map_button">
     <property name="geometry">
      <rect>
-      <x>1360</x>
-      <y>790</y>
-      <width>91</width>
+      <x>1410</x>
+      <y>810</y>
+      <width>41</width>
       <height>23</height>
      </rect>
     </property>
     <property name="text">
-     <string>Plot spatial map</string>
+     <string>Plot</string>
     </property>
    </widget>
    <widget class="QPushButton" name="open_console_push_button">
@@ -1380,6 +1385,137 @@ memory</string>
     </property>
     <property name="text">
      <string>Open console</string>
+    </property>
+   </widget>
+   <widget class="QLabel" name="spatial_map_label">
+    <property name="geometry">
+     <rect>
+      <x>820</x>
+      <y>810</y>
+      <width>231</width>
+      <height>31</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Spatial map- Choose data and cell type
+                     using compare frames line above</string>
+    </property>
+   </widget>
+   <widget class="Line" name="line">
+    <property name="geometry">
+     <rect>
+      <x>800</x>
+      <y>747</y>
+      <width>20</width>
+      <height>162</height>
+     </rect>
+    </property>
+    <property name="orientation">
+     <enum>Qt::Vertical</enum>
+    </property>
+   </widget>
+   <widget class="Line" name="line_2">
+    <property name="geometry">
+     <rect>
+      <x>810</x>
+      <y>740</y>
+      <width>651</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="orientation">
+     <enum>Qt::Horizontal</enum>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="plot_event_related_data_push_button">
+    <property name="geometry">
+     <rect>
+      <x>1310</x>
+      <y>840</y>
+      <width>141</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Plot event related data</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="fit_a_shape_button">
+    <property name="geometry">
+     <rect>
+      <x>680</x>
+      <y>700</y>
+      <width>75</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Fit selected</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="finish_fitting_a_shape_button">
+    <property name="geometry">
+     <rect>
+      <x>680</x>
+      <y>700</y>
+      <width>81</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Finish marking </string>
+    </property>
+   </widget>
+   <widget class="QFontComboBox" name="choose_marking_target_combo_box">
+    <property name="geometry">
+     <rect>
+      <x>770</x>
+      <y>700</y>
+      <width>141</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="currentText">
+     <string>Choose Marking traget</string>
+    </property>
+   </widget>
+   <widget class="QFontComboBox" name="choose_fitting_shape_combo_box">
+    <property name="geometry">
+     <rect>
+      <x>940</x>
+      <y>700</y>
+      <width>141</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="currentText">
+     <string>Choose Shape</string>
+    </property>
+   </widget>
+   <widget class="QLabel" name="fit_a_shape_label">
+    <property name="geometry">
+     <rect>
+      <x>920</x>
+      <y>700</y>
+      <width>21</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>to</string>
+    </property>
+   </widget>
+   <widget class="QLineEdit" name="shape_name_line_edit">
+    <property name="geometry">
+     <rect>
+      <x>1090</x>
+      <y>700</y>
+      <width>113</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>insert shape name</string>
     </property>
    </widget>
    <zorder>track_cells_button</zorder>
@@ -1481,6 +1617,16 @@ memory</string>
    <zorder>spatial_resolution_spin_box</zorder>
    <zorder>plot_spatial_map_button</zorder>
    <zorder>open_console_push_button</zorder>
+   <zorder>spatial_map_label</zorder>
+   <zorder>line</zorder>
+   <zorder>line_2</zorder>
+   <zorder>plot_event_related_data_push_button</zorder>
+   <zorder>fit_a_shape_button</zorder>
+   <zorder>finish_fitting_a_shape_button</zorder>
+   <zorder>choose_marking_target_combo_box</zorder>
+   <zorder>choose_fitting_shape_combo_box</zorder>
+   <zorder>fit_a_shape_label</zorder>
+   <zorder>shape_name_line_edit</zorder>
   </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">
