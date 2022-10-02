@@ -547,8 +547,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.frame_changed()
 
 
+
     def image_clicked(self, click_info):
         pos = click_info.point
+        if pos.x() < 0 or pos.x() >= self.img_dimensions.X or pos.y() < 0 or pos.y() >= self.img_dimensions.Y:
+            return 0
         button = click_info.button
         double_click = click_info.doubleClick
         if self.image_display.dragMode() == QtWidgets.QGraphicsView.NoDrag:
@@ -883,17 +886,34 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         cell_id = self.plot_single_cell_data_spin_box.value()
         feature = self.plot_single_cell_data_combo_box.currentText()
         plot_window = PlotDataWindow(self, working_dir=self.working_directory)
-        data = self.tissue_info.plot_single_cell_data(cell_id, feature, plot_window.get_ax())
+        if "intensity" in feature:
+            intensity_images = self.img[:, self.atoh_spin_box.value(), 0, :, :]
+            if not self.img_in_memory:
+                intensity_images = intensity_images.compute()
+        else:
+            intensity_images = None
+        data = self.tissue_info.plot_single_cell_data(cell_id, feature, plot_window.get_ax(),
+                                                      intensity_images=intensity_images)
         plot_window.show(data)
 
     def plot_event_related_data(self):
         if self.plot_single_cell_data_combo_box.currentIndex() < 0:
             return 0
+        frames_around_event = 10
         cell_id = self.plot_single_cell_data_spin_box.value()
         feature = self.plot_single_cell_data_combo_box.currentText()
         frame = self.frame_slider.value()
         plot_window = PlotDataWindow(self, working_dir=self.working_directory)
-        data = self.tissue_info.plot_event_related_data(cell_id, frame, feature, 10, plot_window.get_ax())
+        if "intensity" in feature:
+            frames = np.arange(max(frame - frames_around_event, 0),
+                               min(frame + frames_around_event + 1, self.number_of_frames + 1))
+            intensity_images = self.img[frames - 1, self.atoh_spin_box.value(), 0, :, :]
+            if not self.img_in_memory:
+                intensity_images = intensity_images.compute()
+        else:
+            intensity_images = None
+        data = self.tissue_info.plot_event_related_data(cell_id, frame, feature, frames_around_event,
+                                                        plot_window.get_ax(), intensity_images=intensity_images)
         plot_window.show(data)
 
     def plot_single_frame_data(self):
@@ -905,9 +925,15 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         y_feature = self.plot_single_frame_data_y_combo_box.currentText()
         cell_type = self.plot_single_frame_data_cell_type_combo_box.currentText()
         frame = self.frame_slider.value()
+        if "intensity" in x_feature or "intensity" in y_feature:
+            intensity_image = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :]
+            if not self.img_in_memory:
+                intensity_image = intensity_image.compute()
+        else:
+            intensity_image = None
         plot_window = PlotDataWindow(self, working_dir=self.working_directory)
         data, error_message = self.tissue_info.plot_single_frame_data(frame, x_feature, y_feature, plot_window.get_ax(),
-                                                                      cell_type)
+                                                                      cell_type, intensity_image=intensity_image)
         if error_message:
             message_box = QtWidgets.QMessageBox
             message_box.question(self, '', error_message, message_box.Close)

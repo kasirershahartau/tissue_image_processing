@@ -15,6 +15,7 @@ from matplotlib import pyplot as plt
 from matplotlib import cm as colormap
 from matplotlib.patches import Circle
 from scipy.ndimage.filters import maximum_filter, minimum_filter
+from scipy.interpolate import UnivariateSpline
 from scipy.spatial import Voronoi
 from skimage.draw import line, disk
 from skimage.measure import regionprops_table, regionprops
@@ -129,12 +130,12 @@ class Tissue(object):
          according to cell area and centroid location.
     """
     SPECIAL_FEATURES = ["shape index", "roundness", "neighbors from the same type", "HC neighbors", "SC neighbors", "contact length",
-                        "HC contact length", "SC contact length"]
+                        "HC contact length", "SC contact length", "Mean atoh intensity"]
     SPECIAL_X_ONLY_FEATURES = ["psi6"]
     SPECIAL_Y_ONLY_FEATURES = ["histogram"]
     GLOBAL_FEATURES = ["density", "type_fraction", "total_area"]
     CELL_TYPES = ["all", "HC", "SC"]
-    FITTING_SHAPES = ["ellipse", "circle arc", "line"]
+    FITTING_SHAPES = ["ellipse", "circle arc", "line", "spline"]
 
     def __init__(self, number_of_frames, data_path, max_cell_area=10, min_cell_area=0.1):
         self.number_of_frames = number_of_frames
@@ -263,7 +264,10 @@ class Tissue(object):
         if labels is not None and cells_info is not None:
             index = labels[int(y),int(x)]
             if index > 0:
-                return cells_info.iloc[index - 1]
+                try:
+                    return cells_info.iloc[index - 1]
+                except IndexError:
+                    return pd.Series([], dtype='float64')
             else:
                 return pd.Series([],dtype='float64')
         else:
@@ -307,7 +311,12 @@ class Tissue(object):
         cell_idx = labels[y, x] - 1
         if cell_idx < 0:
             return 0
-        return cells_info.label[cell_idx]
+        try:
+            cell_id = cells_info.label[cell_idx]
+            return cell_id
+        except IndexError:
+            return 0
+
 
     def get_cell_centroid_by_id(self, frame, id):
         cells_info = self.get_cells_info(frame)
@@ -422,7 +431,7 @@ class Tissue(object):
                         resulting_cell = self.get_cell_data_by_label(resulting_cell_label, frame)
                         if resulting_cell is not None and resulting_cell.empty_cell.values[0] == 0:
                             for i in range(3):
-                                rr, cc = disk((resulting_cell.cy, resulting_cell.cx), radius, shape=labels.shape)
+                                rr, cc = disk((resulting_cell.cy.values[0], resulting_cell.cx.values[0]), radius, shape=labels.shape)
                                 final_image[i, rr, cc] = color[i]
         return final_image
 
@@ -642,10 +651,10 @@ class Tissue(object):
         else:
             return None
 
-    def plot_single_cell_data(self, cell_id, feature, ax):
+    def plot_single_cell_data(self, cell_id, feature, ax, intensity_images=None):
         frames = np.arange(1, self.number_of_frames + 1)
         t = (frames - 1)*15
-        data = self.get_single_cell_data(cell_id, frames, feature)
+        data = self.get_single_cell_data(cell_id, frames, feature, intensity_images)
         t = t[~np.isnan(data)]
         data = data[~np.isnan(data)]
         ax.plot(t, data, '*')
@@ -654,13 +663,18 @@ class Tissue(object):
         ax.set_title("%s of cell number %d" % (feature, cell_id))
         return pd.DataFrame({"Time": t, feature: data})
 
-    def get_single_cell_data(self, cell_id, frames, feature):
+    def get_single_cell_data(self, cell_id, frames, feature, intensity_images=None):
         current_cell_info_frame = self.cells_info_frame
         data = np.zeros((len(frames),))
         for index,frame in enumerate(frames):
             cell = self.get_cell_data_by_label(cell_id, frame)
             if self.is_frame_valid(frame) and cell is not None:
-                frame_data, msg = self.get_frame_data(frame, feature, cell, self.SPECIAL_FEATURES)
+                if intensity_images is None:
+                    intensity_image = None
+                else:
+                    intensity_image = intensity_images[index]
+                frame_data, msg = self.get_frame_data(frame, feature, cell, self.SPECIAL_FEATURES,
+                                                      intensity_img=intensity_image)
                 if msg:
                     return None, msg
                 data[index] = frame_data[0]
@@ -669,7 +683,7 @@ class Tissue(object):
         self.get_cells_info(current_cell_info_frame)
         return data
 
-    def plot_event_related_data(self, cell_id, event_frame, feature, frames_around_event, ax):
+    def plot_event_related_data(self, cell_id, event_frame, feature, frames_around_event, ax, intensity_images=None):
         event_data = self.events.query("cell_id == %d and start_frame <= %d and end_frame >= %d" %(cell_id, event_frame, event_frame))
         if event_data.shape[0] < 1:
             return None
@@ -677,8 +691,9 @@ class Tissue(object):
             frames = np.arange(max(event_frame - frames_around_event, 0),
                                min(event_frame + frames_around_event + 1, self.number_of_frames + 1))
             t = (frames - 1) * 15
-            data = self.get_single_cell_data(cell_id, frames, feature)
+            data = self.get_single_cell_data(cell_id, frames, feature, intensity_images)
             t = t[~np.isnan(data)]
+            frames = frames[~np.isnan(data)]
             data = data[~np.isnan(data)]
             ax.plot(t[frames < event_frame], data[frames < event_frame], 'b*', label='before event')
             ax.plot(t[frames >= event_frame], data[frames >= event_frame], 'g*', label='after event')
@@ -728,8 +743,8 @@ class Tissue(object):
                 data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='HC')
             elif feature == "SC neighbors":
                 data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='SC')
-            elif feature == "Mean atoh level":
-                data = self.calculate_mean_intensity(frame, valid_cells, intensity_img)
+            elif feature == "Mean atoh intensity":
+                data = self.calculate_mean_intensity(frame, valid_cells, intensity_img=intensity_img)
             elif "contact length" in feature:
                 if 'HC' in feature:
                     neighbors_type = 'HC'
@@ -764,7 +779,7 @@ class Tissue(object):
                 data = self.calculate_density(frame, valid_cells, reference)
             elif feature == "type_fraction":
                 data = self.calculate_type_fraction(frame, valid_cells, reference)
-        else:
+        elif ':' in feature:
             splitted_feature = feature.split(":")
             shape_name = splitted_feature[0]
             shape_feature = splitted_feature[1]
@@ -772,11 +787,16 @@ class Tissue(object):
                 data = self.shape_fitting_results[frame - 1][shape_name][shape_feature]
             else:
                 data = valid_cells[feature].to_numpy()
+        else:
+            data = valid_cells[feature].to_numpy()
         return data, ""
 
     def calculate_mean_intensity(self,frame, valid_cells, intensity_img):
         labels = self.get_labels(frame)
         props = regionprops_table(labels, intensity_img, properties=('label', 'intensity_mean'))
+        valid_cells_labels = valid_cells.index.to_numpy() + 1
+        valid_cells_indices= np.intersect1d(props['label'], valid_cells_labels, return_indices=True)[1]
+        return props['intensity_mean'][valid_cells_indices]
 
 
     def get_valid_non_edge_cells(self, frame, cells):
@@ -828,7 +848,7 @@ class Tissue(object):
         return cells.query("(cx - %f)**2 + (cy - %f)**2 < %f" % (center_x, center_y, radius**2))
 
 
-    def plot_single_frame_data(self, frame, x_feature, y_feature, ax, cells_type='all'):
+    def plot_single_frame_data(self, frame, x_feature, y_feature, ax, cells_type='all', intensity_image=None):
         cell_info = self.get_cells_info(frame)
         y_data = None
         if cell_info is None:
@@ -840,7 +860,8 @@ class Tissue(object):
             valid_cells = self.get_valid_non_edge_cells(frame, cells_from_right_type)
         plotted = False
         x_data, msg = self.get_frame_data(frame, x_feature, valid_cells,
-                                          self.SPECIAL_FEATURES + self.SPECIAL_X_ONLY_FEATURES)
+                                          self.SPECIAL_FEATURES + self.SPECIAL_X_ONLY_FEATURES,
+                                          intensity_img=intensity_image)
         if x_data is None:
             return None, msg
         if y_feature == "histogram":
@@ -867,15 +888,21 @@ class Tissue(object):
         ax.set_title(title)
         return res, ""
 
-    def plot_spatial_map(self, frame, feature, window_radius, window_step, ax, cells_type='all'):
+    def plot_spatial_map(self, frame, feature, window_radius, window_step, ax, cells_type='all', vmin=None, vmax=None):
         map, msg = self.calculate_spatial_data(frame, window_radius, window_step, feature, cells_type=cells_type)
         labels = self.get_labels(frame)
         palette = copy.copy(colormap.RdBu)
         palette.set_bad('k')
         palette.set_under('k')
-        vmin = np.min(map[map > 0])
+        if 'fraction' in feature:
+            vmin = 0
+            vmax = 1
+        if vmin is None:
+            vmin = np.min(map[map > 0])
+        if vmax is None:
+            vmax = np.max(map[map > 0])
         map_masked = np.ma.masked_where(labels == 0, map)
-        im = ax.imshow(map_masked, cmap=palette, vmin=vmin)
+        im = ax.imshow(map_masked, cmap=palette, vmin=vmin, vmax=vmax)
         cbar = ax.figure.colorbar(im, ax=ax)
         cbar.ax.set_ylabel(feature, rotation=270)
         return map, msg
@@ -1134,7 +1161,10 @@ class Tissue(object):
         if labels is None:
             return 0
         x, y = position
-        cell_idx = labels[y, x] - 1
+        try:
+            cell_idx = labels[y, x] - 1
+        except IndexError:
+            return 0
         if cell_idx < 0:
             return 0
         cells_info = self.get_cells_info(frame)
@@ -1176,7 +1206,7 @@ class Tissue(object):
         labels = self.get_labels(frame_number)
         self.get_cell_types(frame_number)
         max_brightness = np.percentile(hc_marker_image, 99)
-        self.cell_types = np.zeros(labels.shape)
+        cell_types = np.zeros(labels.shape)
         if properties is None:
             for cell_index in range(len(cells_info)):
                 if cells_info.valid[cell_index] == 1:
@@ -1184,10 +1214,10 @@ class Tissue(object):
                     percentile_cell_brightness = np.percentile(cell_pixels, 100-percentage_above_threshold)
                     if percentile_cell_brightness > hc_threshold*max_brightness:
                         self.cells_info.at[cell_index, "type"] = "HC"
-                        self.cell_types[labels == cell_index] = HC_TYPE
+                        cell_types[labels == cell_index] = HC_TYPE
                     else:
                         self.cells_info.at[cell_index, "type"] = "SC"
-                        self.cell_types[labels == cell_index] = SC_TYPE
+                        cell_types[labels == cell_index] = SC_TYPE
         else:
             cell_indices = properties['label'] - 1
             threshold = hc_threshold * max_brightness
@@ -1196,11 +1226,12 @@ class Tissue(object):
             SC_indices = cell_indices[atoh_intensities <= threshold]
             self.cells_info.loc[HC_indices, "type"] = "HC"
             self.cells_info.loc[SC_indices, "type"] = "SC"
-            self.cell_types[np.isin(labels, HC_indices+1)] = HC_TYPE
-            self.cell_types[np.isin(labels, SC_indices+1)] = SC_TYPE
+            cell_types[np.isin(labels, HC_indices+1)] = HC_TYPE
+            cell_types[np.isin(labels, SC_indices+1)] = SC_TYPE
         invalid_cells = np.argwhere(self.cells_info.valid.to_numpy() == 0).flatten()
         self.cells_info.loc[invalid_cells, "type"] = "invalid"
-        self.cell_types[np.isin(labels, invalid_cells+1)] = INVALID_TYPE
+        cell_types[np.isin(labels, invalid_cells+1)] = INVALID_TYPE
+        self.set_cell_types(frame_number, cell_types)
 
     def find_second_order_neighbors(self, frame, cells=None, cell_type='all'):
         cell_info = self.get_cells_info(frame)
@@ -1406,11 +1437,14 @@ class Tissue(object):
             return 0
         cells_info = self.get_cells_info(frame)
         if cells_info is not None:
-            current_type = cells_info.type[cell_idx]
-            new_type = "SC" if (current_type == HC_TYPE) else "HC"
-            self.cells_info.at[cell_idx, "type"] = new_type
-            if current_type == "invalid":
-                self.cells_info.at[cell_idx, "valid"] = 1
+            try:
+                current_type = cells_info.type[cell_idx]
+                new_type = "SC" if (current_type == HC_TYPE) else "HC"
+                self.cells_info.at[cell_idx, "type"] = new_type
+                if current_type == "invalid":
+                    self.cells_info.at[cell_idx, "valid"] = 1
+            except IndexError:
+                return 0
         cell_types = self.get_cell_types(frame)
         if cell_types is not None:
             current_type = np.max(cell_types[labels == cell_idx + 1])
@@ -1426,8 +1460,11 @@ class Tissue(object):
         cell_idx = labels[y, x] - 1
         cells_info = self.get_cells_info(frame)
         if cells_info is not None:
-            self.cells_info.at[cell_idx, "type"] = "invalid"
-            self.cells_info.at[cell_idx, "valid"] = 0
+            try:
+                self.cells_info.at[cell_idx, "type"] = "invalid"
+                self.cells_info.at[cell_idx, "valid"] = 0
+            except IndexError:
+                return 0
         cell_types = self.get_cell_types(frame)
         if cell_types is not None:
             self.cell_types[labels == cell_idx + 1] = INVALID_TYPE
@@ -1451,64 +1488,67 @@ class Tissue(object):
                     self._finished_last_line_addition = True
                     return 0
             if cell_info is not None:
-                if new_label > 0:
-                    cell1_info = cell_info.iloc[cell1_label - 1]
-                    cell2_info = cell_info.iloc[cell2_label - 1]
-                    area1 = cell1_info.area
-                    area2 = cell2_info.area
-                    cell_info.at[new_label - 1, "area"] = area1 + area2
-                    cell_info.at[new_label - 1, "perimeter"] = cell1_info.perimeter + cell2_info.perimeter - removed_line_length
-                    cell_info.at[new_label - 1, "cx"] = (cell1_info.cx*area1 + cell2_info.cx*area2)/\
-                                                        (area1 + area2)
-                    cell_info.at[new_label - 1, "cy"] = (cell1_info.cy*area1 + cell2_info.cy*area2)/\
-                                                        (area1 + area2)
-                    cell_info.at[new_label - 1, "bounding_box_min_row"] = min(cell1_info.bounding_box_min_row,
-                                                                              cell2_info.bounding_box_min_row)
-                    cell_info.at[new_label - 1, "bounding_box_min_col"] = min(cell1_info.bounding_box_min_col,
-                                                                              cell2_info.bounding_box_min_col)
-                    cell_info.at[new_label - 1, "bounding_box_max_row"] = max(cell1_info.bounding_box_max_row,
-                                                                              cell2_info.bounding_box_max_row)
-                    cell_info.at[new_label - 1, "bounding_box_max_col"] = max(cell1_info.bounding_box_max_col,
-                                                                              cell2_info.bounding_box_max_col)
-                    mean_area = np.mean(cell_info.area.to_numpy())
-                    max_area = self.max_cell_area * mean_area
-                    min_area = self.min_cell_area * mean_area
-                    valid = min_area < area1 + area2 < max_area
-                    cell_info.at[new_label - 1, "valid"] = valid
-                    if use_existing_types and cell_types is not None:
-                        hc_marker_image = (cell_types == HC_TYPE).astype(float)
-                    if hc_marker_image is not None and not use_existing_types:
-                        if valid:
-                            percentage_intensity = np.percentile(hc_marker_image[labels == new_label],
-                                                                 100-percentage_above_threshold)
-                            if percentage_intensity > hc_threshold * np.percentile(hc_marker_image[hc_marker_image>0], 99):
-                                cell_info.at[new_label - 1, "type"] = "HC"
-                                if cell_types is not None:
-                                    cell_types[labels == new_label] = HC_TYPE
+                try:
+                    if new_label > 0:
+                        cell1_info = cell_info.iloc[cell1_label - 1]
+                        cell2_info = cell_info.iloc[cell2_label - 1]
+                        area1 = cell1_info.area
+                        area2 = cell2_info.area
+                        cell_info.at[new_label - 1, "area"] = area1 + area2
+                        cell_info.at[new_label - 1, "perimeter"] = cell1_info.perimeter + cell2_info.perimeter - removed_line_length
+                        cell_info.at[new_label - 1, "cx"] = (cell1_info.cx*area1 + cell2_info.cx*area2)/\
+                                                            (area1 + area2)
+                        cell_info.at[new_label - 1, "cy"] = (cell1_info.cy*area1 + cell2_info.cy*area2)/\
+                                                            (area1 + area2)
+                        cell_info.at[new_label - 1, "bounding_box_min_row"] = min(cell1_info.bounding_box_min_row,
+                                                                                  cell2_info.bounding_box_min_row)
+                        cell_info.at[new_label - 1, "bounding_box_min_col"] = min(cell1_info.bounding_box_min_col,
+                                                                                  cell2_info.bounding_box_min_col)
+                        cell_info.at[new_label - 1, "bounding_box_max_row"] = max(cell1_info.bounding_box_max_row,
+                                                                                  cell2_info.bounding_box_max_row)
+                        cell_info.at[new_label - 1, "bounding_box_max_col"] = max(cell1_info.bounding_box_max_col,
+                                                                                  cell2_info.bounding_box_max_col)
+                        mean_area = np.mean(cell_info.area.to_numpy())
+                        max_area = self.max_cell_area * mean_area
+                        min_area = self.min_cell_area * mean_area
+                        valid = min_area < area1 + area2 < max_area
+                        cell_info.at[new_label - 1, "valid"] = valid
+                        if use_existing_types and cell_types is not None:
+                            hc_marker_image = (cell_types == HC_TYPE).astype(float)
+                        if hc_marker_image is not None and not use_existing_types:
+                            if valid:
+                                percentage_intensity = np.percentile(hc_marker_image[labels == new_label],
+                                                                     100-percentage_above_threshold)
+                                if percentage_intensity > hc_threshold * np.percentile(hc_marker_image[hc_marker_image>0], 99):
+                                    cell_info.at[new_label - 1, "type"] = "HC"
+                                    if cell_types is not None:
+                                        cell_types[labels == new_label] = HC_TYPE
+                                else:
+                                    cell_info.at[new_label - 1, "type"] = "SC"
+                                    if cell_types is not None:
+                                        cell_types[labels == new_label] = SC_TYPE
                             else:
-                                cell_info.at[new_label - 1, "type"] = "SC"
+                                cell_info.at[new_label - 1, "type"] = "invalid"
                                 if cell_types is not None:
-                                    cell_types[labels == new_label] = SC_TYPE
-                        else:
-                            cell_info.at[new_label - 1, "type"] = "invalid"
-                            if cell_types is not None:
-                                cell_types[labels == new_label] = INVALID_TYPE
-                    delete_label = max(cell1_label, cell2_label)
-                    new_cell_neighbors = cell_info.neighbors[new_label - 1].union(cell_info.neighbors[delete_label - 1])
-                    for neighbor_label in list(new_cell_neighbors.copy()):
-                        if delete_label in cell_info.neighbors[neighbor_label - 1]:
-                            cell_info.neighbors[neighbor_label - 1].remove(delete_label)
-                        cell_info.neighbors[neighbor_label - 1].add(new_label)
-                        cell_info.neighbors[new_label - 1].add(neighbor_label)
-                        cell_info.at[neighbor_label - 1, "n_neighbors"] = len(cell_info.neighbors[neighbor_label - 1])
-                    if delete_label in cell_info.neighbors[new_label - 1]:
-                        cell_info.neighbors[new_label - 1].remove(delete_label)
-                    cell_info.at[new_label - 1, "n_neighbors"] = len(cell_info.neighbors[new_label - 1])
-                    cell_info.at[delete_label - 1, "valid"] = 0
-                    cell_info.at[delete_label - 1, "empty_cell"] = 1
-                    cell_info.at[delete_label - 1, "neighbors"] = set()
-                    cell_info.at[delete_label - 1, "n_neighbors"] = 0
-                    cell_info.at[delete_label - 1, "label"] = 0
+                                    cell_types[labels == new_label] = INVALID_TYPE
+                        delete_label = max(cell1_label, cell2_label)
+                        new_cell_neighbors = cell_info.neighbors[new_label - 1].union(cell_info.neighbors[delete_label - 1])
+                        for neighbor_label in list(new_cell_neighbors.copy()):
+                            if delete_label in cell_info.neighbors[neighbor_label - 1]:
+                                cell_info.neighbors[neighbor_label - 1].remove(delete_label)
+                            cell_info.neighbors[neighbor_label - 1].add(new_label)
+                            cell_info.neighbors[new_label - 1].add(neighbor_label)
+                            cell_info.at[neighbor_label - 1, "n_neighbors"] = len(cell_info.neighbors[neighbor_label - 1])
+                        if delete_label in cell_info.neighbors[new_label - 1]:
+                            cell_info.neighbors[new_label - 1].remove(delete_label)
+                        cell_info.at[new_label - 1, "n_neighbors"] = len(cell_info.neighbors[new_label - 1])
+                        cell_info.at[delete_label - 1, "valid"] = 0
+                        cell_info.at[delete_label - 1, "empty_cell"] = 1
+                        cell_info.at[delete_label - 1, "neighbors"] = set()
+                        cell_info.at[delete_label - 1, "n_neighbors"] = 0
+                        cell_info.at[delete_label - 1, "label"] = 0
+                except IndexError:
+                    return 0
             else:
                 new_label = cell1_label
                 if part_of_undo:
@@ -1517,6 +1557,7 @@ class Tissue(object):
                     if not self._finished_last_line_addition:
                         self._finished_last_line_addition = True
                         return 0
+
         return 0
 
     def update_after_adding_segmentation_line(self, cell_label, frame, hc_marker_image=None, hc_threshold=0.1,
@@ -1555,87 +1596,91 @@ class Tissue(object):
             cell_region[new_region_labels == cell2_label] = new_label
             labels[region_first_row:region_last_row, region_first_col:region_last_col] = cell_region
             if cell_info is not None:
-                if use_existing_types and cell_types is not None:
-                    hc_marker_image = (cell_types == HC_TYPE).astype(float)
-                if hc_marker_image is None:
-                    properties = regionprops(cell_region)
-                else:
-                    hc_marker_region = hc_marker_image[region_first_row:region_last_row,
-                                                       region_first_col:region_last_col]
+                try:
+                    if use_existing_types and cell_types is not None:
+                        hc_marker_image = (cell_types == HC_TYPE).astype(float)
+                    if hc_marker_image is None:
+                        properties = regionprops(cell_region)
+                    else:
+                        hc_marker_region = hc_marker_image[region_first_row:region_last_row,
+                                                           region_first_col:region_last_col]
 
-                    def percentile_intensity(regionmask, intensity):
-                        return np.percentile(intensity[regionmask], 100-percentage_above_threshold)
-                    properties = regionprops_table(cell_region, intensity_image=hc_marker_region,
-                                                   properties=("label", "area", "perimeter", "centroid", "bbox"),
-                                                   extra_properties=(percentile_intensity,))
-                    max_intensity = np.percentile(hc_marker_image[hc_marker_image > 0], 99)
-                mean_area = np.mean(cell_info.area.to_numpy())
-                max_area = self.max_cell_area * mean_area
-                min_area = self.min_cell_area * mean_area
-                for region_index, region_label in enumerate(properties["label"]):
-                    if region_label == cell_label:
-                        cell_info.at[cell_label - 1, "area"] = properties["area"][region_index]
-                        cell_info.at[cell_label - 1, "perimeter"] = properties["perimeter"][region_index]
-                        cell_info.at[cell_label - 1, "cx"] = properties["centroid-1"][region_index] + region_first_col
-                        cell_info.at[cell_label - 1, "cy"] = properties["centroid-0"][region_index] + region_first_row
-                        cell_info.at[cell_label - 1, "bounding_box_min_row"] = properties["bbox-0"][region_index] + region_first_row
-                        cell_info.at[cell_label - 1, "bounding_box_min_col"] = properties["bbox-1"][region_index] + region_first_col
-                        cell_info.at[cell_label - 1, "bounding_box_max_row"] = properties["bbox-2"][region_index] + region_first_row
-                        cell_info.at[cell_label - 1, "bounding_box_max_col"] = properties["bbox-3"][region_index] + region_first_col
-                        cell_valid = min_area < properties["area"][region_index] < max_area
-                        cell_info.at[cell_label - 1, "valid"] = int(cell_valid)
-                        if hc_marker_image is not None:
-                            if cell_valid:
-                                percentage_intensity = properties["percentile_intensity"][region_index]
-                                if percentage_intensity > hc_threshold * max_intensity:
-                                    cell_info.at[cell_label - 1, "type"] = "HC"
-                                    if cell_types is not None:
-                                        cell_types[labels == cell_label] = HC_TYPE
+                        def percentile_intensity(regionmask, intensity):
+                            return np.percentile(intensity[regionmask], 100-percentage_above_threshold)
+                        properties = regionprops_table(cell_region, intensity_image=hc_marker_region,
+                                                       properties=("label", "area", "perimeter", "centroid", "bbox"),
+                                                       extra_properties=(percentile_intensity,))
+                        max_intensity = np.percentile(hc_marker_image[hc_marker_image > 0], 99)
+                    mean_area = np.mean(cell_info.area.to_numpy())
+                    max_area = self.max_cell_area * mean_area
+                    min_area = self.min_cell_area * mean_area
+                    for region_index, region_label in enumerate(properties["label"]):
+                        if region_label == cell_label:
+                            cell_info.at[cell_label - 1, "area"] = properties["area"][region_index]
+                            cell_info.at[cell_label - 1, "perimeter"] = properties["perimeter"][region_index]
+                            cell_info.at[cell_label - 1, "cx"] = properties["centroid-1"][region_index] + region_first_col
+                            cell_info.at[cell_label - 1, "cy"] = properties["centroid-0"][region_index] + region_first_row
+                            cell_info.at[cell_label - 1, "bounding_box_min_row"] = properties["bbox-0"][region_index] + region_first_row
+                            cell_info.at[cell_label - 1, "bounding_box_min_col"] = properties["bbox-1"][region_index] + region_first_col
+                            cell_info.at[cell_label - 1, "bounding_box_max_row"] = properties["bbox-2"][region_index] + region_first_row
+                            cell_info.at[cell_label - 1, "bounding_box_max_col"] = properties["bbox-3"][region_index] + region_first_col
+                            cell_valid = min_area < properties["area"][region_index] < max_area
+                            cell_info.at[cell_label - 1, "valid"] = int(cell_valid)
+                            if hc_marker_image is not None:
+                                if cell_valid:
+                                    percentage_intensity = properties["percentile_intensity"][region_index]
+                                    if percentage_intensity > hc_threshold * max_intensity:
+                                        cell_info.at[cell_label - 1, "type"] = "HC"
+                                        if cell_types is not None:
+                                            cell_types[labels == cell_label] = HC_TYPE
+                                    else:
+                                        cell_info.at[cell_label - 1, "type"] = "SC"
+                                        if cell_types is not None:
+                                            cell_types[labels == cell_label] = SC_TYPE
                                 else:
-                                    cell_info.at[cell_label - 1, "type"] = "SC"
+                                    cell_info.at[cell_label - 1, "type"] = "invalid"
                                     if cell_types is not None:
-                                        cell_types[labels == cell_label] = SC_TYPE
-                            else:
-                                cell_info.at[cell_label - 1, "type"] = "invalid"
-                                if cell_types is not None:
-                                    cell_types[labels == cell_label] = INVALID_TYPE
-                    elif region_label == new_label:
-                        new_cell_valid = min_area < properties["area"][region_index] < max_area
-                        new_cell_info = {"area": properties["area"][region_index],
-                                         "label": new_label,
-                                         "perimeter": properties["perimeter"][region_index],
-                                         "cx": properties["centroid-1"][region_index] + region_first_col,
-                                         "cy": properties["centroid-0"][region_index] + region_first_row,
-                                         "bounding_box_min_row": properties["bbox-0"][region_index] + region_first_row,
-                                         "bounding_box_min_col": properties["bbox-1"][region_index] + region_first_col,
-                                         "bounding_box_max_row": properties["bbox-2"][region_index] + region_first_row,
-                                         "bounding_box_max_col": properties["bbox-3"][region_index] + region_first_col,
-                                         "valid": int(new_cell_valid),
-                                         "empty_cell": 0,
-                                         "neighbors": set(),
-                                         "n_neighbors": 0}
-                        if hc_marker_image is not None:
-                            if new_cell_valid:
-                                percentage_intensity = properties["percentile_intensity"][region_index]
-                                if percentage_intensity > hc_threshold * max_intensity:
-                                    new_cell_info["type"] = "HC"
-                                    if cell_types is not None:
-                                        cell_types[labels == new_label] = HC_TYPE
+                                        cell_types[labels == cell_label] = INVALID_TYPE
+                        elif region_label == new_label:
+                            new_cell_valid = min_area < properties["area"][region_index] < max_area
+                            new_cell_info = {"area": properties["area"][region_index],
+                                             "label": new_label,
+                                             "perimeter": properties["perimeter"][region_index],
+                                             "cx": properties["centroid-1"][region_index] + region_first_col,
+                                             "cy": properties["centroid-0"][region_index] + region_first_row,
+                                             "bounding_box_min_row": properties["bbox-0"][region_index] + region_first_row,
+                                             "bounding_box_min_col": properties["bbox-1"][region_index] + region_first_col,
+                                             "bounding_box_max_row": properties["bbox-2"][region_index] + region_first_row,
+                                             "bounding_box_max_col": properties["bbox-3"][region_index] + region_first_col,
+                                             "valid": int(new_cell_valid),
+                                             "empty_cell": 0,
+                                             "neighbors": set(),
+                                             "n_neighbors": 0}
+                            if hc_marker_image is not None:
+                                if new_cell_valid:
+                                    percentage_intensity = properties["percentile_intensity"][region_index]
+                                    if percentage_intensity > hc_threshold * max_intensity:
+                                        new_cell_info["type"] = "HC"
+                                        if cell_types is not None:
+                                            cell_types[labels == new_label] = HC_TYPE
+                                    else:
+                                        new_cell_info["type"] = "SC"
+                                        if cell_types is not None:
+                                            cell_types[labels == new_label] = SC_TYPE
                                 else:
-                                    new_cell_info["type"] = "SC"
+                                    new_cell_info["type"] = "invalid"
                                     if cell_types is not None:
-                                        cell_types[labels == new_label] = SC_TYPE
-                            else:
-                                new_cell_info["type"] = "invalid"
-                                if cell_types is not None:
-                                    cell_types[labels == new_label] = INVALID_TYPE
-                        cell_info.loc[new_label - 1] = pd.Series(new_cell_info)
-                old_cell_neighbors = list(cell_info.neighbors[cell_label - 1].copy())
-                for neighbor_label in old_cell_neighbors:
-                    cell_info.at[neighbor_label - 1, "neighbors"].remove(cell_label)
-                cell_info.at[cell_label - 1, "neighbors"] = set()
-                need_to_update_neighbors = list(cell_info.neighbors[cell_label]) + [cell_label, new_label]
-                self.find_neighbors(frame, labels_region=cell_region, only_for_labels=need_to_update_neighbors)
+                                        cell_types[labels == new_label] = INVALID_TYPE
+                            cell_info.loc[new_label - 1] = pd.Series(new_cell_info)
+                    old_cell_neighbors = list(cell_info.neighbors[cell_label - 1].copy())
+                    for neighbor_label in old_cell_neighbors:
+                        cell_info.at[neighbor_label - 1, "neighbors"].remove(cell_label)
+                    cell_info.at[cell_label - 1, "neighbors"] = set()
+                    need_to_update_neighbors = list(cell_info.neighbors[cell_label]) + [cell_label, new_label]
+                    self.find_neighbors(frame, labels_region=cell_region, only_for_labels=need_to_update_neighbors)
+                    return 0
+                except IndexError:
+                    return 0
 
     def update_labels(self, frame):
         labels = self.get_labels(frame)
@@ -1719,6 +1764,12 @@ class Tissue(object):
             self.shape_fitting_points.append(pos)
         return 0
 
+    @staticmethod
+    def calc_standard_error(der, cov_matrix):
+        der_row_vector = der.reshape((1,der.size))
+        der_column_vector = der.reshape((der.size, 1))
+        return np.sqrt(der_row_vector.dot(cov_matrix.dot(der_column_vector)))[0,0]
+
     def end_shape_fitting(self, frame, shape, ax, name):
         X = np.array([pos[0] for pos in self.shape_fitting_points])
         Y = np.array([pos[1] for pos in self.shape_fitting_points])
@@ -1732,6 +1783,8 @@ class Tissue(object):
             res = self.fit_a_circle_arc(X, Y, ax, norm_factor)
         elif shape == "line":
             res = self.fit_a_line(X, Y, ax, norm_factor)
+        elif shape == "spline":
+            res = self.fit_a_spline(X, Y, ax, norm_factor)
         self.shape_fitting_results[frame - 1][name] = res
         return res
 
@@ -1789,6 +1842,86 @@ class Tissue(object):
                "y cross": (y_cross, y_cross_err), "Chi square": (chi_sqr, 0), "N": (X.size, 0)}
         return res
 
+    def fit_a_spline(self, X, Y, ax, norm_factor, cells_per_knot=10, max_iter=100):
+        horizontal = np.max(X) - np.min(X) > np.max(Y) - np.min(Y)
+
+        # Fitting a line
+        if horizontal:
+            params, cov = np.polyfit(X, Y, 1, rcond=None, cov=True)
+            slope = params[0]
+        else:
+            params, cov = np.polyfit(Y, X, 1, rcond=None, cov=True)
+            slope = 1 / params[0]
+
+        # rotating points about their center of mass to make the spline orientation as horizontal as possible
+        origin_x = np.mean(X)
+        origin_y = np.mean(Y)
+        angle = -np.arctan(slope)
+
+        rot_x = origin_x + np.cos(angle) * (X - origin_x) - np.sin(angle) * (Y - origin_y)
+        rot_y = origin_y + np.sin(angle) * (X - origin_x) + np.cos(angle) * (Y - origin_y)
+
+        arg_sort = np.argsort(rot_x)
+
+        # Sorting by x values since slipne fotting only works for increasing x values
+
+        rot_sorted_x = rot_x[arg_sort]
+        rot_sorted_y = rot_y[arg_sort]
+
+        # fitting a spline
+        knots = X.size//cells_per_knot + 2
+
+        knots_in_spline = -1
+        smoothing_param = X.size
+        was_too_big = False
+        was_too_small = False
+        smoothing_param_factor = 2
+        iter = 0
+        while knots_in_spline != knots and iter < max_iter:
+            spline = UnivariateSpline(rot_sorted_x, rot_sorted_y, s=smoothing_param)
+            knots_in_spline = spline.get_knots().size
+            if knots_in_spline < knots:
+                was_too_small = True
+                if was_too_big:
+                    smoothing_param_factor -= (smoothing_param_factor - 1)/2
+                    was_too_small = False
+                smoothing_param /= smoothing_param_factor
+            elif knots_in_spline > knots:
+                was_too_big = True
+                if was_too_small:
+                    smoothing_param_factor -= (smoothing_param_factor - 1) / 2
+                    was_too_big = False
+                smoothing_param *= smoothing_param_factor
+            iter += 1
+        if iter >= max_iter:
+            print("Warining: max iteration reached. Desired #knots: %d, actual #knots: %d" % (knots, knots_in_spline))
+
+
+        chi_sqr = spline.get_residual()/(X.size*norm_factor)
+
+
+        # plot the image
+        ax.imshow(self.labels == 0)
+
+        # Plot the  data
+        ax.scatter(X, Y, label='Data Points')
+
+        # Plot the least squares line
+
+        x_coord_rot = np.linspace(np.min(rot_x), np.max(rot_x), 300)
+        y_coord_rot = spline(x_coord_rot)
+        x_coord = origin_x + np.cos(angle) * (x_coord_rot - origin_x) + np.sin(angle) * (y_coord_rot - origin_y)
+        y_coord = origin_y - np.sin(angle) * (x_coord_rot - origin_x) + np.cos(angle) * (y_coord_rot - origin_y)
+
+        ax.plot(x_coord, y_coord, 'r', linewidth=2, label="Fit")
+        ax.legend()
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        res = {"Chi square": (chi_sqr, 0), "N": (X.size, 0), "knots":(knots_in_spline, 0)}
+
+        return res
+
+
     def fit_a_circle_arc(self, X, Y, ax, norm_factor):
         # rescaling coordinates to avoid overflow
         rescale_factor = np.abs(max(np.max(X), np.max(Y)))
@@ -1799,7 +1932,7 @@ class Tissue(object):
         A = np.column_stack([rescaled_X ** 2 + rescaled_Y ** 2, rescaled_X, rescaled_Y])
         b = np.ones_like(X)
         params = np.linalg.lstsq(A, b, rcond=None)[0].squeeze()
-        params_err = np.sqrt(np.diagonal(np.linalg.inv(A.T.dot(A))))
+        params_cov = np.linalg.inv(A.T.dot(A))
         fitting_points_max_distance_sqr = (np.max(rescaled_X) - np.min(rescaled_X)) ** 2 + \
                                           (np.max(rescaled_Y) - np.min(rescaled_Y)) ** 2
         linear_fit = params[0] * fitting_points_max_distance_sqr < 0.01
@@ -1819,8 +1952,8 @@ class Tissue(object):
                                                         0.5*params[1]/params[0]**2, 0.5*params[2]/params[0]**2])
         slope_der = np.array([0, -1/params[2], params[1]/(params[2]**2)])
 
-        curvature_err = np.sqrt(np.sum((curvature_der * params_err) ** 2))
-        slope_err = np.sqrt(np.sum((slope_der * params_err) ** 2))
+        curvature_err = self.calc_standard_error(curvature_der, params_cov)
+        slope_err = self.calc_standard_error(slope_der, params_cov)
 
         # Rescaling results
         curvature /= rescale_factor
@@ -1884,7 +2017,7 @@ class Tissue(object):
         params, chi_sqr, _, _ = np.linalg.lstsq(A, b, rcond=None)
         params = params.squeeze()
         chi_sqr = chi_sqr[0]
-        params_err = np.sqrt(np.diagonal(np.linalg.inv(A.T.dot(A))))
+        params_cov = np.linalg.inv(A.T.dot(A))
 
         # Obtaining canonical parameters
         a = params[0]*(params[4]**2) + params[2]*(params[3]**2) - params[1]*params[3]*params[4] - params[1]**2 + \
@@ -1907,23 +2040,23 @@ class Tissue(object):
         ader = np.array([params[4]**2 + 4*params[2], -params[3]*params[4] - 2*params[1], params[3]**2 + 4*params[0],
                          2*params[2]*params[3] - params[1]*params[4], 2*params[0]*params[4] - params[1]*params[3]])
         bplusder = np.array([1 + (params[0] - params[2])/q, params[1]/q, 1 - (params[0] - params[2])/q, 0, 0])
-        bminusder = np.array([1 - (params[0] - params[2]) / q, params[1] / q, 1 + (params[0] - params[2]) / q, 0, 0])
+        bminusder = np.array([1 - (params[0] - params[2]) / q, -params[1] / q, 1 + (params[0] - params[2]) / q, 0, 0])
         cder = np.array([-4*params[2], 2*params[1], -4*params[0], 0, 0])
         phider = np.array([(-1 - (params[0] - params[2])/q)/params[1], -phi/params[1]-1/q,
                            (1 + (params[0] - params[2])/q)/params[1], 0, 0])
-        semi_minor_der = sqrt_2abminus/(c**2)*cder + (bminus*ader + a*bminusder)/(sqrt_2abminus*c)
-        semi_major_der = sqrt_2abplus/(c**2)*cder + (bplus*ader + a*bplusder)/(sqrt_2abplus*c)
+        semi_minor_der = (sqrt_2abminus/(c**2))*cder - 2*(bminus*ader + a*bminusder)/(sqrt_2abminus*c)
+        semi_major_der = (sqrt_2abplus/(c**2))*cder - 2*(bplus*ader + a*bplusder)/(sqrt_2abplus*c)
         center_x_der = np.array([0, -params[4], 2*params[3], 2*params[2], -params[1]])/c - (center_x/c)*cder
         center_y_der = np.array([2*params[4], -params[3], 0,  - params[1], 2*params[0]])/c - (center_y/c)*cder
-        rotating_angle_der = 1/(1 + phi**2)*phider
-        eccentricity_der = 2*(semi_major_der/semi_minor - semi_minor_der*semi_major/semi_minor**2)/3
+        rotating_angle_der = (1/(1 + phi**2))*phider
+        eccentricity_der = 2*(semi_major_der/semi_minor - (semi_minor_der*semi_major)/semi_minor**2)/3
 
-        semi_major_err = np.sqrt(np.sum((semi_major_der * params_err) ** 2))
-        semi_minor_err = np.sqrt(np.sum((semi_minor_der * params_err) ** 2))
-        center_x_err = np.sqrt(np.sum((center_x_der * params_err) ** 2))
-        center_y_err = np.sqrt(np.sum((center_y_der * params_err) ** 2))
-        rotating_angle_err = np.sqrt(np.sum((rotating_angle_der * params_err) ** 2))
-        eccentricity_err = np.sqrt(np.sum((eccentricity_der * params_err) ** 2))
+        semi_major_err = self.calc_standard_error(semi_major_der, params_cov)
+        semi_minor_err = self.calc_standard_error(semi_minor_der, params_cov)
+        center_x_err = self.calc_standard_error(center_x_der, params_cov)
+        center_y_err = self.calc_standard_error(center_y_der, params_cov)
+        rotating_angle_err = self.calc_standard_error(rotating_angle_der, params_cov)
+        eccentricity_err = self.calc_standard_error(eccentricity_der, params_cov)
 
         #rescale back
         center_x = center_x * rescale_factor + np.mean(X)
