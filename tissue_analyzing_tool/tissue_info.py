@@ -22,7 +22,7 @@ from skimage.measure import regionprops_table, regionprops
 from skimage.measure import label as label_image_regions
 from skimage.registration import phase_cross_correlation
 import zipfile
-from basic_image_manipulations import read_tiff
+from basic_image_manipulations import read_tiff, blur_image
 from time import sleep
 import json
 
@@ -35,6 +35,7 @@ CELL_INFO_SPECS = {"area": 0,
                    "label": 0,
                    "cx": 0,
                    "cy": 0,
+                   "mean_intensity": 0,
                    "neighbors": set(),
                    "n_neighbors": 0,
                    "valid": 0,
@@ -122,6 +123,11 @@ def unpack_archive_with_progress(source, target):
         for index, file in enumerate(zip_ref.namelist()):
             zip_ref.extract(file, target)
             yield 100*index/total
+
+def find_local_maxima(arr, window_size=3):
+    blurred = blur_image(arr, 3)
+    maxima = maximum_filter(blurred, size=window_size)
+    return np.abs(blurred - maxima) < 1e-6
 
 
 class Tissue(object):
@@ -469,8 +475,10 @@ class Tissue(object):
         HC_id_previous_frame = valid_cells_last_frame.query("type == \"HC\"").label
         labels_previous_frame = np.copy(labels)
         edge_cells_id_previous_frame = cells_info.label[self.detect_edge_cells(labels)]
+        skipped_frames = 0
         for frame in range(initial_frame + 1, final_frame + 1):
             if not self.valid_frames[frame - 1]:
+                skipped_frames += 1
                 continue
             adjacent_valid_frames = self.find_valid_frames(frame - 5, frame + 5)
             start_frame = np.min(adjacent_valid_frames)
@@ -480,119 +488,120 @@ class Tissue(object):
             valid_cells_current_frame = cells_info.query("valid == 1 and empty_cell == 0")
             id_current_frame = valid_cells_current_frame.label
             edge_cells_id_current_frame = cells_info.label[self.detect_edge_cells(labels)]
-            HC_id_current_frame = valid_cells_last_frame.query("type == \"HC\"").label
-
-            # Looking for delaminations
-            existed_but_now_not = np.setdiff1d(id_previous_frame.values, id_current_frame.values)
-            for id in existed_but_now_not:
-                if id in edge_cells_id_previous_frame.values:
-                    continue
-                delamination_detected = True
-                neighbors = valid_cells_last_frame.query("label == %d" % id).neighbors
-                if neighbors.shape[0] < 1:
-                    continue
-                if neighbors.shape[0] > 1:
-                    print("Warning: more than one cell with the same id. frame: %d, cell id: %d" % (frame, id))
-                neighbors = neighbors.values[0]
-                for neighbor in list(neighbors):
-                    if neighbor in id_previous_frame:
-                        neighbor_id = id_previous_frame[neighbor]
-                        if neighbor_id in existed_but_now_not or neighbor_id in edge_cells_id_previous_frame.values:
+            HC_id_current_frame = valid_cells_current_frame.query("type == \"HC\"").label
+            if skipped_frames < 3:
+                # Looking for delaminations
+                existed_but_now_not = np.setdiff1d(id_previous_frame.values, id_current_frame.values)
+                for id in existed_but_now_not:
+                    if id in edge_cells_id_previous_frame.values:
+                        continue
+                    delamination_detected = True
+                    neighbors = valid_cells_last_frame.query("label == %d" % id).neighbors
+                    if neighbors.shape[0] < 1:
+                        continue
+                    if neighbors.shape[0] > 1:
+                        print("Warning: more than one cell with the same id. frame: %d, cell id: %d" % (frame, id))
+                    neighbors = neighbors.values[0]
+                    for neighbor in list(neighbors):
+                        if neighbor in id_previous_frame:
+                            neighbor_id = id_previous_frame[neighbor]
+                            if neighbor_id in existed_but_now_not or neighbor_id in edge_cells_id_previous_frame.values:
+                                delamination_detected = False
+                                break
+                        else:
                             delamination_detected = False
                             break
-                    else:
-                        delamination_detected = False
-                        break
-                if delamination_detected:
-                    self.add_event("delamination", start_frame, frame, start_cell_id=id, source='automatic')
+                    if delamination_detected:
+                        self.add_event("delamination", start_frame, frame, start_cell_id=id, source='automatic')
 
-            exist_in_both_frames = np.intersect1d(id_current_frame.values, id_previous_frame.values)
-            # Looking for differentiations
-            differentiating_cells = np.intersect1d(np.setdiff1d(HC_id_current_frame.values, HC_id_previous_frame.values),
-                                                   exist_in_both_frames)
+                exist_in_both_frames = np.intersect1d(id_current_frame.values, id_previous_frame.values)
+                # Looking for differentiations
+                differentiating_cells = np.intersect1d(np.setdiff1d(HC_id_current_frame.values, HC_id_previous_frame.values),
+                                                       exist_in_both_frames)
 
-            for id in differentiating_cells:
-                differentiation_detected = True
-                neighbors = valid_cells_last_frame.query("label == %d" % id).neighbors
-                if neighbors.shape[0] < 1:
-                    continue
-                if neighbors.shape[0] > 1:
-                    print("Warning: more than one cell with the same id. frame: %d, cell id: %d" % (frame, id))
-                neighbors = neighbors.values[0]
-                for neighbor in list(neighbors):
-                    if neighbor in id_previous_frame:
-                        neighbor_id = id_previous_frame[neighbor]
-                        if neighbor_id in existed_but_now_not or neighbor_id in edge_cells_id_previous_frame.values:
+                for id in differentiating_cells:
+                    differentiation_detected = True
+                    neighbors = valid_cells_last_frame.query("label == %d" % id).neighbors
+                    if neighbors.shape[0] < 1:
+                        continue
+                    if neighbors.shape[0] > 1:
+                        print("Warning: more than one cell with the same id. frame: %d, cell id: %d" % (frame, id))
+                    neighbors = neighbors.values[0]
+                    for neighbor in list(neighbors):
+                        if neighbor in id_previous_frame:
+                            neighbor_id = id_previous_frame[neighbor]
+                            if neighbor_id in existed_but_now_not or neighbor_id in edge_cells_id_previous_frame.values:
+                                differentiation_detected = False
+                                break
+                        else:
                             differentiation_detected = False
                             break
-                    else:
-                        differentiation_detected = False
-                        break
-                if differentiation_detected:
-                    self.add_event("differentiation", start_frame, end_frame, start_cell_id=id, source='automatic')
+                    if differentiation_detected:
+                        self.add_event("differentiation", start_frame, end_frame, start_cell_id=id, source='automatic')
 
-            # Looking for divisions
-            exist_but_not_before = np.setdiff1d(id_current_frame.values, id_previous_frame.values)
-            for id in exist_but_not_before:
-                if id in edge_cells_id_current_frame.values:
-                    continue
-                division_detected = False
-                dividing_cell_id = None
-                dividing_cell_position = None
-                cell_centroid = self.get_cell_centroid_by_id(frame, id)
-                centroid_x = int(np.round(cell_centroid[0]))
-                centroid_y = int(np.round(cell_centroid[1]))
-                if self.drifts is not None:
-                    drift = self.drifts[frame - 1,:]
-                    if drift[0] != np.nan:
-                        centroid_x += int(drift[1])
-                        centroid_y += int(drift[0])
-                if centroid_x < 0 or centroid_x >= labels_previous_frame.shape[1] or\
-                    centroid_y < 0 or centroid_y >= labels_previous_frame.shape[0]:
-                    continue
-                label_previous_frame = labels_previous_frame[centroid_y, centroid_x]
-                neighbors = valid_cells_current_frame.query("label == %d" % id).neighbors
-                if neighbors.shape[0] < 1:
-                    continue
-                if neighbors.shape[0] > 1:
-                    print("Warning: more than one cell with the same id. frame: %d, cell id: %d" % (frame, id))
-                neighbors = neighbors.values[0]
-                for neighbor in list(neighbors):
-                    if neighbor in id_current_frame:
-                        neighbor_id = id_current_frame[neighbor]
-                        if neighbor_id in exist_in_both_frames and neighbor_id not in edge_cells_id_current_frame.values:
-                            neighbor_centroid = self.get_cell_centroid_by_id(frame, neighbor_id)
-                            neighbor_centroid_x = int(np.round(neighbor_centroid[0]))
-                            neighbor_centroid_y = int(np.round(neighbor_centroid[1]))
-                            if self.drifts is not None:
-                                drift = self.drifts[frame - 1, :]
-                                if drift[0] != np.nan:
-                                    neighbor_centroid_x += int(drift[1])
-                                    neighbor_centroid_y += int(drift[0])
-                            if neighbor_centroid_x < 0 or neighbor_centroid_x >= labels_previous_frame.shape[1] or \
-                                    neighbor_centroid_y < 0 or neighbor_centroid_y >= labels_previous_frame.shape[0]:
-                                continue
-                            elif labels_previous_frame[neighbor_centroid_y, neighbor_centroid_x] == label_previous_frame:
-                                division_end_frame = end_frame+1
-                                daughter_end_pos = None
-                                while daughter_end_pos is None:
-                                    division_end_frame -= 1
-                                    if self.valid_frames[division_end_frame - 1] == 1:
-                                        daughter_end_pos = self.get_cell_centroid_by_id(division_end_frame, id)
-                                division_detected = True
-                                dividing_cell_id = neighbor_id
-                                dividing_cell_position = daughter_end_pos
-                    else:
-                        division_detected = False
-                        break
-                if division_detected:
-                    self.add_event("division", start_frame, division_end_frame,
-                                   start_cell_id=dividing_cell_id, daughter_cell_id=id,
-                                   second_end_pos=dividing_cell_position, source='automatic')
+                # Looking for divisions
+                exist_but_not_before = np.setdiff1d(id_current_frame.values, id_previous_frame.values)
+                for id in exist_but_not_before:
+                    if id in edge_cells_id_current_frame.values:
+                        continue
+                    division_detected = False
+                    dividing_cell_id = None
+                    dividing_cell_position = None
+                    cell_centroid = self.get_cell_centroid_by_id(frame, id)
+                    centroid_x = int(np.round(cell_centroid[0]))
+                    centroid_y = int(np.round(cell_centroid[1]))
+                    if self.drifts is not None:
+                        drift = self.drifts[frame - 1,:]
+                        if drift[0] != np.nan:
+                            centroid_x += int(drift[1])
+                            centroid_y += int(drift[0])
+                    if centroid_x < 0 or centroid_x >= labels_previous_frame.shape[1] or\
+                        centroid_y < 0 or centroid_y >= labels_previous_frame.shape[0]:
+                        continue
+                    label_previous_frame = labels_previous_frame[centroid_y, centroid_x]
+                    neighbors = valid_cells_current_frame.query("label == %d" % id).neighbors
+                    if neighbors.shape[0] < 1:
+                        continue
+                    if neighbors.shape[0] > 1:
+                        print("Warning: more than one cell with the same id. frame: %d, cell id: %d" % (frame, id))
+                    neighbors = neighbors.values[0]
+                    for neighbor in list(neighbors):
+                        if neighbor in id_current_frame:
+                            neighbor_id = id_current_frame[neighbor]
+                            if neighbor_id in exist_in_both_frames and neighbor_id not in edge_cells_id_current_frame.values:
+                                neighbor_centroid = self.get_cell_centroid_by_id(frame, neighbor_id)
+                                neighbor_centroid_x = int(np.round(neighbor_centroid[0]))
+                                neighbor_centroid_y = int(np.round(neighbor_centroid[1]))
+                                if self.drifts is not None:
+                                    drift = self.drifts[frame - 1, :]
+                                    if drift[0] != np.nan:
+                                        neighbor_centroid_x += int(drift[1])
+                                        neighbor_centroid_y += int(drift[0])
+                                if neighbor_centroid_x < 0 or neighbor_centroid_x >= labels_previous_frame.shape[1] or \
+                                        neighbor_centroid_y < 0 or neighbor_centroid_y >= labels_previous_frame.shape[0]:
+                                    continue
+                                elif labels_previous_frame[neighbor_centroid_y, neighbor_centroid_x] == label_previous_frame:
+                                    division_end_frame = end_frame+1
+                                    daughter_end_pos = None
+                                    while daughter_end_pos is None:
+                                        division_end_frame -= 1
+                                        if self.valid_frames[division_end_frame - 1] == 1:
+                                            daughter_end_pos = self.get_cell_centroid_by_id(division_end_frame, id)
+                                    division_detected = True
+                                    dividing_cell_id = neighbor_id
+                                    dividing_cell_position = daughter_end_pos
+                        else:
+                            division_detected = False
+                            break
+                    if division_detected:
+                        self.add_event("division", start_frame, division_end_frame,
+                                       start_cell_id=dividing_cell_id, daughter_cell_id=id,
+                                       second_end_pos=dividing_cell_position, source='automatic')
             valid_cells_last_frame = valid_cells_current_frame
             id_previous_frame = id_current_frame
             HC_id_previous_frame = HC_id_current_frame
             labels_previous_frame = np.copy(labels)
+            skipped_frames = 0
             yield frame
         return 0
 
@@ -617,7 +626,8 @@ class Tissue(object):
             def percentile_intensity(regionmask, intensity):
                 return np.percentile(intensity[regionmask], 100-percentage_above_HC_threshold)
             properties = regionprops_table(labels, intensity_image=hc_marker_image,
-                                           properties=('label', 'area', 'perimeter', 'centroid', 'bbox'),
+                                           properties=('label', 'area', 'perimeter', 'centroid', 'bbox',
+                                                       'intensity_mean'),
                                            extra_properties=(percentile_intensity,))
         else:
             properties = regionprops_table(labels, properties=['label', 'area', 'perimeter', 'centroid', 'bbox'])
@@ -627,6 +637,7 @@ class Tissue(object):
         cells_info.loc[cell_indices, "perimeter"] = properties['perimeter']
         cells_info.loc[cell_indices, "cx"] = properties['centroid-1']
         cells_info.loc[cell_indices, "cy"] = properties['centroid-0']
+        cells_info.loc[cell_indices, "mean_intensity"] = properties['intensity_mean']
         cells_info.loc[cell_indices, "bounding_box_min_row"] = properties['bbox-0']
         cells_info.loc[cell_indices, "bounding_box_min_col"] = properties['bbox-1']
         cells_info.loc[cell_indices, "bounding_box_max_row"] = properties['bbox-2']
@@ -1063,9 +1074,11 @@ class Tissue(object):
         max_filtered_region = max_filtered_labels[region_first_row:region_last_row, region_first_col:region_last_col]
         min_filtered_region = min_filtered_labels[region_first_row:region_last_row, region_first_col:region_last_col]
         neighbor_labels = np.array(list(cell_info.neighbors.copy()))
-        if cell_type != 'all':
+        if cell_type == 'all':
+            neighbors_from_the_right_type = (cells_info.type[np.array(neighbor_labels) - 1] != "invalid").to_numpy()
+        else:
             neighbors_from_the_right_type = (cells_info.type[np.array(neighbor_labels) - 1] == cell_type).to_numpy()
-            neighbor_labels = neighbor_labels[neighbors_from_the_right_type]
+        neighbor_labels = neighbor_labels[neighbors_from_the_right_type]
         contact_length = []
         for neighbor_label in neighbor_labels:
             max_label = max(cell_label, neighbor_label)
@@ -1199,20 +1212,21 @@ class Tissue(object):
                     self.fix_cell_label(end_frame, end_pos, cell_id)
         return 0
 
-
     def calc_cell_types(self, hc_marker_image, frame_number, properties=None, hc_threshold=0.1,
                         percentage_above_threshold=90):
         cells_info = self.get_cells_info(frame_number)
         labels = self.get_labels(frame_number)
         self.get_cell_types(frame_number)
         max_brightness = np.percentile(hc_marker_image, 99)
+        local_maxima = find_local_maxima(hc_marker_image, window_size=3)
         cell_types = np.zeros(labels.shape)
         if properties is None:
             for cell_index in range(len(cells_info)):
                 if cells_info.valid[cell_index] == 1:
                     cell_pixels = hc_marker_image[labels == cell_index]
                     percentile_cell_brightness = np.percentile(cell_pixels, 100-percentage_above_threshold)
-                    if percentile_cell_brightness > hc_threshold*max_brightness:
+                    includes_local_maximum = local_maxima[labels == cell_index].any()
+                    if percentile_cell_brightness > hc_threshold*max_brightness and includes_local_maximum:
                         self.cells_info.at[cell_index, "type"] = "HC"
                         cell_types[labels == cell_index] = HC_TYPE
                     else:
@@ -1222,8 +1236,12 @@ class Tissue(object):
             cell_indices = properties['label'] - 1
             threshold = hc_threshold * max_brightness
             atoh_intensities = properties["percentile_intensity"]
-            HC_indices = cell_indices[atoh_intensities > threshold]
-            SC_indices = cell_indices[atoh_intensities <= threshold]
+            indices_with_local_maximum = np.unique(labels[local_maxima]) - 1
+            indices_with_local_maximum = indices_with_local_maximum[indices_with_local_maximum > 0]
+            HC_indices = np.intersect1d(cell_indices[atoh_intensities > threshold], indices_with_local_maximum)
+            SC_indices = np.union1d(cell_indices[atoh_intensities <= threshold],
+                                    np.setdiff1d(cell_indices[atoh_intensities > threshold],
+                                                 indices_with_local_maximum))
             self.cells_info.loc[HC_indices, "type"] = "HC"
             self.cells_info.loc[SC_indices, "type"] = "SC"
             cell_types[np.isin(labels, HC_indices+1)] = HC_TYPE
@@ -1500,6 +1518,9 @@ class Tissue(object):
                                                             (area1 + area2)
                         cell_info.at[new_label - 1, "cy"] = (cell1_info.cy*area1 + cell2_info.cy*area2)/\
                                                             (area1 + area2)
+                        cell_info.at[new_label - 1, "mean_intensity"] = (cell1_info.mean_intensity * area1 +
+                                                                         cell2_info.mean_intensity * area2) / \
+                                                                        (area1 + area2)
                         cell_info.at[new_label - 1, "bounding_box_min_row"] = min(cell1_info.bounding_box_min_row,
                                                                                   cell2_info.bounding_box_min_row)
                         cell_info.at[new_label - 1, "bounding_box_min_col"] = min(cell1_info.bounding_box_min_col,
@@ -1508,6 +1529,7 @@ class Tissue(object):
                                                                                   cell2_info.bounding_box_max_row)
                         cell_info.at[new_label - 1, "bounding_box_max_col"] = max(cell1_info.bounding_box_max_col,
                                                                                   cell2_info.bounding_box_max_col)
+
                         mean_area = np.mean(cell_info.area.to_numpy())
                         max_area = self.max_cell_area * mean_area
                         min_area = self.min_cell_area * mean_area
@@ -1523,14 +1545,17 @@ class Tissue(object):
                                     cell_info.at[new_label - 1, "type"] = "HC"
                                     if cell_types is not None:
                                         cell_types[labels == new_label] = HC_TYPE
+                                        cell_types[labels == -1] = HC_TYPE
                                 else:
                                     cell_info.at[new_label - 1, "type"] = "SC"
                                     if cell_types is not None:
                                         cell_types[labels == new_label] = SC_TYPE
+                                        cell_types[labels == -1] = SC_TYPE
                             else:
                                 cell_info.at[new_label - 1, "type"] = "invalid"
                                 if cell_types is not None:
                                     cell_types[labels == new_label] = INVALID_TYPE
+                                    cell_types[labels == -1] = INVALID_TYPE
                         delete_label = max(cell1_label, cell2_label)
                         new_cell_neighbors = cell_info.neighbors[new_label - 1].union(cell_info.neighbors[delete_label - 1])
                         for neighbor_label in list(new_cell_neighbors.copy()):
@@ -1600,7 +1625,8 @@ class Tissue(object):
                     if use_existing_types and cell_types is not None:
                         hc_marker_image = (cell_types == HC_TYPE).astype(float)
                     if hc_marker_image is None:
-                        properties = regionprops(cell_region)
+                        properties = regionprops_table(cell_region, properties=("label", "area", "perimeter",
+                                                                                "centroid", "bbox"))
                     else:
                         hc_marker_region = hc_marker_image[region_first_row:region_last_row,
                                                            region_first_col:region_last_col]
@@ -1608,7 +1634,8 @@ class Tissue(object):
                         def percentile_intensity(regionmask, intensity):
                             return np.percentile(intensity[regionmask], 100-percentage_above_threshold)
                         properties = regionprops_table(cell_region, intensity_image=hc_marker_region,
-                                                       properties=("label", "area", "perimeter", "centroid", "bbox"),
+                                                       properties=("label", "area", "perimeter", "centroid", "bbox",
+                                                                   "intensity_mean"),
                                                        extra_properties=(percentile_intensity,))
                         max_intensity = np.percentile(hc_marker_image[hc_marker_image > 0], 99)
                     mean_area = np.mean(cell_info.area.to_numpy())
@@ -1627,6 +1654,7 @@ class Tissue(object):
                             cell_valid = min_area < properties["area"][region_index] < max_area
                             cell_info.at[cell_label - 1, "valid"] = int(cell_valid)
                             if hc_marker_image is not None:
+                                cell_info.at[cell_label - 1, "mean_intensity"] = properties["intensity_mean"][region_index]
                                 if cell_valid:
                                     percentage_intensity = properties["percentile_intensity"][region_index]
                                     if percentage_intensity > hc_threshold * max_intensity:
@@ -1657,6 +1685,7 @@ class Tissue(object):
                                              "neighbors": set(),
                                              "n_neighbors": 0}
                             if hc_marker_image is not None:
+                                cell_info.at[cell_label - 1, "mean_intensity"] = properties["intensity_mean"][region_index]
                                 if new_cell_valid:
                                     percentage_intensity = properties["percentile_intensity"][region_index]
                                     if percentage_intensity > hc_threshold * max_intensity:
@@ -1737,7 +1766,7 @@ class Tissue(object):
         if distance_limit > 0:
             return None, None
         else:
-            edges = [0, labels.shape[1], 0, labels.shape[2]]
+            edges = [0, labels.shape[0], 0, labels.shape[1]]
             if nearest_edge < 2:
                 return edges[nearest_edge], y
             else:
