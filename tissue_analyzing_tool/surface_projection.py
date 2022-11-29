@@ -29,7 +29,7 @@ def time_point_surface_projection(time_point, axes, reference_channel, min_z=0, 
     if max_z > 0:
         image = image[:,min_z:max_z,:,:]
     projection_channel = np.copy(image[reference_channel])
-    percentile95 = np.percentile(projection_channel, 95)
+    percentile95 = np.percentile(projection_channel[projection_channel > 0], 95)
     projection_channel[projection_channel > percentile95] = percentile95
     projection_channel = blur_image(projection_channel, (0.5, 1, 1))
     z_size, y_size, x_size = image.shape[-3:]
@@ -164,7 +164,7 @@ def find_pixel_plane(score, chozen_z, pixel_row, pixel_col, max_row, max_col, ma
 
 
 def movie_surface_projection(files, reference_channel, position_final_movie, initial_positions_number, output_dir,
-                             method, bin_size, build_manifold, only_position):
+                             method, bin_size, build_manifold, only_position, zmin, zmax, airyscan):
     """
     @param files: list of movie czi files in order
     @param reference_channel: Index of channel that will be used for projection
@@ -202,7 +202,8 @@ def movie_surface_projection(files, reference_channel, position_final_movie, ini
                                              apply_function=time_point_surface_projection,
                                              output=[current_projection, current_zmap], axes='TCZYX',
                                              reference_channel=reference_channel, z_map=True, method=method,
-                                             bin_size=bin_size, atoh_shift=0, build_manifold=build_manifold)
+                                             bin_size=bin_size, atoh_shift=0, build_manifold=build_manifold, min_z=zmin,
+                                             max_z=zmax, airyscan=airyscan)
             for time_point_index, time_point in enumerate(projector):
                 print("Projecting timepoint %d" % (time_point_index + 1))
             current_projection = current_projection.reshape((dims.T, dims.C, dims.Y, dims.X))
@@ -267,7 +268,8 @@ def save_stage_positions(files, position_final_movie, initial_positions_number, 
 
 
 def large_image_projection(input_dir, output_dir, input_file_name, position=0, reference_channel=0, chunk_size=0,
-                           bin_size=1, channels_shift=0, min_z=0, max_z=0, method="", build_manifold=False):
+                           bin_size=1, channels_shift=0, min_z=0, max_z=0, method="", build_manifold=False,
+                           airyscan=False):
     path = os.path.join(input_dir, input_file_name)
     if not os.path.exists(path):
         return 0
@@ -278,7 +280,8 @@ def large_image_projection(input_dir, output_dir, input_file_name, position=0, r
                                      apply_function=time_point_surface_projection,
                                      output=[projection, zmap], axes='TCZYX', min_z=min_z, max_z=max_z,
                                      reference_channel=reference_channel, series=position, z_map=True, method=method,
-                                     bin_size=bin_size, atoh_shift=channels_shift, build_manifold=build_manifold)
+                                     bin_size=bin_size, atoh_shift=channels_shift, build_manifold=build_manifold,
+                                     airyscan=airyscan)
     for chunk_num, chunk in enumerate(projector):
         print("Projecting chunk %d" % (chunk_num + 1), flush=True)
     projection = projection.reshape((dims.C, dims.Y, dims.X))
@@ -338,6 +341,15 @@ def getOptions():
     parser.add_option("--only-position", dest="only_position",
                       help="Project only the given position [default: all positions]",
                       type=int, default=0)
+    parser.add_option("--airyscan", dest="airyscan",
+                      help="If true will tread as an airyscan processed image (different intensities) [default:False]",
+                      default=False, action="store_true")
+    parser.add_option("--min-z", dest="zmin",
+                      help="First z surface to consider for projection [default: all surfaces]",
+                      type=int, default=0)
+    parser.add_option("--max-z", dest="zmax",
+                      help="Last z surface to consider for projection [default: all surfaces]",
+                      type=int, default=0)
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -354,12 +366,16 @@ if __name__ == "__main__":
     build_manifold = options.build_manifold
     only_position = options.only_position
     method = options.method
+    zmin = options.zmin
+    zmax=options.zmax
+    airyscan = options.airyscan
     if options.fixed_sample:
         file_name = options.file_name
         chunk_size = options.chunk_size
         large_image_projection(input_dir, output_dir, file_name, position=only_position,
                                reference_channel=reference_channel, chunk_size=chunk_size,
-                               bin_size=bin_size, method=method,build_manifold=build_manifold)
+                               bin_size=bin_size, method=method,build_manifold=build_manifold, min_z=zmin, max_z=zmax,
+                               airyscan=airyscan)
 
     else:
         movie_number = options.movie_number
@@ -370,7 +386,7 @@ if __name__ == "__main__":
             position_final_movie = list(literal_eval(options.position_final_movie))
         files = [os.path.join(input_dir,"m%d.czi" %(i + 1)) for i in range(movie_number)]
         movie_surface_projection(files, reference_channel, position_final_movie, position_number, output_dir,
-                                 method, bin_size, build_manifold, only_position)
+                                 method, bin_size, build_manifold, only_position, zmin, zmax, airyscan)
     exit(0)
 
 
