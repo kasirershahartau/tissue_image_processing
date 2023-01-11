@@ -51,20 +51,20 @@ def read_tiff(path):
     return image, axes, image.shape, metadata
 
 
-def read_whole_image(path, dims_order="TCZXY"):
+def read_whole_image(path):
     img = AICSImage(path)
-    data = img.get_image_data(dims_order)
+    data = img.get_image_data()
     return data, img.dims, img.metadata
 
-def read_virtual_image(path, dims_order="TCZXY"):
+def read_virtual_image(path):
     img = AICSImage(path)
-    data = img.get_image_dask_data(dims_order)
+    data = img.get_image_dask_data()
     return data, img.dims, img.metadata
 
 def read_part_of_image(path, x_range, y_range, z_range, c_range, t_range, dims_order="TCZXY"):
     img = AICSImage(path)
     default_dims_order = "TCZXY"
-    data = img.get_image_dask_data(default_dims_order)
+    data = img.get_image_dask_data()
     data = data[t_range[0]:t_range[1],
                 c_range[0]:c_range[1],
                 z_range[0]:c_range[1],
@@ -88,12 +88,10 @@ def get_image_metadata(path, series=0):
 
 def read_image_in_chunks(path, series=0, dx=0, dy=0, dz=0, dc=0, dt=0, apply_function=None, output=None,
                          **apply_function_params):
-    img = AICSImage(path,  reader=bioformats_reader.BioformatsReader, series=series, dask_tiles=True)
-    default_dims_order = "TCZXY"
-    if series == 0:  # There is an error with reading dask data for multi series image so we can only virtually read
-        data = img.get_image_dask_data(default_dims_order)
-    else:
-        data = img.data
+    img = AICSImage(path,  reader=bioformats_reader.BioformatsReader)
+    img.set_scene(series)
+    data = img.get_image_dask_data()
+
     max_x = img.dims.X
     max_y = img.dims.Y
     max_z = img.dims.Z
@@ -117,15 +115,14 @@ def read_image_in_chunks(path, series=0, dx=0, dy=0, dz=0, dc=0, dt=0, apply_fun
     while t < max_t:
         while c < max_c:
             while z < max_z:
-                while x < max_x:
-                    while y < max_y:
+                while y < max_y:
+                    while x < max_x:
                         chunk = data[t:min(t+dt, max_t),
                                      c:min(c+dc, max_c),
                                      z:min(z+dz, max_z),
-                                     x:min(x+dx, max_x),
-                                     y:min(y+dy, max_y)]
-                        if series == 0:
-                            chunk = chunk.compute()
+                                     y:min(y+dy, max_y),
+                                     x:min(x+dx, max_x)]
+                        chunk = chunk.compute()
                         if apply_function is None:
                                 yield chunk
                         else:
@@ -141,19 +138,19 @@ def read_image_in_chunks(path, series=0, dx=0, dy=0, dz=0, dc=0, dt=0, apply_fun
                                     output[i][min(t, out_t):min(t+dt, max_t, out_t),
                                          min(c, out_c):min(c+dc, max_c, out_c),
                                          min(z, out_z):min(z+dz, max_z, out_z),
-                                         min(x, out_x):min(x+dx, max_x, out_x),
-                                         min(y, out_y):min(y+dy, max_y, out_y)] = result[i].reshape((min(t+dt, max_t, out_t)-min(t, out_t),
+                                         min(y, out_y):min(y+dy, max_y, out_y),
+                                         min(x, out_x):min(x+dx, max_x, out_x)] = result[i].reshape((min(t+dt, max_t, out_t)-min(t, out_t),
                                                                                                   min(c+dc, max_c, out_c)-min(c, out_c),
                                                                                                   min(z+dz, max_z, out_z)-min(z, out_z),
-                                                                                                  min(x+dx, max_x, out_x)-min(x, out_x),
-                                                                                                  min(y+dy, max_y, out_y)-min(y, out_y)))
+                                                                                                  min(y+dy, max_y, out_y)-min(y, out_y),
+                                                                                                  min(x+dx, max_x, out_x)-min(x, out_x)))
                                 if deflate:
                                     result = result[0]
                                 yield result
-                        y += dy
-                    y = 0
-                    x += dx
-                x = 0
+                        x += dx
+                    x = 0
+                    y += dy
+                y = 0
                 z += dz
             z = 0
             c += dc
@@ -481,7 +478,7 @@ def watershed_segmentation(image, imgthresh, stdeviation, blocksize):
 def concatenate_time_points(files):
     imgs = []
     for file in files:
-        img = np.load(file)
+        img = np.load(file).astype("uint16")
         imgs.append(img)
         if img.shape[1:] != imgs[0].shape[1:]:
             imgs[-1] = resize(img, (img.shape[0], imgs[0].shape[1:]))
