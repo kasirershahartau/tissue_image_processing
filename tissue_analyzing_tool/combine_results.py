@@ -1,7 +1,13 @@
+import shutil
+import pathlib
+import tempfile
 import numpy as np
 from matplotlib import pyplot as plt
+from matplotlib.animation import FuncAnimation
 import pandas as pd
-import os
+import os, sys
+import subprocess
+
 
 # Change before running
 folder = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-11-11-E17.5-utricle\\analysis after epyseg\\"
@@ -127,12 +133,12 @@ def fit_circular_ablation_results(folder, initial_radius):
     plt.show()
 
 def combine_single_cell_results(folder, initial_time=-1, final_time=-1, differentiation_time=-1):
-    font_size = 25
+    font_size = 22
     plt.rcParams.update({'font.size': font_size})
     roundness_file = "cell_895_roundness_data"
     atoh_level_file = "cell_895_atoh_level_data"
     y1_label = "Roundness"
-    y2_label = "Atoh1 mean intensity (a.u.)"
+    y2_label = "Mean intensity (a.u.)"
 
     roundness_data = pd.read_pickle(os.path.join(folder, roundness_file))
     atoh_level_data = pd.read_pickle(os.path.join(folder, atoh_level_file))
@@ -153,19 +159,40 @@ def combine_single_cell_results(folder, initial_time=-1, final_time=-1, differen
 
     fig, ax = plt.subplots()
     # make a plot
-    ax.plot(time/60, roundness, "ro", markersize=16)
+    graph1 = ax.plot(time/60, roundness, "ro", markersize=16)[0]
     ax.set_xlabel("Time (hours)", fontsize=font_size)
     ax.set_ylabel(y1_label, color="red", fontsize=font_size)
     ax.tick_params(axis='y', color='red', labelcolor='red')
     ax2 = ax.twinx()
-    ax2.plot(time/60, atoh_level, "b*", markersize=16)
+    graph2 = ax2.plot(time/60, atoh_level, "b*", markersize=16)[0]
     ax2.set_ylabel(y2_label, color="blue", fontsize=font_size)
     ax2.tick_params(axis='y', color='blue', labelcolor='blue')
     if differentiation_time > 0:
         ymin, ymax = ax.get_ylim()
         ax.plot([0, 0],[ymin, ymax], "m--")
         ax.set_ylim((ymin, ymax))
-    plt.show()
+    plt.tight_layout()
+    # make a movie
+    out_path = os.path.join(folder, "diff_plot.gif")
+    plot_animation((time/60, time/60), (roundness, atoh_level), (graph1, graph2), fig, out_path)
+
+
+
+def plot_animation(x, y, graphs, fig, out_path):
+    movies_dir = pathlib.Path(tempfile.mkdtemp())
+    def animate(i):
+        for plot_idx in range(len(graphs)):
+            graphs[plot_idx].set_data(x[plot_idx][:i+1], y[plot_idx][:i+1])
+        fig.savefig(movies_dir / f"movie_{i:04d}.png")
+
+        return fig
+
+    for i in range(len(x[0])):
+        animate(i)
+    proc = subprocess.run(
+        ["C:\Program Files\ImageMagick-7.1.0-Q16-HDRI\convert", (movies_dir / "movie_*.png").as_posix(), out_path]
+    )
+    shutil.rmtree(movies_dir)
 
 if __name__ == "__main__":
     # fit_circular_ablation_results(ellipse_folder, 60)
