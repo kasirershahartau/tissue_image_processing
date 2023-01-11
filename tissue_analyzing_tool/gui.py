@@ -203,7 +203,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.fitting_stage = 0
 
     def closeEvent(self, event):
-        if self.data_lost_warning(self.close):
+        if self.tissue_info is None:
+            event.accept()
+        elif self.data_lost_warning(self.close):
             self.tissue_info.clean_up()
             event.accept()  # let the window close
         else:
@@ -289,6 +291,12 @@ class FormImageProcessing(QtWidgets.QMainWindow):
 
     def open_file(self):
         global img
+        if self.tissue_info is not None:
+            if not self.data_lost_warning(self.open_file):
+                return 0
+            else:
+                self.tissue_info.clean_up()
+                self.tissue_info = None
         fname = QtWidgets.QFileDialog.getOpenFileName(caption='Open File',
                                             directory=self.working_directory, filter="images (*.czi, *.tif)")[0]
         if not fname or os.path.isdir(fname):
@@ -1479,8 +1487,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             if ret == message_box.Cancel:
                 return False
             elif ret == message_box.Save:
-                self.save_data()
                 self.waiting_for_data_save.append(calling_function)
+                self.save_data()
                 return False
         return True
 
