@@ -29,8 +29,10 @@ def time_point_surface_projection(time_point, axes, reference_channel, min_z=0, 
     if max_z > 0:
         image = image[:,min_z:max_z,:,:]
     projection_channel = np.copy(image[reference_channel])
-    percentile95 = np.percentile(projection_channel[projection_channel > 0], 95)
-    projection_channel[projection_channel > percentile95] = percentile95
+    non_zero_projection_channel = projection_channel[projection_channel > 0]
+    if non_zero_projection_channel.size > 0:
+        percentile95 = np.percentile(non_zero_projection_channel, 95)
+        projection_channel[projection_channel > percentile95] = percentile95
     projection_channel = blur_image(projection_channel, (0.5, 1, 1))
     z_size, y_size, x_size = image.shape[-3:]
     if bin_size > 1:
@@ -60,8 +62,8 @@ def time_point_surface_projection(time_point, axes, reference_channel, min_z=0, 
     if chosen_z.shape != (y_size, x_size):
         chosen_z = np.round(resize(chosen_z.astype('float32'), (y_size, x_size))).astype('int')
         chosen_z_atoh = np.round(resize(chosen_z_atoh.astype('float32'), (y_size, x_size))).astype('int')
-    projection_mask = np.zeros((z_size, y_size*x_size))
-    projection_mask_atoh = np.zeros((z_size, y_size*x_size))
+    projection_mask = np.zeros((z_size, y_size*x_size)).astype('float32')
+    projection_mask_atoh = np.zeros((z_size, y_size*x_size)).astype('float32')
     projection_mask[chosen_z.flatten(), np.arange(x_size*y_size)] = 1
     projection_mask_atoh[chosen_z_atoh.flatten(), np.arange(x_size * y_size)] = 1
     projection_mask = blur_image(projection_mask.reshape((z_size, y_size, x_size)), (1, 2, 2))
@@ -222,7 +224,7 @@ def movie_surface_projection(files, reference_channel, position_final_movie, ini
         movie_projection = concatenate_time_points(projection_files[position])
         save_tiff(os.path.join(output_dir, "position%d.tif" %(position+1)), movie_projection,
                   metadata=new_metadata, axes="TCYX",data_type="uint16")
-        movie_zmap = np.concatenate([np.load(zmap_files[position][i]) for i in range(len(zmap_files[position]))], axis=0)
+        movie_zmap = np.concatenate([np.load(zmap_files[position][i]).astype("uint16") for i in range(len(zmap_files[position]))], axis=0)
         np.save(os.path.join(output_dir, "zmap_position%d.npy" %(position+1)), movie_zmap)
     # Saving stage location (to correct for stage movement between movies)
     save_stage_positions(files, position_final_movie, initial_positions_number, output_dir)
@@ -267,30 +269,40 @@ def save_stage_positions(files, position_final_movie, initial_positions_number, 
             pickle.dump(stage_pos[i], f)
 
 
-def large_image_projection(input_dir, output_dir, input_file_name, position=0, reference_channel=0, chunk_size=0,
+def large_image_projection(input_dir, output_dir, input_file_name, position=1, reference_channel=0, chunk_size=0,
                            bin_size=1, channels_shift=0, min_z=0, max_z=0, method="", build_manifold=False,
                            airyscan=False):
+    if not hasattr(position, "__len__"):
+        position = [position]
+        add_pos = False
+    else:
+        add_pos = True
     path = os.path.join(input_dir, input_file_name)
     if not os.path.exists(path):
         return 0
     dims = get_image_dimensions(path)
-    projection = np.zeros((1, dims.C, 1, dims.Y, dims.X))
-    zmap = np.zeros((1, 1, 1, dims.Y, dims.X))
-    projector = read_image_in_chunks(path, dx=chunk_size, dy=chunk_size,
-                                     apply_function=time_point_surface_projection,
-                                     output=[projection, zmap], axes='TCZYX', min_z=min_z, max_z=max_z,
-                                     reference_channel=reference_channel, series=position, z_map=True, method=method,
-                                     bin_size=bin_size, atoh_shift=channels_shift, build_manifold=build_manifold,
-                                     airyscan=airyscan)
-    for chunk_num, chunk in enumerate(projector):
-        print("Projecting chunk %d" % (chunk_num + 1), flush=True)
-    projection = projection.reshape((dims.C, dims.Y, dims.X))
-    zmap = zmap.reshape((1, dims.Y, dims.X))
-    postfix = '.' + input_file_name.split('.')[-1]
-    projection_file_name = os.path.join(output_dir, input_file_name.replace(postfix, "_projection.tif"))
-    zmap_filename = os.path.join(output_dir, input_file_name.replace(postfix, "_zmap.npy"))
-    save_tiff(projection_file_name, projection, axes="CYX", data_type="uint16")
-    np.save(zmap_filename, zmap)
+    for pos in position:
+        projection = np.zeros((1, dims.C, 1, dims.Y, dims.X))
+        zmap = np.zeros((1, 1, 1, dims.Y, dims.X))
+        projector = read_image_in_chunks(path, dx=chunk_size, dy=chunk_size,
+                                         apply_function=time_point_surface_projection,
+                                         output=[projection, zmap], axes='TCZYX', min_z=min_z, max_z=max_z,
+                                         reference_channel=reference_channel, series=int(pos - 1), z_map=True, method=method,
+                                         bin_size=bin_size, atoh_shift=channels_shift, build_manifold=build_manifold,
+                                         airyscan=airyscan)
+        for chunk_num, chunk in enumerate(projector):
+            print("Projecting position %d chunk %d" % (pos, chunk_num + 1), flush=True)
+        projection = projection.reshape((dims.C, dims.Y, dims.X))
+        zmap = zmap.reshape((1, dims.Y, dims.X))
+        postfix = '.' + input_file_name.split('.')[-1]
+        if add_pos:
+            pos_addition = "_position%d" % pos
+        else:
+            pos_addition = ""
+        projection_file_name = os.path.join(output_dir, input_file_name.replace(postfix, pos_addition + "_projection.tif"))
+        zmap_filename = os.path.join(output_dir, input_file_name.replace(postfix, pos_addition + "_zmap.npy"))
+        save_tiff(projection_file_name, projection, axes="CYX", data_type="uint16")
+        np.save(zmap_filename, zmap)
 
 
 def update_projection_metadata(metadata, frames_number, series=0):
@@ -372,9 +384,10 @@ if __name__ == "__main__":
     if options.fixed_sample:
         file_name = options.file_name
         chunk_size = options.chunk_size
-        large_image_projection(input_dir, output_dir, file_name, position=only_position,
+        position = only_position if only_position > 0 else np.arange(start=1, stop=position_number+1)
+        large_image_projection(input_dir, output_dir, file_name, position=position,
                                reference_channel=reference_channel, chunk_size=chunk_size,
-                               bin_size=bin_size, method=method,build_manifold=build_manifold, min_z=zmin, max_z=zmax,
+                               bin_size=bin_size, method=method ,build_manifold=build_manifold, min_z=zmin, max_z=zmax,
                                airyscan=airyscan)
 
     else:
