@@ -274,13 +274,18 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.mark_event_button.clicked.connect(self.mark_event)
         self.delete_events_button.clicked.connect(self.delete_events)
         self.mark_event_combo_box.clear()
-        self.mark_event_combo_box.addItems(tissue_info.EVENT_TYPES)
+        self.mark_event_combo_box.addItems(tissue_info.Tissue.EVENT_TYPES)
+        self.mark_event_combo_box.addItems(tissue_info.Tissue.ADDITIONAL_EVENT_MARKING_OPTION)
         self.abort_event_marking_button.clicked.connect(self.abort_event_marking)
         self.valid_frame_check_box.stateChanged.connect(self.change_frame_validity)
         self.cell_size_spin_box_min.valueChanged.connect(self.update_min_max_cell_area)
         self.cell_size_spin_box_max.valueChanged.connect(self.update_min_max_cell_area)
         self.fit_a_shape_button.clicked.connect(self.fit_a_shape)
         self.finish_fitting_a_shape_button.clicked.connect(self.finish_fitting_a_shape)
+        self.event_type_combo_box.clear()
+        self.event_type_combo_box.addItems(tissue_info.Tissue.EVENT_TYPES)
+        self.event_type_combo_box.addItems(tissue_info.Tissue.ADDITIONAL_EVENT_STATISTICS_OPTIONS)
+        self.plot_event_statistics_botton.clicked.connect(self.plot_event_statistics)
 
     def open_file(self):
         global img
@@ -319,6 +324,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         min_planar_dimension = min(self.img_dimensions.X, self.img_dimensions.Y)
         self.window_radius_spin_box.setMaximum(min_planar_dimension)
         self.spatial_resolution_spin_box.setMaximum(min_planar_dimension)
+        self.event_statistics_window_radius_x_data_label_spin_box.setMaximum(min_planar_dimension)
+        self.event_statistics_window_radius_y_data_label_spin_box.setMaximum(min_planar_dimension)
         self.setState(image=True)
 
     def display_frame(self):
@@ -328,9 +335,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                 zo_channel = self.zo_spin_box.value()
                 if self.img_in_memory:
                     self.current_frame[1, :, :] = 0.1 * self.zo_level_scroll_bar.value() * self.img[frame_number - 1,
-                                                                                           zo_channel, 0, :, :]
+                                                                                           zo_channel, 0, :, :].T
                 else:
-                    self.current_frame[1, :, :] = 0.1*self.zo_level_scroll_bar.value()*self.img[frame_number - 1, zo_channel, 0, :, :].compute()
+                    self.current_frame[1, :, :] = 0.1*self.zo_level_scroll_bar.value()*self.img[frame_number - 1, zo_channel, 0, :, :].compute().T
             else:
                 self.current_frame[1, :, :] = 0
             self.zo_changed = False
@@ -339,9 +346,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                 atoh_channel = self.atoh_spin_box.value()
                 if self.img_in_memory:
                     self.current_frame[2, :, :] = 0.01 * self.atoh_level_scroll_bar.value() * self.img[frame_number - 1,
-                                                                                              atoh_channel, 0, :, :]
+                                                                                              atoh_channel, 0, :, :].T
                 else:
-                    self.current_frame[2, :, :] = 0.01*self.atoh_level_scroll_bar.value()*self.img[frame_number - 1, atoh_channel, 0, :, :].compute()
+                    self.current_frame[2, :, :] = 0.01*self.atoh_level_scroll_bar.value()*self.img[frame_number - 1, atoh_channel, 0, :, :].compute().T
             else:
                 self.current_frame[2, :, :] = 0
             self.atoh_changed = False
@@ -457,6 +464,18 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.plot_single_frame_data_cell_type_combo_box.addItems(self.tissue_info.CELL_TYPES)
         self.plot_compare_frame_data_cell_type_combo_box.clear()
         self.plot_compare_frame_data_cell_type_combo_box.addItems(self.tissue_info.CELL_TYPES)
+        self.event_statistics_x_data_combo_box.clear()
+        self.event_statistics_x_data_combo_box.addItems(features)
+        self.event_statistics_x_data_combo_box.addItems(self.tissue_info.SPECIAL_FEATURES)
+        self.event_statistics_x_data_combo_box.addItems(self.tissue_info.GLOBAL_FEATURES)
+        self.event_statistics_x_data_combo_box.addItems(self.tissue_info.SPATIAL_FEATURES)
+        self.event_statistics_y_data_combo_box.clear()
+        self.event_statistics_y_data_combo_box.addItems(features)
+        self.event_statistics_y_data_combo_box.addItems(self.tissue_info.SPECIAL_FEATURES)
+        self.event_statistics_y_data_combo_box.addItems(self.tissue_info.GLOBAL_FEATURES)
+        self.event_statistics_y_data_combo_box.addItems(self.tissue_info.SPATIAL_FEATURES)
+        self.event_statistics_y_data_combo_box.addItems(["None"])
+
 
     def update_shape_fitting(self):
         shape_fitting_results = self.tissue_info.get_shape_fitting_results(self.frame_slider.value())
@@ -491,7 +510,12 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                 message_box = QtWidgets.QMessageBox
                 message_box.about(self, '',
                                   'Go to the last frame of the event\nand click on the relevant cell\n(or cells, in case of division)')
+                cell_id = self.tissue_info.get_cell_id_by_position(self.event_start_frame, self.event_start_position)
+                if cell_id > 0:
+                    self.show_cell_tracking_check_box.setChecked(True)
+                    self.cell_tracking_spin_box.setValue(cell_id)
                 self.mark_event_stage = 2
+
         elif self.mark_event_stage == 2:
             self.event_end_position = pos
             self.event_end_frame = self.frame_slider.value()
@@ -550,7 +574,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
 
     def image_clicked(self, click_info):
         pos = click_info.point
-        if pos.x() < 0 or pos.x() >= self.img_dimensions.X or pos.y() < 0 or pos.y() >= self.img_dimensions.Y:
+        if pos.y() < 0 or pos.y() >= self.img_dimensions.X or pos.x() < 0 or pos.x() >= self.img_dimensions.Y:
             return 0
         button = click_info.button
         double_click = click_info.doubleClick
@@ -562,9 +586,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                         if self.fix_segmentation_last_position is not None:
                             self.fix_segmentation_last_position = None
                             if self.img_in_memory:
-                                hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :]
+                                hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].T
                             else:
-                                hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].compute()
+                                hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].compute().T
                             self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()), final=True,
                                                                    hc_marker_image=hc_marker_img,
                                                                    hc_threshold=self.hc_threshold_spin_box.value()/100,
@@ -580,9 +604,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                             self.fix_segmentation_last_position = (pos.x(), pos.y())
                 elif button == QtCore.Qt.MiddleButton:
                     if self.img_in_memory:
-                        hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :]
+                        hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].T
                     else:
-                        hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].compute()
+                        hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].compute().T
                     self.tissue_info.remove_segmentation_line(frame, (pos.x(), pos.y()),
                                                               hc_marker_image=hc_marker_img,
                                                               hc_threshold=self.hc_threshold_spin_box.value()/100,
@@ -603,7 +627,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                 frame = self.frame_slider.value()
                 new_label = self.cell_tracking_spin_box.value()
                 self.tissue_info.fix_cell_label(frame, (pos.x(), pos.y()), new_label)
-                self.track_cells(initial_frame=frame, final_frame=self.number_of_frames)
+                self.tissue_info.fix_cell_id_in_events()
                 self.analysis_changed = True
                 self.correct_tracking(off=True)
                 self.display_frame()
@@ -767,6 +791,13 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.fit_a_shape_label.setEnabled(False)
             self.finish_fitting_a_shape_button.setEnabled(False)
             self.finish_fitting_a_shape_button.hide()
+            self.event_type_combo_box.setEnabled(False)
+            self.event_statistics_x_data_combo_box.setEnabled(False)
+            self.event_statistics_y_data_combo_box.setEnabled(False)
+            self.plot_event_statistics_botton.setEnabled(False)
+            self.event_statistics_window_radius_x_data_label_spin_box.setEnabled(False)
+            self.event_statistics_window_radius_y_data_label_spin_box.setEnabled(False)
+
         if segmentation:
             self.show_segmentation_check_box.setEnabled(True)
             self.save_segmentation_button.setEnabled(True)
@@ -844,6 +875,12 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.show_events_button.setEnabled(True)
             self.choose_marking_target_combo_box.clear()
             self.choose_marking_target_combo_box.addItems(["Points", "Cells"])
+            self.event_type_combo_box.setEnabled(True)
+            self.event_statistics_x_data_combo_box.setEnabled(True)
+            self.event_statistics_y_data_combo_box.setEnabled(True)
+            self.plot_event_statistics_botton.setEnabled(True)
+            self.event_statistics_window_radius_x_data_label_spin_box.setEnabled(True)
+            self.event_statistics_window_radius_y_data_label_spin_box.setEnabled(True)
         else:
             self.show_cell_types_check_box.setEnabled(False)
             self.show_cell_tracking_check_box.setEnabled(False)
@@ -890,6 +927,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             intensity_images = self.img[:, self.atoh_spin_box.value(), 0, :, :]
             if not self.img_in_memory:
                 intensity_images = intensity_images.compute()
+            intensity_images = np.transpose(intensity_images, (0, 2, 1))
         else:
             intensity_images = None
         data = self.tissue_info.plot_single_cell_data(cell_id, feature, plot_window.get_ax(),
@@ -910,6 +948,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             intensity_images = self.img[frames - 1, self.atoh_spin_box.value(), 0, :, :]
             if not self.img_in_memory:
                 intensity_images = intensity_images.compute()
+            intensity_images = np.transpose(intensity_images, (0, 2, 1))
         else:
             intensity_images = None
         data = self.tissue_info.plot_event_related_data(cell_id, frame, feature, frames_around_event,
@@ -926,7 +965,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         cell_type = self.plot_single_frame_data_cell_type_combo_box.currentText()
         frame = self.frame_slider.value()
         if "intensity" in x_feature or "intensity" in y_feature:
-            intensity_image = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :]
+            intensity_image = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].T
             if not self.img_in_memory:
                 intensity_image = intensity_image.compute()
         else:
@@ -988,6 +1027,61 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             message_box.question(self, '', error_message, message_box.Close)
         else:
             plot_window.show(data)
+
+    def plot_event_statistics(self):
+        if self.event_type_combo_box.currentIndex() < 0:
+            return 0
+        else:
+            event_type = self.event_type_combo_box.currentText()
+        if self.event_statistics_x_data_combo_box.currentIndex() < 0:
+            return 0
+        else:
+            x_feature = self.event_statistics_x_data_combo_box.currentText()
+            x_radius = self.event_statistics_window_radius_x_data_label_spin_box.value()
+        if self.event_statistics_y_data_combo_box.currentIndex() < 0:
+            y_feature = None
+            y_radius = None
+        else:
+            y_feature = self.event_statistics_y_data_combo_box.currentText()
+            if y_feature == "None":
+                y_feature = None
+            y_radius = self.event_statistics_window_radius_x_data_label_spin_box.value()
+        plot_window = PlotDataWindow(self, working_dir=self.working_directory)
+        # if "intensity" in x_feature or (y_feature is not None and "intensity" in y_feature):
+        #     intensity_images = self.img[:, self.atoh_spin_box.value(), 0, :, :]
+        #     if not self.img_in_memory:
+        #         intensity_images = intensity_images.compute()
+        # else:
+        #     intensity_images = None
+        intensity_images = self.img[:, self.atoh_spin_box.value(), 0, :, :]
+        if not self.img_in_memory:
+            intensity_images = intensity_images.compute()
+
+        intensity_images = np.transpose(intensity_images, (0, 2, 1))
+        if event_type == "overall reference":
+            data, error_message = self.tissue_info.plot_overall_statistics(x_feature, y_feature, plot_window.get_ax(),
+                                                                           intensity_images=intensity_images)
+        elif event_type == "overall reference HC":
+            data, error_message = self.tissue_info.plot_overall_statistics(x_feature, y_feature, plot_window.get_ax(),
+                                                                           intensity_images=intensity_images,
+                                                                           x_cells_type="HC", y_cells_type="HC")
+        elif event_type == "overall reference SC":
+            data, error_message = self.tissue_info.plot_overall_statistics(x_feature, y_feature, plot_window.get_ax(),
+                                                                           intensity_images=intensity_images,
+                                                                           x_cells_type="SC", y_cells_type="SC")
+        else:
+            data, error_message = self.tissue_info.plot_event_statistics(event_type, x_feature, x_radius, y_feature,
+                                                                         y_radius, plot_window.get_ax(),
+                                                                         intensity_images=intensity_images)
+        if error_message:
+            message_box = QtWidgets.QMessageBox
+            message_box.question(self, '', error_message, message_box.Close)
+        if data is not None:
+            plot_window.show(data)
+
+
+
+
 
     def frame_segmentation_done(self, msg):
         split_msg = msg.split("/")
@@ -1217,11 +1311,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             initial_frame = 1
             final_frame = self.number_of_frames
         self.cancel_tracking_button.show()
-        if initial_frame > 0 and final_frame >= 0:
-            img_for_tracking = self.img[initial_frame-1:final_frame, :, :,:,:]
-        else:
-            img_for_tracking = self.img
-        self.tracking_thread = TrackingThread(self.tissue_info, img_for_tracking, self.img_in_memory,
+        self.tracking_thread = TrackingThread(self.tissue_info, self.img, self.img_in_memory,
                                               initial_frame=initial_frame, final_frame=final_frame)
         self.tracking_thread._signal.connect(self.cells_tracking_done)
         self.track_cells_button.setEnabled(False)
@@ -1269,9 +1359,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         frame = self.frame_slider.value()
         if self.fix_segmentation_last_position is not None:
             if self.img_in_memory:
-                hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :]
+                hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].T
             else:
-                hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].compute()
+                hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].compute().T
             self.tissue_info.add_segmentation_line(frame, self.fix_segmentation_last_position, final=True,
                                                    hc_marker_image=hc_marker_img,
                                                    hc_threshold=self.hc_threshold_spin_box.value()/100,
@@ -1450,9 +1540,9 @@ class SegmentAllThread(QtCore.QThread):
         done_frames = 0
         for frame in self.frame_numbers:
             if self.img_in_memory:
-                zo_img = self.img[frame - 1, self.zo_channel, 0, :, :]
+                zo_img = self.img[frame - 1, self.zo_channel, 0, :, :].T
             else:
-                zo_img = self.img[frame - 1, self.zo_channel, 0, :, :].compute()
+                zo_img = self.img[frame - 1, self.zo_channel, 0, :, :].compute().T
             labels = watershed_segmentation(zo_img, self.threshold, self.std, self.block_size)
             self.out.set_labels(frame, labels, reset_data=True)
             done_frames += 1
@@ -1494,9 +1584,9 @@ class AnalysisThread(QtCore.QThread):
         done_frames = 0
         for frame in self.frame_numbers:
             if self.img_in_memory:
-                atoh_img = self.img[frame - 1, self.atoh_channel, 0, :, :]
+                atoh_img = self.img[frame - 1, self.atoh_channel, 0, :, :].T
             else:
-                atoh_img = self.img[frame - 1, self.atoh_channel, 0, :, :].compute()
+                atoh_img = self.img[frame - 1, self.atoh_channel, 0, :, :].compute().T
             self.tissue_info.calculate_frame_cellinfo(frame, atoh_img, self.hc_threshold, self.use_existing_types,
                                                       self.percentage_above_threshold)
             done_frames += 1
@@ -1635,9 +1725,9 @@ class SaveImagesThread(QtCore.QThread):
             save_path = os.path.join(self.output, "frame_%d_zo.tif"%frame)
             if not os.path.isfile(save_path):
                 if self.img_in_memory:
-                    frame_img = self.img[frame - 1, self.channel, 0, :, :]
+                    frame_img = self.img[frame - 1, self.channel, 0, :, :].T
                 else:
-                    frame_img = self.img[frame - 1, self.channel, 0, :, :].compute()
+                    frame_img = self.img[frame - 1, self.channel, 0, :, :].compute().T
                 save_tiff(save_path, frame_img, axes="YX", data_type="uint16")
             self.frames_done += 1
             self.emit(100*self.frames_done/len(self.frames))

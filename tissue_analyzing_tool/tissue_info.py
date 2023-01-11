@@ -56,6 +56,7 @@ EVENTS_INFO_SPEC = {"type": "TBA",
                     "daughter_pos_y": 0,
                     "cell_id": 0,
                     "daughter_id": 0,
+                    "significant_frame": 0,
                     "source": "manual"}
 
 
@@ -64,7 +65,6 @@ NEIGHBORS_COLOR = (1, 1, 1)
 HC_COLOR = (1, 0, 1)
 SC_COLOR = (1, 1, 0)
 MARKING_COLOR = (0.5, 0.5, 0.5)
-EVENT_TYPES = ["ablation","division", "delamination", "differentiation", "delete event"]
 EVENTS_COLOR = {"ablation": (1,1,0), "division": (0,0,1), "delamination": (1,0,0), "differentiation": (0,1,1)}
 PIXEL_LENGTH = 0.1  # in microns. TODO: get from image metadata
 
@@ -136,13 +136,16 @@ class Tissue(object):
          according to cell area and centroid location.
     """
     SPECIAL_FEATURES = ["shape index", "roundness", "neighbors from the same type", "HC neighbors", "SC neighbors", "contact length",
-                        "HC contact length", "SC contact length", "Mean atoh intensity"]
+                        "HC contact length", "SC contact length", "Mean atoh intensity", "Distance from ablation"]
+    SPATIAL_FEATURES = ["HC density", "SC density", "HC type_fraction", "SC type_fraction"]
     SPECIAL_X_ONLY_FEATURES = ["psi6"]
     SPECIAL_Y_ONLY_FEATURES = ["histogram"]
     GLOBAL_FEATURES = ["density", "type_fraction", "total_area"]
     CELL_TYPES = ["all", "HC", "SC"]
     FITTING_SHAPES = ["ellipse", "circle arc", "line", "spline"]
-
+    EVENT_TYPES = ["ablation", "division", "delamination", "differentiation"]
+    ADDITIONAL_EVENT_MARKING_OPTION = ["delete event"]
+    ADDITIONAL_EVENT_STATISTICS_OPTIONS = ["overall reference", "overall reference HC", "overall reference SC"]
     def __init__(self, number_of_frames, data_path, max_cell_area=10, min_cell_area=0.1):
         self.number_of_frames = number_of_frames
         self.cells_info = None
@@ -185,6 +188,9 @@ class Tissue(object):
         if 0 < frame <= self.number_of_frames:
             self.valid_frames[frame - 1] = int(valid)
         return 0
+
+    def get_number_of_valid_frames(self):
+        return np.sum(self.valid_frames)
 
     def reset_all_data(self):
         self.cells_info = None
@@ -388,6 +394,7 @@ class Tissue(object):
             new_event["daughter_pos_x"] = second_end_pos[0]
             new_event["daughter_pos_y"] = second_end_pos[1]
             new_event["daughter_id"] = second_cell_id
+        new_event["significant_frame"] = int(self.find_event_frame(new_event))
         self.events = pd.concat([self.events, pd.DataFrame(new_event, index=[0])], ignore_index=True)
         return 0
 
@@ -665,7 +672,7 @@ class Tissue(object):
     def plot_single_cell_data(self, cell_id, feature, ax, intensity_images=None):
         frames = np.arange(1, self.number_of_frames + 1)
         t = (frames - 1)*15
-        data = self.get_single_cell_data(cell_id, frames, feature, intensity_images)
+        data, msg = self.get_single_cell_data(cell_id, frames, feature, intensity_images)
         t = t[~np.isnan(data)]
         data = data[~np.isnan(data)]
         ax.plot(t, data, '*')
@@ -674,9 +681,10 @@ class Tissue(object):
         ax.set_title("%s of cell number %d" % (feature, cell_id))
         return pd.DataFrame({"Time": t, feature: data})
 
-    def get_single_cell_data(self, cell_id, frames, feature, intensity_images=None):
+    def get_single_cell_data(self, cell_id, frames, feature, intensity_images=None, window_radius=0):
         current_cell_info_frame = self.cells_info_frame
         data = np.zeros((len(frames),))
+        msg = ""
         for index,frame in enumerate(frames):
             cell = self.get_cell_data_by_label(cell_id, frame)
             if self.is_frame_valid(frame) and cell is not None:
@@ -684,15 +692,19 @@ class Tissue(object):
                     intensity_image = None
                 else:
                     intensity_image = intensity_images[index]
-                frame_data, msg = self.get_frame_data(frame, feature, cell, self.SPECIAL_FEATURES,
-                                                      intensity_img=intensity_image)
+                frame_data, msg = self.get_frame_data(frame, feature, cell, special_features=self.SPECIAL_FEATURES,
+                                                      spatial_features=self.SPATIAL_FEATURES,
+                                                      intensity_img=intensity_image, window_radius=window_radius)
                 if msg:
                     return None, msg
+                if feature == "type":
+                    frame_data[0] = HC_TYPE if frame_data[0] == "HC" else SC_TYPE if frame_data[0] == "SC" else 0
                 data[index] = frame_data[0]
             else:
                 data[index] = np.nan
+                msg += "frame %d is invalid\n" % frame
         self.get_cells_info(current_cell_info_frame)
-        return data
+        return data, msg
 
     def plot_event_related_data(self, cell_id, event_frame, feature, frames_around_event, ax, intensity_images=None):
         event_data = self.events.query("cell_id == %d and start_frame <= %d and end_frame >= %d" %(cell_id, event_frame, event_frame))
@@ -702,7 +714,7 @@ class Tissue(object):
             frames = np.arange(max(event_frame - frames_around_event, 0),
                                min(event_frame + frames_around_event + 1, self.number_of_frames + 1))
             t = (frames - 1) * 15
-            data = self.get_single_cell_data(cell_id, frames, feature, intensity_images)
+            data, msg = self.get_single_cell_data(cell_id, frames, feature, intensity_images)
             t = t[~np.isnan(data)]
             frames = frames[~np.isnan(data)]
             data = data[~np.isnan(data)]
@@ -715,7 +727,7 @@ class Tissue(object):
                 daughter_frames = np.arange(event_frame, min(event_frame + frames_around_event + 1, self.number_of_frames + 1))
                 t_daughter = (daughter_frames - 1)*15
                 daughter_id = event_data.daughter_id.values[0]
-                daughter_data = self.get_single_cell_data(daughter_id, daughter_frames, feature)
+                daughter_data, msg = self.get_single_cell_data(daughter_id, daughter_frames, feature)
                 t_daughter = t_daughter[~np.isnan(daughter_data)]
                 daughter_data = daughter_data[~np.isnan(daughter_data)]
                 ax.plot(t_daughter, daughter_data, 'r*', label='daughter cell after event')
@@ -729,17 +741,52 @@ class Tissue(object):
             ax.legend()
             return pd.DataFrame(res)
 
+    def find_events_frame(self):
+        significant_frames = np.zeros((self.events.shape[0],))
+        for event_index in range(self.events.shape[0]):
+            significant_frames[event_index] = self.find_event_frame(self.events.iloc[event_index])
+        self.events["significant_frame"] = significant_frames.astype("int")
+        return 0
+
     def find_event_frame(self, event):
-        start_frame = event.start_frame.values[0]
-        end_frame = event.end_frame.values[0]
-        event_type = event.type.values[0]
-        for frame in range(start_frame, end_frame+1):
+        start_frame = event["start_frame"]
+        end_frame = event["end_frame"]
+        event_type = event["type"]
+        if event_type == "delamination":
+            cell_label = event["cell_id"]
+            last_valid_frame = start_frame
+            for frame in range(start_frame, end_frame+1):
+                if self.is_frame_valid(frame):
+                    cell = self.get_cell_data_by_label(cell_label, frame)
+                    if cell is None or cell.empty_cell.values[0] == 0:
+                        return last_valid_frame
+                    elif float(cell.area) < self.min_cell_area:
+                        return frame
+                    last_valid_frame = frame
+        if event_type == "division":
+            daughter_label = event["daughter_id"]
+            last_valid_frame = start_frame
+            for frame in range(start_frame, end_frame+1):
+                if self.is_frame_valid(frame):
+                    cell = self.get_cell_data_by_label(daughter_label, frame)
+                    if cell is not None and cell.empty_cell.values[0] == 0:
+                        return last_valid_frame
+                    last_valid_frame = frame
+        if event_type == "differentiation":
+            cell_label = event["cell_id"]
+            last_valid_frame = start_frame
+            for frame in range(start_frame, end_frame+1):
+                if self.is_frame_valid(frame):
+                    cell = self.get_cell_data_by_label(cell_label, frame)
+                    if cell is not None:
+                        if cell.type.values[0] == "HC":
+                            return last_valid_frame
+                    last_valid_frame = frame
+        print("Problem with finding event frame")
+        return start_frame
 
-            if event_type == "delamination":
-                pass
-
-    def get_frame_data(self, frame, feature, valid_cells, special_features, global_features=[],
-                      for_histogram=False, reference=None, intensity_img=None):
+    def get_frame_data(self, frame, feature, valid_cells, special_features=[], global_features=[], spatial_features=[],
+                      for_histogram=False, reference=None, intensity_img=None, window_radius=0):
         if feature in special_features:
             if feature == "psi6":
                 nearest_HCs = self.find_nearest_neighbors_using_voroni_tesselation(valid_cells)
@@ -756,6 +803,8 @@ class Tissue(object):
                 data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='SC')
             elif feature == "Mean atoh intensity":
                 data = self.calculate_mean_intensity(frame, valid_cells, intensity_img=intensity_img)
+            elif feature == "Distance from ablation":
+                data = self.calculate_distance_from_ablation(frame, valid_cells)
             elif "contact length" in feature:
                 if 'HC' in feature:
                     neighbors_type = 'HC'
@@ -790,6 +839,18 @@ class Tissue(object):
                 data = self.calculate_density(frame, valid_cells, reference)
             elif feature == "type_fraction":
                 data = self.calculate_type_fraction(frame, valid_cells, reference)
+        elif feature in spatial_features:
+            cells_info = self.get_cells_info(frame)
+            relevant_cells = self.get_valid_non_edge_cells(frame, cells_info)
+            data = np.zeros((valid_cells.shape[0],))
+            msg = ""
+            for index in range(valid_cells.shape[0]):
+                data[index], current_msg = self.calculate_data_around_a_given_cell(frame, valid_cells.iloc[index],
+                                                                                   valid_cells=relevant_cells,
+                                                                                   radius=window_radius,
+                                                                                   feature=feature,
+                                                                                   cells_type='all')
+                msg += current_msg
         elif ':' in feature:
             splitted_feature = feature.split(":")
             shape_name = splitted_feature[0]
@@ -809,6 +870,21 @@ class Tissue(object):
         valid_cells_indices= np.intersect1d(props['label'], valid_cells_labels, return_indices=True)[1]
         return props['intensity_mean'][valid_cells_indices]
 
+    def calculate_distance_from_ablation(self, frame, valid_cells):
+        ablation_events = self.events.query("type == ablation")
+        ablation_frames = ablation_events.start_frame.values
+        nearest_frame = ablation_frames[np.argmin(np.abs(ablation_frames - frame))]
+        ablation_events_in_nearest_frame = ablation_events.query("start_frame == %d" % nearest_frame)
+        ablation_location_x = ablation_events_in_nearest_frame.start_pos_x.values
+        ablation_location_y = ablation_events_in_nearest_frame.start_pos_y.values
+        cells_location_x = valid_cells.cx.values
+        cells_location_y = valid_cells.cy.values
+        # creating a matrix where distance[i,j] is the distance from cell i to ablation event j
+        distance_from_ablations = np.sqrt((ablation_location_x.reshape((1, len(ablation_location_x))) -
+                                           cells_location_x.reshape((len(cells_location_x), 1)))**2 +
+                                          (ablation_location_y.reshape((1, len(ablation_location_y))) -
+                                           cells_location_y.reshape((len(cells_location_y), 1)))**2)
+        return np.min(distance_from_ablations, axis=1).flatten()
 
     def get_valid_non_edge_cells(self, frame, cells):
         labels = self.get_labels(frame)
@@ -816,29 +892,51 @@ class Tissue(object):
         valid_cells = cells.query("valid == 1 and empty_cell == 0")
         return valid_cells[~valid_cells.index.isin(edge_cells_index)]
 
+    def calculate_data_around_a_given_cell(self, frame, cell, valid_cells, radius, feature, cells_type):
+        relevant_cells = self.get_cells_inside_a_circle(valid_cells, (cell.cy, cell.cx), radius)
+        return self.calculate_spatial_data_for_given_cells(frame, relevant_cells, feature, cells_type)
+
+    def calculate_data_around_a_given_point(self, frame, point_x, point_y, valid_cells, radius, feature, cells_type):
+        relevant_cells = self.get_cells_inside_a_circle(valid_cells, (point_y, point_x), radius)
+        return self.calculate_spatial_data_for_given_cells(frame, relevant_cells, feature, cells_type)
+
+    def calculate_spatial_data_for_given_cells(self, frame, relevant_cells, feature, cells_type):
+        if feature in self.SPATIAL_FEATURES:
+            split_feature = feature.split(" ")
+            feature = split_feature[1]
+            cells_type = split_feature[0]
+
+        if feature == "density":
+            reference = relevant_cells["area"].sum()
+        elif feature == "type_fraction":
+            reference = relevant_cells.shape[0]
+        else:
+            reference = 1
+        if cells_type != 'all':
+            relevant_cells = relevant_cells.query("type == \"%s\"" % cells_type)
+        # Calculate feature average
+        if relevant_cells.shape[0] > 0:
+            return self.get_frame_data(frame, feature, relevant_cells,
+                                       special_features=self.SPECIAL_FEATURES + self.SPECIAL_X_ONLY_FEATURES,
+                                       spatial_features=self.SPATIAL_FEATURES,
+                                       global_features=self.GLOBAL_FEATURES,
+                                       for_histogram=True, reference=reference)
+        elif feature in ["density", "type_fraction"]:
+            return 0, ""
+        else:
+            return None, "No matching cells"
+
+
     def calculate_spatial_data(self, frame, window_radius, step_size, feature, cells_type='all'):
         labels = self.get_labels(frame)
         cells_info = self.get_cells_info(frame)
         res = np.zeros(labels.shape)
         valid_cells = self.get_valid_non_edge_cells(frame, cells_info)
-        reference = None
         for y in range(step_size//2, res.shape[0], step_size):
             for x in range(step_size//2, res.shape[1], step_size):
-                relevant_cells = self.get_cells_inside_a_circle(valid_cells, (y,x), window_radius)
-                if feature == "density":
-                    reference = np.sum(relevant_cells.area)
-                elif feature == "type_fraction":
-                    reference = relevant_cells.shape[0]
-                if cells_type != 'all':
-                    relevant_cells = relevant_cells.query("type == \"%s\"" % cells_type)
-                # Calculate feature average
-                if relevant_cells.shape[0] > 0:
-                    data, err_msg = self.get_frame_data(frame, feature, relevant_cells,
-                                                        special_features=self.SPECIAL_FEATURES + self.SPECIAL_X_ONLY_FEATURES,
-                                                        global_features=self.GLOBAL_FEATURES,
-                                                        for_histogram=True, reference=reference)
-                else:
-                    data, err_msg = 0, ""
+                data, err_msg = self.calculate_data_around_a_given_point(frame, x, y,
+                                                                         valid_cells, window_radius, feature,
+                                                                         cells_type)
                 if err_msg:
                     return None, err_msg
                 if hasattr(data, "__len__"):
@@ -967,6 +1065,132 @@ class Tissue(object):
             title += " for %s only" % cells_type
         ax.set_title(title)
         return pd.DataFrame({"Frame": frames, feature + " average": data, feature + " se": err, "N": n_results}), ""
+
+    def plot_overall_statistics(self, x_feature, y_feature, ax, intensity_images,
+                                x_cells_type="all", y_cells_type="all"):
+        number_of_valid_frames = self.get_number_of_valid_frames()
+        x_data = np.zeros((number_of_valid_frames,))
+        if y_feature is not None:
+            y_data = np.zeros((number_of_valid_frames,))
+        if x_feature in self.SPATIAL_FEATURES:
+            split_feature = x_feature.split(" ")
+            x_feature = split_feature[1]
+            x_cells_type = split_feature[0]
+        if y_feature in self.SPATIAL_FEATURES:
+            split_feature = y_feature.split(" ")
+            y_feature = split_feature[1]
+            y_cells_type = split_feature[0]
+        index = 0
+        msg = ""
+        for frame in range(1, self.number_of_frames+1):
+            if not self.is_frame_valid(frame):
+                continue
+            if ("intensity" not in x_feature) and ((y_feature is None) or ("intensity" not in y_feature)):
+                intensity_img = None
+            else:
+                intensity_img = intensity_images[frame - 1]
+            cells_info = self.get_cells_info(frame)
+            valid_cells = self.get_valid_non_edge_cells(frame, cells_info)
+            if "density" in x_feature:
+                reference = valid_cells["area"].sum()
+            elif "fraction" in x_feature:
+                reference = valid_cells.shape[0]
+            else:
+                reference = 1
+
+            if x_cells_type != "all":
+                x_valid_cells = valid_cells.query("type == \"%s\""% x_cells_type)
+            else:
+                x_valid_cells = valid_cells
+            current_x_data, msg = self.get_frame_data(frame, x_feature, x_valid_cells,
+                                                      special_features=self.SPECIAL_FEATURES,
+                                                      global_features=self.GLOBAL_FEATURES,
+                                                      for_histogram=False,
+                                                      reference=reference,
+                                                      intensity_img=intensity_img)
+            x_data[index] = np.average(current_x_data) if hasattr(current_x_data, "__len__") else current_x_data
+            if y_feature is not None:
+                if "density" in y_feature:
+                    reference = valid_cells["area"].sum()
+                elif "fraction" in y_feature:
+                    reference = valid_cells.shape[0]
+                else:
+                    reference = 1
+                if y_cells_type != "all":
+                    y_valid_cells = valid_cells.query("type == \"%s\"" % x_cells_type)
+                else:
+                    y_valid_cells = valid_cells
+                current_y_data, msg = self.get_frame_data(frame, y_feature, y_valid_cells,
+                                                          special_features=self.SPECIAL_FEATURES,
+                                                          global_features=self.GLOBAL_FEATURES,
+                                                          for_histogram=False,
+                                                          reference=reference,
+                                                          intensity_img=intensity_img)
+                y_data[index] = np.average(current_y_data) if hasattr(current_y_data, "__len__") else current_y_data
+            index += 1
+        if y_feature is None:
+            ax.hist(x_data[~np.isnan(x_data)])
+            ax.set_xlabel(x_feature)
+            ax.set_ylabel('Number of events')
+            title = "%s histogram for all frames" % x_feature
+            res = pd.DataFrame({"event type": "overall", x_feature: x_data})
+        else:
+            histogram = ax.hist2d(x_data[~np.isnan(x_data)], y_data[~np.isnan(y_data)])
+            ax.set_xlabel(x_feature)
+            ax.set_ylabel(y_feature)
+            cbar = ax.get_figure().colorbar(histogram[3], ax=ax)
+            title = "%s, %s histogram for all frames" % (x_feature, y_feature)
+            cbar.set_label('Number of events', rotation=270)
+            res = pd.DataFrame({"event type": "overall", x_feature: x_data, y_feature:y_data})
+        ax.set_title(title)
+        return res, ""
+
+    def plot_event_statistics(self, event_type, x_feature, x_radius, y_feature, y_radius, ax, intensity_images):
+        if "significant_frame" not in self.events.columns:
+            self.find_events_frame()
+        event_data = self.events.query("type == \"%s\"" % event_type)
+        if event_data.shape[0] < 1:
+            return None, "No matching events of type %s" % event_type
+        else:
+            x_data = np.zeros(event_data.shape[0])
+            if y_feature is not None:
+                y_data = np.zeros(event_data.shape[0])
+            index = 0
+            msg = ""
+            for event_index, event in event_data.iterrows():
+                cell_id = event.cell_id
+                frame = int(event.significant_frame)
+                if ("intensity" not in x_feature) and ((y_feature is None) or ("intensity" not in y_feature)):
+                    intensity_img = None
+                else:
+                    intensity_img = intensity_images[frame - 1]
+                current_x_data, current_msg = self.get_single_cell_data(cell_id, [frame], x_feature, [intensity_img],
+                                                                     window_radius=x_radius)
+                x_data[index] = current_x_data
+                msg += current_msg
+                if y_feature is not None:
+                    current_y_data, current_msg = self.get_single_cell_data(cell_id, [frame], y_feature, [intensity_img],
+                                                                         window_radius=y_radius)
+                    y_data[index] = current_y_data
+                    msg += current_msg
+                index += 1
+            if y_feature is None:
+                ax.hist(x_data[~np.isnan(x_data)])
+                ax.set_xlabel(x_feature)
+                ax.set_ylabel('Number of events')
+                title = "%s histogram for %s" % (x_feature, event_type)
+                res = pd.DataFrame({"event type": event_type, x_feature: x_data})
+            else:
+                histogram = ax.hist2d(x_data[~np.isnan(x_data)], y_data[~np.isnan(y_data)])
+                ax.set_xlabel(x_feature)
+                ax.set_ylabel(y_feature)
+                cbar = ax.get_figure().colorbar(histogram[3], ax=ax)
+                title = "%s, %s histogram for %s" % (x_feature, y_feature, event_type)
+                cbar.set_label('Number of events', rotation=270)
+                res = pd.DataFrame({"event type": event_type, x_feature: x_data, y_feature:y_data})
+            ax.set_title(title)
+        return res, msg
+
 
 
     @staticmethod
@@ -1187,9 +1411,22 @@ class Tissue(object):
             if len(cells_with_same_label_index) > 0:
                 cells_info.at[cells_with_same_label_index[0],"label"] = current_label
             cells_info.at[cell_idx, "label"] = new_label
+            for future_frame in range(frame + 1, self.number_of_frames + 1):
+                cells_info = self.get_cells_info(future_frame)
+                if cells_info is not None:
+                    cell_idx = cells_info.query("label == %d" % current_label).index
+                    if len(cell_idx) > 0:
+                        cells_with_same_label_index = cells_info.query("label == %d" % new_label).index
+                        if len(cells_with_same_label_index) > 0:
+                            cells_info.at[cells_with_same_label_index[0], "label"] = current_label
+                        cells_info.at[cell_idx[0], "label"] = new_label
+                    else:
+                        break
         return 0
 
     def fix_cell_id_in_events(self):
+        if self.events is None:
+            return 0
         for event_idx in self.events.index:
             start_frame = self.events.start_frame[event_idx]
             end_frame = self.events.end_frame[event_idx]
