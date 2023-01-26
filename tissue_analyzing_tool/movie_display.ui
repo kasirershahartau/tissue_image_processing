@@ -1181,7 +1181,7 @@ memory</string>
     <property name="geometry">
      <rect>
       <x>1410</x>
-      <y>283</y>
+      <y>280</y>
       <width>47</width>
       <height>20</height>
      </rect>
@@ -1196,7 +1196,7 @@ memory</string>
       <x>1410</x>
       <y>300</y>
       <width>41</width>
-      <height>20</height>
+      <height>16</height>
      </rect>
     </property>
     <property name="value">
@@ -1208,18 +1208,18 @@ memory</string>
      <rect>
       <x>1290</x>
       <y>320</y>
-      <width>71</width>
-      <height>16</height>
+      <width>61</width>
+      <height>20</height>
      </rect>
     </property>
     <property name="text">
-     <string>Cell size: min</string>
+     <string>Cell size:min</string>
     </property>
    </widget>
    <widget class="QSpinBox" name="cell_size_spin_box_min">
     <property name="geometry">
      <rect>
-      <x>1360</x>
+      <x>1350</x>
       <y>320</y>
       <width>51</width>
       <height>22</height>
@@ -1232,7 +1232,7 @@ memory</string>
    <widget class="QLabel" name="cell_size_label_max">
     <property name="geometry">
      <rect>
-      <x>1340</x>
+      <x>1330</x>
       <y>340</y>
       <width>21</width>
       <height>20</height>
@@ -1245,7 +1245,7 @@ memory</string>
    <widget class="QSpinBox" name="cell_size_spin_box_max">
     <property name="geometry">
      <rect>
-      <x>1360</x>
+      <x>1350</x>
       <y>340</y>
       <width>51</width>
       <height>22</height>
@@ -1674,6 +1674,86 @@ memory</string>
      <string>window radius (pixels):</string>
     </property>
    </widget>
+   <widget class="QPushButton" name="remove_non_sensory_button">
+    <property name="geometry">
+     <rect>
+      <x>1300</x>
+      <y>470</y>
+      <width>71</width>
+      <height>31</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Remove
+ non-sensory</string>
+    </property>
+   </widget>
+   <widget class="QLabel" name="scroling_frames_label">
+    <property name="geometry">
+     <rect>
+      <x>230</x>
+      <y>890</y>
+      <width>331</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Right arrow - next valid frame, Left arrow - previouse valid frame</string>
+    </property>
+   </widget>
+   <widget class="QLabel" name="choose_reference_frame_label">
+    <property name="geometry">
+     <rect>
+      <x>930</x>
+      <y>890</y>
+      <width>47</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>frame:</string>
+    </property>
+   </widget>
+   <widget class="QSpinBox" name="choose_reference_frame_spin_box">
+    <property name="geometry">
+     <rect>
+      <x>970</x>
+      <y>891</y>
+      <width>61</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="minimum">
+     <number>1</number>
+    </property>
+   </widget>
+   <widget class="QLabel" name="hc_thresholod_window_label">
+    <property name="geometry">
+     <rect>
+      <x>1410</x>
+      <y>310</y>
+      <width>47</width>
+      <height>31</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>peak
+window</string>
+    </property>
+   </widget>
+   <widget class="QSpinBox" name="hc_threshold_window_spin_box">
+    <property name="geometry">
+     <rect>
+      <x>1410</x>
+      <y>341</y>
+      <width>41</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="value">
+     <number>3</number>
+    </property>
+   </widget>
    <zorder>track_cells_button</zorder>
    <zorder>open_file_pb</zorder>
    <zorder>zo_check_box</zorder>
@@ -1795,6 +1875,12 @@ memory</string>
    <zorder>event_statistics_window_radius_x_data_label_spin_box</zorder>
    <zorder>event_statistics_window_radius_y_data_label_spin_box</zorder>
    <zorder>event_statistics_window_radius_y_data_label</zorder>
+   <zorder>remove_non_sensory_button</zorder>
+   <zorder>scroling_frames_label</zorder>
+   <zorder>choose_reference_frame_label</zorder>
+   <zorder>choose_reference_frame_spin_box</zorder>
+   <zorder>hc_thresholod_window_label</zorder>
+   <zorder>hc_threshold_window_spin_box</zorder>
   </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">

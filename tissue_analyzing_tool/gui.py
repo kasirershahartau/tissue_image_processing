@@ -172,6 +172,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.connect_methods()
         self.hide_progress_bars()
         self.img = None
+        self.current_frame_number = 0
         self.img_in_memory = False
         self.img_dimensions = None
         self.img_metadata = None
@@ -272,6 +273,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.finish_fixing_segmentation_button.clicked.connect(self.finish_fixing_segmentation)
         self.fix_cell_types_button.clicked.connect(self.fix_cell_types)
         self.finish_fixing_cell_types_button.clicked.connect(self.finish_fixing_cell_types)
+        self.remove_non_sensory_button.clicked.connect(self.remove_nonsensory_cells)
         self.fix_tracking_button.clicked.connect(self.correct_tracking)
         self.mark_event_button.clicked.connect(self.mark_event)
         self.delete_events_button.clicked.connect(self.delete_events)
@@ -319,15 +321,17 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.atoh_spin_box.setMaximum(self.img_dimensions.C-1)
         self.zo_spin_box.setMaximum(self.img_dimensions.C-1)
         self.frame_slider.setMaximum(self.number_of_frames)
+        self.choose_reference_frame_spin_box.setMaximum(self.number_of_frames)
         self.current_frame = np.zeros((3, self.img_dimensions.X, self.img_dimensions.Y), dtype="uint8")
         max_cell_area = self.cell_size_spin_box_max.value() / 100
         min_cell_area = self.cell_size_spin_box_min.value() / 100
         if self.tissue_info is not None:
             self.tissue_info.clean_up()
         self.tissue_info = Tissue(self.number_of_frames, fname, max_cell_area=max_cell_area,
-                                  min_cell_area=min_cell_area)
+                                  min_cell_area=min_cell_area, load_to_memory=self.img_in_memory)
         self.frame_line_edit.setText("%d/%d" % (self.frame_slider.value(), self.number_of_frames))
         self.setWindowTitle(fname)
+        self.current_frame_number = 1
         self.display_frame()
         min_planar_dimension = min(self.img_dimensions.X, self.img_dimensions.Y)
         self.window_radius_spin_box.setMaximum(min_planar_dimension)
@@ -337,7 +341,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.setState(image=True)
 
     def display_frame(self):
+        former_frame = self.current_frame_number
         frame_number = self.frame_slider.value()
+        self.current_frame_number = frame_number
         if self.zo_changed:
             if self.zo_check_box.isChecked():
                 zo_channel = self.zo_spin_box.value()
@@ -385,16 +391,38 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         disp_image = cv2.cvtColor(disp_image, cv2.COLOR_BGR2RGB)
         QI = QtGui.QImage(bytes(disp_image), self.img_dimensions.Y, self.img_dimensions.X, 3*self.img_dimensions.Y, QtGui.QImage.Format_RGB888)
         QI.setColorTable(COLORTABLE)
+        # if former_frame < frame_number:
+        #     translation = self.tissue_info.drifts[frame_number-1, :]
+        #     if not np.isnan(translation).any():
+        #         self.image_display.translate(translation[1], translation[0])
+        # elif former_frame > frame_number:
+        #     translation = -self.tissue_info.drifts[former_frame-1, :]
+        #     if not np.isnan(translation).any():
+        #         self.image_display.translate(translation[1], translation[0])
         self.image_display.setPhoto(QtGui.QPixmap.fromImage(QI))
         self.display_histogram()
         valid_frame = self.tissue_info.is_valid_frame(frame_number)
         self.valid_frame_check_box.setChecked(valid_frame)
 
     def next_frame(self):
-        self.frame_slider.setValue(self.frame_slider.value() + 1)
+        next_valid_frame = self.frame_slider.value() + 1
+        if next_valid_frame > self.number_of_frames:
+            return 0
+        while not self.tissue_info.is_valid_frame(next_valid_frame):
+            next_valid_frame += 1
+            if next_valid_frame > self.number_of_frames:
+                return 0
+        self.frame_slider.setValue(next_valid_frame)
 
     def previous_frame(self):
-        self.frame_slider.setValue(self.frame_slider.value() - 1)
+        previous_valid_frame = self.frame_slider.value() - 1
+        if previous_valid_frame < 1:
+            return 0
+        while not self.tissue_info.is_valid_frame(previous_valid_frame):
+            previous_valid_frame -= 1
+            if previous_valid_frame < 1:
+                return 0
+        self.frame_slider.setValue(previous_valid_frame)
 
     def toggle_valid_frame(self):
         self.valid_frame_check_box.setChecked(not self.valid_frame_check_box.isChecked())
@@ -451,6 +479,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         features = self.tissue_info.get_cells_features(self.frame_slider.value())
         self.plot_single_cell_data_combo_box.clear()
         self.plot_single_cell_data_combo_box.addItems(features)
+        self.plot_single_cell_data_combo_box.addItems(self.tissue_info.SPATIAL_FEATURES)
 
     def update_single_frame_features(self):
         features = self.tissue_info.get_cells_features(self.frame_slider.value())
@@ -477,6 +506,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.event_statistics_x_data_combo_box.addItems(self.tissue_info.SPECIAL_FEATURES)
         self.event_statistics_x_data_combo_box.addItems(self.tissue_info.GLOBAL_FEATURES)
         self.event_statistics_x_data_combo_box.addItems(self.tissue_info.SPATIAL_FEATURES)
+        self.event_statistics_x_data_combo_box.addItems(self.tissue_info.SPECIAL_EVENT_STATISTICS_FEATURES)
         self.event_statistics_y_data_combo_box.clear()
         self.event_statistics_y_data_combo_box.addItems(features)
         self.event_statistics_y_data_combo_box.addItems(self.tissue_info.SPECIAL_FEATURES)
@@ -709,6 +739,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.finish_fixing_segmentation_button.hide()
         self.fix_segmentation_label.hide()
         self.finish_fixing_cell_types_button.hide()
+        self.remove_non_sensory_button.hide()
         self.fix_cell_types_label.hide()
         self.fix_tracking_label.hide()
 
@@ -776,6 +807,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.fix_segmentation_label.setEnabled(False)
             self.fix_segmentation_button.setEnabled(False)
             self.finish_fixing_cell_types_button.setEnabled(False)
+            self.remove_non_sensory_button.setEnabled(False)
             self.fix_cell_types_label.setEnabled(False)
             self.fix_cell_types_button.setEnabled(False)
             self.mark_event_button.setEnabled(False)
@@ -800,6 +832,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.finish_fitting_a_shape_button.setEnabled(False)
             self.finish_fitting_a_shape_button.hide()
             self.event_type_combo_box.setEnabled(False)
+            self.choose_reference_frame_spin_box.setEnabled(False)
             self.event_statistics_x_data_combo_box.setEnabled(False)
             self.event_statistics_y_data_combo_box.setEnabled(False)
             self.plot_event_statistics_botton.setEnabled(False)
@@ -815,7 +848,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.hc_threshold_label.setEnabled(True)
             self.hc_threshold_spin_box.setEnabled(True)
             self.hc_thresholod_percentage_label.setEnabled(True)
+            self.hc_thresholod_window_label.setEnabled(True)
             self.hc_threshold_percentage_spin_box.setEnabled(True)
+            self.hc_threshold_window_spin_box.setEnabled(True)
             self.cell_size_label_max.setEnabled(True)
             self.cell_size_label_min.setEnabled(True)
             self.cell_size_spin_box_min.setEnabled(True)
@@ -837,7 +872,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.hc_threshold_label.setEnabled(False)
             self.hc_threshold_spin_box.setEnabled(False)
             self.hc_thresholod_percentage_label.setEnabled(False)
+            self.hc_thresholod_window_label.setEnabled(False)
             self.hc_threshold_percentage_spin_box.setEnabled(False)
+            self.hc_threshold_window_spin_box.setEnabled(False)
             self.cell_size_label_max.setEnabled(False)
             self.cell_size_label_min.setEnabled(False)
             self.cell_size_spin_box_min.setEnabled(False)
@@ -884,6 +921,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.choose_marking_target_combo_box.clear()
             self.choose_marking_target_combo_box.addItems(["Points", "Cells"])
             self.event_type_combo_box.setEnabled(True)
+            self.choose_reference_frame_spin_box.setEnabled(True)
             self.event_statistics_x_data_combo_box.setEnabled(True)
             self.event_statistics_y_data_combo_box.setEnabled(True)
             self.plot_event_statistics_botton.setEnabled(True)
@@ -939,7 +977,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         else:
             intensity_images = None
         data = self.tissue_info.plot_single_cell_data(cell_id, feature, plot_window.get_ax(),
-                                                      intensity_images=intensity_images)
+                                                      intensity_images=intensity_images,
+                                                      window_radius=self.window_radius_spin_box.value())
         plot_window.show(data)
 
     def plot_event_related_data(self):
@@ -1020,16 +1059,20 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         if self.compare_frames_combo_box.currentIndex() < 0:
             return 0
         frames_string = self.compare_frames_line_edit.text()
-        if re.match("(\d+,\s*)*\d(,\s*)?", frames_string):
-            frames_list = re.split(",\s*", frames_string)
-            frames = [int(f) for f in frames_list]
-        else:
-            return 0
+        split_frame_string =  re.findall("[-\d]+", frames_string)
+        frames = []
+        for frame_string in split_frame_string:
+            frame_string = re.sub(r"\s+", "", frame_string)
+            if re.match('\d-\d', frame_string):
+                boundaries = frame_string.split("-")
+                frames.extend(np.arange(start=int(boundaries[0]), stop=int(boundaries[1])+1))
+            elif re.match('\d', frame_string):
+                frames.append(int(frame_string))
         feature = self.compare_frames_combo_box.currentText()
         cell_type = self.plot_compare_frame_data_cell_type_combo_box.currentText()
         plot_window = PlotDataWindow(self, working_dir=self.working_directory)
         data, error_message = self.tissue_info.plot_compare_frames_data(frames, feature, plot_window.get_ax(),
-                                                                      cell_type)
+                                                                        cell_type)
         if error_message:
             message_box = QtWidgets.QMessageBox
             message_box.question(self, '', error_message, message_box.Close)
@@ -1055,29 +1098,30 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                 y_feature = None
             y_radius = self.event_statistics_window_radius_x_data_label_spin_box.value()
         plot_window = PlotDataWindow(self, working_dir=self.working_directory)
-        # if "intensity" in x_feature or (y_feature is not None and "intensity" in y_feature):
-        #     intensity_images = self.img[:, self.atoh_spin_box.value(), 0, :, :]
-        #     if not self.img_in_memory:
-        #         intensity_images = intensity_images.compute()
-        # else:
-        #     intensity_images = None
-        intensity_images = self.img[:, self.atoh_spin_box.value(), 0, :, :]
-        if not self.img_in_memory:
-            intensity_images = intensity_images.compute()
-
-        intensity_images = np.transpose(intensity_images, (0, 2, 1))
-        if event_type == "overall reference":
-            data, error_message = self.tissue_info.plot_overall_statistics(x_feature, y_feature, plot_window.get_ax(),
-                                                                           intensity_images=intensity_images)
-        elif event_type == "overall reference HC":
-            data, error_message = self.tissue_info.plot_overall_statistics(x_feature, y_feature, plot_window.get_ax(),
-                                                                           intensity_images=intensity_images,
-                                                                           x_cells_type="HC", y_cells_type="HC")
-        elif event_type == "overall reference SC":
-            data, error_message = self.tissue_info.plot_overall_statistics(x_feature, y_feature, plot_window.get_ax(),
-                                                                           intensity_images=intensity_images,
-                                                                           x_cells_type="SC", y_cells_type="SC")
+        if "reference" in event_type:
+            cells_type = "HC" if "HC" in event_type else "SC" if "SC" in event_type else "all"
+            reference_frame = self.choose_reference_frame_spin_box.value()
+            if "intensity" in x_feature or (y_feature is not None and "intensity" in y_feature):
+                intensity_image = self.img[reference_frame - 1, self.atoh_spin_box.value(), 0, :, :]
+                if not self.img_in_memory:
+                    intensity_image = intensity_image.compute()
+                intensity_image = intensity_image.T
+            else:
+                intensity_image = None
+            data, error_message = self.tissue_info.plot_overall_statistics(reference_frame, x_feature, y_feature,
+                                                                           plot_window.get_ax(),
+                                                                           intensity_img=intensity_image,
+                                                                           x_cells_type=cells_type,
+                                                                           y_cells_type=cells_type,
+                                                                           x_radius=x_radius, y_radius=y_radius)
         else:
+            if "intensity" in x_feature or (y_feature is not None and "intensity" in y_feature):
+                intensity_images = self.img[:, self.atoh_spin_box.value(), 0, :, :]
+                if not self.img_in_memory:
+                    intensity_images = intensity_images.compute()
+                intensity_images = np.transpose(intensity_images, (0, 2, 1))
+            else:
+                intensity_images = None
             data, error_message = self.tissue_info.plot_event_statistics(event_type, x_feature, x_radius, y_feature,
                                                                          y_radius, plot_window.get_ax(),
                                                                          intensity_images=intensity_images)
@@ -1223,8 +1267,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         atoh_channel = self.atoh_spin_box.value()
         hc_threshold = self.hc_threshold_spin_box.value()/100
         hc_threshold_percentage = self.hc_threshold_percentage_spin_box.value()
+        peak_window_radius = self.hc_threshold_window_spin_box.value()
         self.analysis_thread = AnalysisThread(self.img, self.tissue_info, frame_numbers, atoh_channel, hc_threshold,
-                                              hc_threshold_percentage,
+                                              hc_threshold_percentage, peak_window_radius,
                                               self.use_existing_cell_types_check_box.isChecked(), self.img_in_memory)
         self.analysis_thread._signal.connect(self.frame_analysis_done)
         self.analyze_segmentation_button.setEnabled(False)
@@ -1399,10 +1444,13 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.fix_cell_types_label.show()
         self.finish_fixing_cell_types_button.setEnabled(True)
         self.finish_fixing_cell_types_button.show()
+        self.remove_non_sensory_button.setEnabled(True)
+        self.remove_non_sensory_button.show()
         self.frame_slider.setEnabled(False)
         self.frame_line_edit.setEnabled(False)
         self.fix_cell_types_on = True
         self.fix_segmentation_button.setEnabled(False)
+        self.analysis_changed = True
 
     def finish_fixing_cell_types(self):
         self.fix_cell_types_on = False
@@ -1412,9 +1460,16 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.fix_cell_types_label.hide()
         self.finish_fixing_cell_types_button.setEnabled(False)
         self.finish_fixing_cell_types_button.hide()
+        self.remove_non_sensory_button.setEnabled(False)
+        self.remove_non_sensory_button.hide()
         self.frame_slider.setEnabled(True)
         self.frame_line_edit.setEnabled(True)
         self.fix_segmentation_button.setEnabled(True)
+
+    def remove_nonsensory_cells(self):
+        self.tissue_info.remove_cells_outside_of_sensory_region(self.frame_slider.value())
+        self.analysis_changed = True
+        self.display_frame()
 
     def fit_a_shape(self, pos=None):
         if self.fitting_stage == 1:
@@ -1571,7 +1626,7 @@ class AnalysisThread(QtCore.QThread):
     _signal = QtCore.pyqtSignal(str)
 
     def __init__(self, img, tissue_info, frame_numbers, atoh_channel, hc_threshold,
-                 percentage_above_threshold,
+                 percentage_above_threshold, peak_window_radius,
                  use_existing_types=False,
                  img_in_memory=False):
         super(AnalysisThread, self).__init__()
@@ -1581,6 +1636,7 @@ class AnalysisThread(QtCore.QThread):
         self.atoh_channel = atoh_channel
         self.hc_threshold = hc_threshold
         self.percentage_above_threshold = percentage_above_threshold
+        self.peak_window_radius = peak_window_radius
         self.is_killed = False
         self.use_existing_types = use_existing_types
         self.img_in_memory = img_in_memory
@@ -1596,7 +1652,7 @@ class AnalysisThread(QtCore.QThread):
             else:
                 atoh_img = self.img[frame - 1, self.atoh_channel, 0, :, :].compute().T
             self.tissue_info.calculate_frame_cellinfo(frame, atoh_img, self.hc_threshold, self.use_existing_types,
-                                                      self.percentage_above_threshold)
+                                                      self.percentage_above_threshold, self.peak_window_radius)
             done_frames += 1
             percentage_done = np.round(100*done_frames/len(self.frame_numbers))
             self.emit("%d/%d" % (frame, percentage_done))

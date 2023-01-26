@@ -1,5 +1,5 @@
 from PyQt5 import QtCore, QtGui, QtWidgets
-
+import numpy as np
 
 class MouseClickInfo(object):
     def __init__(self, point, button, doubleClick=False):
@@ -14,6 +14,7 @@ class PhotoViewer(QtWidgets.QGraphicsView):
     def __init__(self, parent):
         super(PhotoViewer, self).__init__(parent)
         self._zoom = 0
+        # self._translation = np.zeros((2,))
         self._empty = True
         self._scene = QtWidgets.QGraphicsScene(self)
         self._photo = QtWidgets.QGraphicsPixmapItem()
@@ -42,11 +43,14 @@ class PhotoViewer(QtWidgets.QGraphicsView):
                              viewrect.height() / scenerect.height())
                 self.scale(factor, factor)
             self._zoom = 0
+            # self._translation = np.zeros((2,))
 
     def setPhoto(self, pixmap=None):
         has_former_image = self.hasPhoto()
         former_zoom = self._zoom
+        # former_translation = self._translation
         self._zoom = 0
+        self._translation = np.zeros((2,))
         if pixmap and not pixmap.isNull():
             self._empty = False
             if not has_former_image:
@@ -60,7 +64,11 @@ class PhotoViewer(QtWidgets.QGraphicsView):
         if has_former_image:
             factor = 1.25**former_zoom if former_zoom > 0 else 0.8**former_zoom
             self.scale(factor, factor)
+            # self.setTransformationAnchor(QtWidgets.QGraphicsView.NoAnchor)
+            # self._translate(former_translation[0], former_translation[1])
+            # self.setTransformationAnchor(QtWidgets.QGraphicsView.AnchorViewCenter)
             self._zoom = former_zoom
+            # self._translation = former_translation
 
     def wheelEvent(self, event):
         if self.hasPhoto():
@@ -104,3 +112,16 @@ class PhotoViewer(QtWidgets.QGraphicsView):
                 point = items[0].mapFromScene(self.mapToScene(event.pos())).toPoint()
                 self.photoClicked.emit(MouseClickInfo(point, button, True))
         super(PhotoViewer, self).mousePressEvent(event)
+
+    # def translate(self, dx, dy):
+    #     self._translation += np.array([dx, dy])
+
+    # def _translate(self, dx, dy):
+    #     p = self.mapToScene(dx, dy)
+    #     p0 = self.mapToScene(0, 0)
+    #     transform = self.transform()
+    #     dx = (p.x() - p0.x())*transform.m11()
+    #     dy = (p.y() - p0.y())*transform.m22()
+    #     self.setTransformationAnchor(QtWidgets.QGraphicsView.NoAnchor)
+    #     super(PhotoViewer, self).translate(dx, dy)
+    #     self.setTransformationAnchor(QtWidgets.QGraphicsView.AnchorViewCenter)

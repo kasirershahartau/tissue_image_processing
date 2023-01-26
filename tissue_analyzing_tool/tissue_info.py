@@ -16,7 +16,7 @@ from matplotlib import cm as colormap
 from matplotlib.patches import Circle
 from scipy.ndimage.filters import maximum_filter, minimum_filter
 from scipy.interpolate import UnivariateSpline
-from scipy.spatial import Voronoi
+from scipy.spatial import Voronoi, Delaunay
 from skimage.draw import line, disk
 from skimage.measure import regionprops_table, regionprops
 from skimage.measure import label as label_image_regions
@@ -65,7 +65,8 @@ NEIGHBORS_COLOR = (1, 1, 1)
 HC_COLOR = (1, 0, 1)
 SC_COLOR = (1, 1, 0)
 MARKING_COLOR = (0.5, 0.5, 0.5)
-EVENTS_COLOR = {"ablation": (1,1,0), "division": (0,0,1), "delamination": (1,0,0), "differentiation": (0,1,1)}
+EVENTS_COLOR = {"ablation": (1,1,0), "division": (0,0,1), "delamination": (1,0,0), "differentiation": (0,1,1),
+                "promoted differentiation": (1,1,1)}
 PIXEL_LENGTH = 0.1  # in microns. TODO: get from image metadata
 
 def make_df(number_of_lines, specs):
@@ -124,8 +125,8 @@ def unpack_archive_with_progress(source, target):
             zip_ref.extract(file, target)
             yield 100*index/total
 
-def find_local_maxima(arr, window_size=3):
-    blurred = blur_image(arr, 3)
+def find_local_maxima(arr, window_size=7):
+    blurred = blur_image(arr, 7)
     maxima = maximum_filter(blurred, size=window_size)
     return np.abs(blurred - maxima) < 1e-6
 
@@ -140,13 +141,15 @@ class Tissue(object):
     SPATIAL_FEATURES = ["HC density", "SC density", "HC type_fraction", "SC type_fraction"]
     SPECIAL_X_ONLY_FEATURES = ["psi6"]
     SPECIAL_Y_ONLY_FEATURES = ["histogram"]
-    GLOBAL_FEATURES = ["density", "type_fraction", "total_area"]
+    GLOBAL_FEATURES = ["density", "type_fraction", "total_area", "number_of_cells"]
+    SPECIAL_EVENT_STATISTICS_FEATURES = ["timing histogram"]
     CELL_TYPES = ["all", "HC", "SC"]
     FITTING_SHAPES = ["ellipse", "circle arc", "line", "spline"]
-    EVENT_TYPES = ["ablation", "division", "delamination", "differentiation"]
+    EVENT_TYPES = ["ablation", "division", "delamination", "differentiation", "promoted differentiation"]
     ADDITIONAL_EVENT_MARKING_OPTION = ["delete event"]
     ADDITIONAL_EVENT_STATISTICS_OPTIONS = ["overall reference", "overall reference HC", "overall reference SC"]
-    def __init__(self, number_of_frames, data_path, max_cell_area=10, min_cell_area=0.1):
+
+    def __init__(self, number_of_frames, data_path, max_cell_area=10, min_cell_area=0.1, load_to_memory=False):
         self.number_of_frames = number_of_frames
         self.cells_info = None
         self.labels = None
@@ -171,6 +174,11 @@ class Tissue(object):
         self.shape_fitting_points = None
         self.shape_fitting_results = [dict() for frame in range(self.number_of_frames)]
         self.shape_fitting_normalization = []
+        self.data_in_memory = load_to_memory
+        if load_to_memory:
+            self.cell_info_list = [None]*self.number_of_frames
+            self.labels_list = [None]*self.number_of_frames
+            self.cells_type_list = [None]*self.number_of_frames
 
     def is_frame_valid(self, frame):
         return self.valid_frames[frame - 1] == 1
@@ -199,9 +207,14 @@ class Tissue(object):
         self.cells_info_frame = 0
         self.labels_frame = 0
         self.cell_types_frame = 0
-        old_working_dir = self.working_dir
-        self.working_dir = self.initialize_working_space()
-        rmtree(old_working_dir)
+        if not self.data_in_memory:
+            old_working_dir = self.working_dir
+            self.working_dir = self.initialize_working_space()
+            rmtree(old_working_dir)
+        else:
+            self.cell_info_list = [None] * self.number_of_frames
+            self.labels_list = [None] * self.number_of_frames
+            self.cells_type_list = [None] * self.number_of_frames
         return 0
 
     def reset_frame_data(self):
@@ -211,7 +224,6 @@ class Tissue(object):
         self.remove_labels()
         self.remove_cell_types()
         self.remove_cells_info()
-
 
     def set_labels(self, frame_number, labels, reset_data=False):
         if frame_number != self.labels_frame:
@@ -453,6 +465,14 @@ class Tissue(object):
         edge_pixels = np.hstack([labels[0,:], labels[:,0], labels[-1,:], labels[:,-1]])
         return np.unique(edge_pixels[edge_pixels > 0]) - 1
 
+    @staticmethod
+    def detect_non_sensory_region_cells(cells_info):
+        hair_cells = cells_info.query("type == \"HC\" and empty_cell == 0")
+        hull = Delaunay(hair_cells.loc[:,["cx","cy"]].to_numpy())
+        indices = cells_info.index.array.to_numpy()
+        cells_outside_region = hull.find_simplex(cells_info.loc[:,["cx","cy"]].to_numpy()) < 0
+        return indices[cells_outside_region]
+
     def find_valid_frames(self, initial_frame, final_frame):
         initial_frame = max(1, initial_frame)
         final_frame = min(self.number_of_frames, final_frame)
@@ -612,10 +632,8 @@ class Tissue(object):
             yield frame
         return 0
 
-
-
     def calculate_frame_cellinfo(self, frame_number, hc_marker_image=None, hc_threshold=0.01, use_existing_types=False,
-                                 percentage_above_HC_threshold=90):
+                                 percentage_above_HC_threshold=90, peak_window_radius=10):
         """
         Functions to calculate and organize the cell information.
         """
@@ -657,7 +675,8 @@ class Tissue(object):
         self.set_cells_info(frame_number, cells_info)
         self.find_neighbors(frame_number)
         if hc_marker_image is not None:
-            self.calc_cell_types(hc_marker_image, frame_number, properties, hc_threshold, percentage_above_HC_threshold)
+            self.calc_cell_types(hc_marker_image, frame_number, properties, hc_threshold, percentage_above_HC_threshold,
+                                 peak_window_radius)
 
     def get_cell_data_by_label(self, cell_id, frame):
         cells_info = self.get_cells_info(frame)
@@ -669,10 +688,10 @@ class Tissue(object):
         else:
             return None
 
-    def plot_single_cell_data(self, cell_id, feature, ax, intensity_images=None):
+    def plot_single_cell_data(self, cell_id, feature, ax, intensity_images=None, window_radius=0):
         frames = np.arange(1, self.number_of_frames + 1)
         t = (frames - 1)*15
-        data, msg = self.get_single_cell_data(cell_id, frames, feature, intensity_images)
+        data, msg = self.get_single_cell_data(cell_id, frames, feature, intensity_images, window_radius)
         t = t[~np.isnan(data)]
         data = data[~np.isnan(data)]
         ax.plot(t, data, '*')
@@ -839,6 +858,8 @@ class Tissue(object):
                 data = self.calculate_density(frame, valid_cells, reference)
             elif feature == "type_fraction":
                 data = self.calculate_type_fraction(frame, valid_cells, reference)
+            elif feature == "number_of_cells":
+                data = valid_cells.shape[0]
         elif feature in spatial_features:
             cells_info = self.get_cells_info(frame)
             relevant_cells = self.get_valid_non_edge_cells(frame, cells_info)
@@ -870,21 +891,46 @@ class Tissue(object):
         valid_cells_indices= np.intersect1d(props['label'], valid_cells_labels, return_indices=True)[1]
         return props['intensity_mean'][valid_cells_indices]
 
+    @staticmethod
+    def match_labels_different_frames(labels_reference_frame, labels_wanted_frame):
+        max_label = max(np.max(labels_reference_frame), np.max(labels_wanted_frame))
+        # Creating arrays in which element i is the location of the label i in the sorted array
+        sorting_indices_reference = -1 * np.ones((max_label + 1,)).astype(int)
+        sorting_indices_wanted = -1 * np.ones((max_label + 1,)).astype(int)
+        for labels, sorting_indices in zip([labels_reference_frame, labels_wanted_frame],
+                                           [sorting_indices_reference, sorting_indices_wanted]):
+            sorting_indices_without_missing = np.argsort(labels)
+            sorting_indices[labels[sorting_indices_without_missing]] = sorting_indices_without_missing
+        location_of_ref_in_wanted = -1 * np.ones((labels_reference_frame.size,)).astype(int)
+        location_of_ref_in_wanted[sorting_indices_reference[sorting_indices_reference >= 0]] = sorting_indices_wanted[sorting_indices_reference >= 0]
+        return location_of_ref_in_wanted
+
+
     def calculate_distance_from_ablation(self, frame, valid_cells):
-        ablation_events = self.events.query("type == ablation")
+        ablation_events = self.events.query("type == \"ablation\"")
         ablation_frames = ablation_events.start_frame.values
         nearest_frame = ablation_frames[np.argmin(np.abs(ablation_frames - frame))]
         ablation_events_in_nearest_frame = ablation_events.query("start_frame == %d" % nearest_frame)
-        ablation_location_x = ablation_events_in_nearest_frame.start_pos_x.values
-        ablation_location_y = ablation_events_in_nearest_frame.start_pos_y.values
-        cells_location_x = valid_cells.cx.values
-        cells_location_y = valid_cells.cy.values
+        ablation_location_x = ablation_events_in_nearest_frame.start_pos_x.values.astype(float)
+        ablation_location_y = ablation_events_in_nearest_frame.start_pos_y.values.astype(float)
+        cell_labels = valid_cells.label.to_numpy()
+        cell_info_ablation_frame = self.get_cells_info(nearest_frame)
+        valid_cells_ablation_frame = self.get_valid_non_edge_cells(nearest_frame, cell_info_ablation_frame)
+        cell_labels_ablation_frame = valid_cells_ablation_frame.label.to_numpy()
+        indices_ablation_frame = self.match_labels_different_frames(cell_labels, cell_labels_ablation_frame)
+        cells_location_x = valid_cells_ablation_frame.iloc[indices_ablation_frame[indices_ablation_frame >= 0]].cx.to_numpy()
+        cells_location_y = valid_cells_ablation_frame.iloc[indices_ablation_frame[indices_ablation_frame >= 0]].cy.to_numpy()
+
         # creating a matrix where distance[i,j] is the distance from cell i to ablation event j
         distance_from_ablations = np.sqrt((ablation_location_x.reshape((1, len(ablation_location_x))) -
                                            cells_location_x.reshape((len(cells_location_x), 1)))**2 +
                                           (ablation_location_y.reshape((1, len(ablation_location_y))) -
                                            cells_location_y.reshape((len(cells_location_y), 1)))**2)
-        return np.min(distance_from_ablations, axis=1).flatten()
+        res = np.empty((valid_cells.shape[0],))
+        res[:] = np.nan
+        res[indices_ablation_frame >= 0] = np.min(distance_from_ablations, axis=1).flatten()
+        return res
+
 
     def get_valid_non_edge_cells(self, frame, cells):
         labels = self.get_labels(frame)
@@ -1020,7 +1066,11 @@ class Tissue(object):
         data = []
         err = []
         n_results = []
+        data_frames = []
         for frame in frames:
+            if not self.is_frame_valid(frame):
+                continue
+            data_frames.append(frame)
             cell_info = self.get_cells_info(frame)
             if cell_info is None:
                 return None, "No frame data is available for frame %d" % frame
@@ -1051,10 +1101,10 @@ class Tissue(object):
                 n_results.append(1)
                 bar_plot = False
         if not bar_plot:
-            ax.errorbar(frames, data, yerr = err, fmt="*")
+            ax.errorbar(data_frames, data, yerr = err, fmt="*")
         else:
-            x_pos = np.arange(len(frames))
-            x_labels = ["frame %d (N = %d)" % (f, n) for f,n in zip(frames, n_results)]
+            x_pos = np.arange(len(data_frames))
+            x_labels = ["frame %d (N = %d)" % (f, n) for f,n in zip(data_frames, n_results)]
             ax.bar(x_pos, data, yerr=err, align='center', alpha=0.5, ecolor='black', capsize=10)
             ax.set_ylabel(feature)
             ax.set_xticks(x_pos)
@@ -1064,82 +1114,49 @@ class Tissue(object):
         if cells_type != 'all':
             title += " for %s only" % cells_type
         ax.set_title(title)
-        return pd.DataFrame({"Frame": frames, feature + " average": data, feature + " se": err, "N": n_results}), ""
+        return pd.DataFrame({"Frame": data_frames, feature + " average": data, feature + " se": err, "N": n_results}), ""
 
-    def plot_overall_statistics(self, x_feature, y_feature, ax, intensity_images,
-                                x_cells_type="all", y_cells_type="all"):
-        number_of_valid_frames = self.get_number_of_valid_frames()
-        x_data = np.zeros((number_of_valid_frames,))
+    def plot_overall_statistics(self, frame, x_feature, y_feature, ax, intensity_img=None,
+                                x_cells_type="SC", y_cells_type="SC", x_radius=0, y_radius=0):
+        if ("intensity" not in x_feature) and ((y_feature is None) or ("intensity" not in y_feature)):
+            intensity_img = None
+        cells_info = self.get_cells_info(frame)
+        valid_cells = self.get_valid_non_edge_cells(frame, cells_info)
+        if x_cells_type != "all":
+            x_valid_cells = valid_cells.query("type == \"%s\""% x_cells_type)
+        else:
+            x_valid_cells = valid_cells
+        x_data, x_msg = self.get_frame_data(frame, x_feature, x_valid_cells,
+                                          special_features=self.SPECIAL_FEATURES,
+                                          global_features=self.GLOBAL_FEATURES,
+                                          spatial_features=self.SPATIAL_FEATURES,
+                                          for_histogram=False,
+                                          intensity_img=intensity_img,
+                                          window_radius=x_radius)
         if y_feature is not None:
-            y_data = np.zeros((number_of_valid_frames,))
-        if x_feature in self.SPATIAL_FEATURES:
-            split_feature = x_feature.split(" ")
-            x_feature = split_feature[1]
-            x_cells_type = split_feature[0]
-        if y_feature in self.SPATIAL_FEATURES:
-            split_feature = y_feature.split(" ")
-            y_feature = split_feature[1]
-            y_cells_type = split_feature[0]
-        index = 0
-        msg = ""
-        for frame in range(1, self.number_of_frames+1):
-            if not self.is_frame_valid(frame):
-                continue
-            if ("intensity" not in x_feature) and ((y_feature is None) or ("intensity" not in y_feature)):
-                intensity_img = None
+            if y_cells_type != "all":
+                y_valid_cells = valid_cells.query("type == \"%s\"" % x_cells_type)
             else:
-                intensity_img = intensity_images[frame - 1]
-            cells_info = self.get_cells_info(frame)
-            valid_cells = self.get_valid_non_edge_cells(frame, cells_info)
-            if "density" in x_feature:
-                reference = valid_cells["area"].sum()
-            elif "fraction" in x_feature:
-                reference = valid_cells.shape[0]
-            else:
-                reference = 1
-
-            if x_cells_type != "all":
-                x_valid_cells = valid_cells.query("type == \"%s\""% x_cells_type)
-            else:
-                x_valid_cells = valid_cells
-            current_x_data, msg = self.get_frame_data(frame, x_feature, x_valid_cells,
-                                                      special_features=self.SPECIAL_FEATURES,
-                                                      global_features=self.GLOBAL_FEATURES,
-                                                      for_histogram=False,
-                                                      reference=reference,
-                                                      intensity_img=intensity_img)
-            x_data[index] = np.average(current_x_data) if hasattr(current_x_data, "__len__") else current_x_data
-            if y_feature is not None:
-                if "density" in y_feature:
-                    reference = valid_cells["area"].sum()
-                elif "fraction" in y_feature:
-                    reference = valid_cells.shape[0]
-                else:
-                    reference = 1
-                if y_cells_type != "all":
-                    y_valid_cells = valid_cells.query("type == \"%s\"" % x_cells_type)
-                else:
-                    y_valid_cells = valid_cells
-                current_y_data, msg = self.get_frame_data(frame, y_feature, y_valid_cells,
-                                                          special_features=self.SPECIAL_FEATURES,
-                                                          global_features=self.GLOBAL_FEATURES,
-                                                          for_histogram=False,
-                                                          reference=reference,
-                                                          intensity_img=intensity_img)
-                y_data[index] = np.average(current_y_data) if hasattr(current_y_data, "__len__") else current_y_data
-            index += 1
+                y_valid_cells = valid_cells
+            y_data, y_msg = self.get_frame_data(frame, y_feature, y_valid_cells,
+                                                special_features=self.SPECIAL_FEATURES,
+                                                global_features=self.GLOBAL_FEATURES,
+                                                spatial_features=self.SPATIAL_FEATURES,
+                                                for_histogram=False,
+                                                intensity_img=intensity_img,
+                                                window_radius=y_radius)
         if y_feature is None:
             ax.hist(x_data[~np.isnan(x_data)])
             ax.set_xlabel(x_feature)
-            ax.set_ylabel('Number of events')
-            title = "%s histogram for all frames" % x_feature
+            ax.set_ylabel('Number of cells')
+            title = "%s histogram for frame %d" % (x_feature, frame)
             res = pd.DataFrame({"event type": "overall", x_feature: x_data})
         else:
             histogram = ax.hist2d(x_data[~np.isnan(x_data)], y_data[~np.isnan(y_data)])
             ax.set_xlabel(x_feature)
             ax.set_ylabel(y_feature)
             cbar = ax.get_figure().colorbar(histogram[3], ax=ax)
-            title = "%s, %s histogram for all frames" % (x_feature, y_feature)
+            title = "%s, %s histogram for frame %d" % (x_feature, y_feature, frame)
             cbar.set_label('Number of events', rotation=270)
             res = pd.DataFrame({"event type": "overall", x_feature: x_data, y_feature:y_data})
         ax.set_title(title)
@@ -1152,9 +1169,21 @@ class Tissue(object):
         if event_data.shape[0] < 1:
             return None, "No matching events of type %s" % event_type
         else:
-            x_data = np.zeros(event_data.shape[0])
+            if x_feature in self.SPECIAL_EVENT_STATISTICS_FEATURES:
+                if x_feature == "timing histogram":
+                    x_data = event_data.significant_frame.to_numpy().astype("float")
+                x_data_calculated = True
+            else:
+                x_data = np.zeros(event_data.shape[0])
+                x_data_calculated = False
             if y_feature is not None:
-                y_data = np.zeros(event_data.shape[0])
+                if y_feature in self.SPECIAL_EVENT_STATISTICS_FEATURES:
+                    if y_feature == "timing histogram":
+                        y_data = event_data.significant_frame.to_numpy().astype("float")
+                    y_data_calculated = True
+                else:
+                    y_data = np.zeros(event_data.shape[0])
+                    y_data_calculated = False
             index = 0
             msg = ""
             for event_index, event in event_data.iterrows():
@@ -1164,15 +1193,16 @@ class Tissue(object):
                     intensity_img = None
                 else:
                     intensity_img = intensity_images[frame - 1]
-                current_x_data, current_msg = self.get_single_cell_data(cell_id, [frame], x_feature, [intensity_img],
-                                                                     window_radius=x_radius)
-                x_data[index] = current_x_data
-                msg += current_msg
-                if y_feature is not None:
-                    current_y_data, current_msg = self.get_single_cell_data(cell_id, [frame], y_feature, [intensity_img],
-                                                                         window_radius=y_radius)
-                    y_data[index] = current_y_data
+                if not x_data_calculated:
+                    current_x_data, current_msg = self.get_single_cell_data(cell_id, [frame], x_feature, [intensity_img],
+                                                                         window_radius=x_radius)
+                    x_data[index] = current_x_data
                     msg += current_msg
+                if y_feature is not None and not y_data_calculated:
+                        current_y_data, current_msg = self.get_single_cell_data(cell_id, [frame], y_feature, [intensity_img],
+                                                                             window_radius=y_radius)
+                        y_data[index] = current_y_data
+                        msg += current_msg
                 index += 1
             if y_feature is None:
                 ax.hist(x_data[~np.isnan(x_data)])
@@ -1181,7 +1211,8 @@ class Tissue(object):
                 title = "%s histogram for %s" % (x_feature, event_type)
                 res = pd.DataFrame({"event type": event_type, x_feature: x_data})
             else:
-                histogram = ax.hist2d(x_data[~np.isnan(x_data)], y_data[~np.isnan(y_data)])
+                valid = np.logical_and(~np.isnan(x_data), ~np.isnan(y_data))
+                histogram = ax.hist2d(x_data[valid], y_data[valid])
                 ax.set_xlabel(x_feature)
                 ax.set_ylabel(y_feature)
                 cbar = ax.get_figure().colorbar(histogram[3], ax=ax)
@@ -1191,7 +1222,13 @@ class Tissue(object):
             ax.set_title(title)
         return res, msg
 
-
+    def split_into_promoted_and_normal_differentiation(self, threshold):
+        fig, ax = plt.subplots()
+        res, msg = self.plot_event_statistics("differentiation", "Distance from ablation", 0, None, 0, ax, None)
+        differentiation_indices = self.events.query("type == \"differentiation\"").index.to_numpy()
+        near_ablation = res["Distance from ablation"].to_numpy() < threshold
+        self.events.loc[differentiation_indices[near_ablation], "type"] = "promoted differentiation"
+        return 0
 
     @staticmethod
     def calculate_cells_roundness(cells):
@@ -1290,7 +1327,7 @@ class Tissue(object):
 
     def calculate_contact_length(self, frame, cell_info, max_filtered_labels, min_filtered_labels, cell_type='all'):
         cells_info = self.get_cells_info(frame)
-        cell_label = cell_info.label
+        cell_label = cells_info.query("label == %d" % cell_info.label).index.to_numpy() + 1
         region_first_row = max(0, cell_info.bounding_box_min_row - 2)
         region_last_row = cell_info.bounding_box_max_row + 2
         region_first_col = max(0, cell_info.bounding_box_min_col - 2)
@@ -1337,7 +1374,7 @@ class Tissue(object):
         update_next_drift = False
         for frame in range(initial_frame + 1, final_frame + 1):
             if self.valid_frames[frame - 1] == 0:
-                if np.isnan(self.drifts[frame - 1,0]):
+                if not np.isnan(self.drifts[frame - 1,0]):
                     self.drifts[frame - 1, :] = np.nan
                     update_next_drift = True
                 continue
@@ -1376,7 +1413,7 @@ class Tissue(object):
             _, location_of_unique_indices = np.unique(indices_in_current_frame, return_index=True)
             indices_in_current_frame = indices_in_current_frame[location_of_unique_indices]
             labels_previous_frame = labels_previous_frame[location_of_unique_indices]
-            cells_info.loc[indices_in_current_frame, "label"] = labels_previous_frame
+            cells_info.loc[indices_in_current_frame.astype("int"), "label"] = labels_previous_frame
             unlabeled_cells = (cells_info.label.to_numpy() == 0)
             last_used_label = cells_info.label.max()
             cells_info.loc[unlabeled_cells, "label"] = np.arange(last_used_label + 1,
@@ -1411,6 +1448,21 @@ class Tissue(object):
             if len(cells_with_same_label_index) > 0:
                 cells_info.at[cells_with_same_label_index[0],"label"] = current_label
             cells_info.at[cell_idx, "label"] = new_label
+
+            # fixing drift
+            cell_location = np.array([float(cells_info.at[cell_idx, "cy"]), float(cells_info.at[cell_idx, "cx"])])
+            previouse_frame = frame - 1
+            if previouse_frame > 0:
+                while not self.is_valid_frame(previouse_frame):
+                    previouse_frame -= 1
+                    if previouse_frame == 0:
+                        break
+                if previouse_frame > 0:
+                    cells_info = self.get_cells_info(previouse_frame)
+                    previous_frame_cell = cells_info.query("label == %d and empty_cell == 0" % new_label)
+                    if previous_frame_cell.shape[0] > 0:
+                        previous_location = previous_frame_cell.loc[:,["cy", "cx"]].to_numpy()[0]
+                        self.drifts[frame - 1, :] = previous_location - cell_location
             for future_frame in range(frame + 1, self.number_of_frames + 1):
                 cells_info = self.get_cells_info(future_frame)
                 if cells_info is not None:
@@ -1450,12 +1502,12 @@ class Tissue(object):
         return 0
 
     def calc_cell_types(self, hc_marker_image, frame_number, properties=None, hc_threshold=0.1,
-                        percentage_above_threshold=90):
+                        percentage_above_threshold=90, window_size=10):
         cells_info = self.get_cells_info(frame_number)
         labels = self.get_labels(frame_number)
         self.get_cell_types(frame_number)
         max_brightness = np.percentile(hc_marker_image, 99)
-        local_maxima = find_local_maxima(hc_marker_image, window_size=3)
+        local_maxima = find_local_maxima(hc_marker_image, window_size=window_size)
         cell_types = np.zeros(labels.shape)
         if properties is None:
             for cell_index in range(len(cells_info)):
@@ -1575,6 +1627,8 @@ class Tissue(object):
 
     def draw_cell_tracking(self, frame_number, cell_label, radius=5):
         labels = self.get_labels(frame_number)
+        if labels is None:
+            return 0
         img = np.zeros(labels.shape)
         if labels is None:
             return img
@@ -1694,7 +1748,7 @@ class Tissue(object):
         if cells_info is not None:
             try:
                 current_type = cells_info.type[cell_idx]
-                new_type = "SC" if (current_type == HC_TYPE) else "HC"
+                new_type = "SC" if (current_type == "HC") else "HC"
                 self.cells_info.at[cell_idx, "type"] = new_type
                 if current_type == "invalid":
                     self.cells_info.at[cell_idx, "valid"] = 1
@@ -1723,6 +1777,20 @@ class Tissue(object):
         cell_types = self.get_cell_types(frame)
         if cell_types is not None:
             self.cell_types[labels == cell_idx + 1] = INVALID_TYPE
+        return 0
+
+    def remove_cells_outside_of_sensory_region(self, frame):
+        labels = self.get_labels(frame)
+        if labels is None:
+            return 0
+        cells_info = self.get_cells_info(frame)
+        if cells_info is not None:
+            outside_cells_indices = self.detect_non_sensory_region_cells(cells_info)
+            self.cells_info.loc[outside_cells_indices, "type"] = "invalid"
+            self.cells_info.loc[outside_cells_indices, "valid"] = 0
+            cell_types = self.get_cell_types(frame)
+            if cell_types is not None:
+                self.cell_types[np.isin(labels,outside_cells_indices + 1)] = INVALID_TYPE
         return 0
 
     def update_after_segmentation_line_removal(self, cell1_label, cell2_label, frame, hc_marker_image=None,
@@ -2187,7 +2255,6 @@ class Tissue(object):
 
         return res
 
-
     def fit_a_circle_arc(self, X, Y, ax, norm_factor):
         # rescaling coordinates to avoid overflow
         rescale_factor = np.abs(max(np.max(X), np.max(Y)))
@@ -2374,29 +2441,38 @@ class Tissue(object):
         return self.labels
 
     def load_labels(self, frame_number):
-        file_path = os.path.join(self.working_dir, "frame_%d_labels.npy" % frame_number)
-        if os.path.isfile(file_path):
-            self.labels = np.load(file_path)
+        if self.data_in_memory:
+            self.labels = self.labels_list[frame_number - 1]
         else:
-            self.labels = None
+            file_path = os.path.join(self.working_dir, "frame_%d_labels.npy" % frame_number)
+            if os.path.isfile(file_path):
+                self.labels = np.load(file_path)
+            else:
+                self.labels = None
         self.labels_frame = frame_number
         return self.labels
 
     def load_cell_types(self, frame_number):
-        file_path = os.path.join(self.working_dir, "frame_%d_types.npy" % frame_number)
-        if os.path.isfile(file_path):
-            self.cell_types = np.load(file_path)
+        if self.data_in_memory:
+            self.cell_types = self.cells_type_list[frame_number - 1]
         else:
-            self.cell_types = None
+            file_path = os.path.join(self.working_dir, "frame_%d_types.npy" % frame_number)
+            if os.path.isfile(file_path):
+                self.cell_types = np.load(file_path)
+            else:
+                self.cell_types = None
         self.cell_types_frame = frame_number
         return self.cell_types
 
     def load_cells_info(self, frame_number):
-        file_path = os.path.join(self.working_dir, "frame_%d_data.pkl" % frame_number)
-        if os.path.isfile(file_path):
-            self.cells_info = pd.read_pickle(file_path)
+        if self.data_in_memory:
+            self.cells_info = self.cell_info_list[frame_number - 1]
         else:
-            self.cells_info = None
+            file_path = os.path.join(self.working_dir, "frame_%d_data.pkl" % frame_number)
+            if os.path.isfile(file_path):
+                self.cells_info = pd.read_pickle(file_path)
+            else:
+                self.cells_info = None
         self.cells_info_frame = frame_number
         return self.cells_info
 
@@ -2428,46 +2504,58 @@ class Tissue(object):
         return self.shape_fitting_results
 
     def remove_labels(self):
-        file_path = os.path.join(self.working_dir, "frame_%d_labels.npy" % self.labels_frame)
-        try:
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-        except OSError as e:
-            print(str(e))
-            sleep(1)
-            self.remove_labels()
-
-    def remove_cell_types(self):
-        file_path = os.path.join(self.working_dir, "frame_%d_types.npy" % self.cell_types_frame)
-        try:
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-        except OSError as e:
-            print(str(e))
-            sleep(1)
-            self.remove_cell_types()
-
-    def remove_cells_info(self):
-        file_path = os.path.join(self.working_dir, "frame_%d_data.pkl" % self.cells_info_frame)
-        try:
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-        except OSError as e:
-            print(str(e))
-            sleep(1)
-            self.remove_cells_info()
-
-    def save_labels(self):
-        if self.labels is not None:
+        if self.data_in_memory:
+            self.labels_list[self.labels_frame - 1] = None
+        else:
             file_path = os.path.join(self.working_dir, "frame_%d_labels.npy" % self.labels_frame)
             try:
                 if os.path.isfile(file_path):
                     os.remove(file_path)
-                np.save(file_path, self.labels)
             except OSError as e:
                 print(str(e))
                 sleep(1)
-                self.save_labels()
+                self.remove_labels()
+
+    def remove_cell_types(self):
+        if self.data_in_memory:
+            self.cells_type_list[self.cell_types_frame - 1] = None
+        else:
+            file_path = os.path.join(self.working_dir, "frame_%d_types.npy" % self.cell_types_frame)
+            try:
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            except OSError as e:
+                print(str(e))
+                sleep(1)
+                self.remove_cell_types()
+
+    def remove_cells_info(self):
+        if self.data_in_memory:
+            self.cell_info_list[self.cells_info_frame - 1] = None
+        else:
+            file_path = os.path.join(self.working_dir, "frame_%d_data.pkl" % self.cells_info_frame)
+            try:
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            except OSError as e:
+                print(str(e))
+                sleep(1)
+                self.remove_cells_info()
+
+    def save_labels(self):
+        if self.data_in_memory:
+            self.labels_list[self.labels_frame - 1] = self.labels
+        else:
+            if self.labels is not None:
+                file_path = os.path.join(self.working_dir, "frame_%d_labels.npy" % self.labels_frame)
+                try:
+                    if os.path.isfile(file_path):
+                        os.remove(file_path)
+                    np.save(file_path, self.labels)
+                except OSError as e:
+                    print(str(e))
+                    sleep(1)
+                    self.save_labels()
         return 0
 
     def save_drifts(self):
@@ -2497,29 +2585,35 @@ class Tissue(object):
         return 0
 
     def save_cell_types(self):
-        if self.cell_types is not None:
-            file_path = os.path.join(self.working_dir, "frame_%d_types.npy" % self.cell_types_frame)
-            try:
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
-                np.save(file_path, self.cell_types)
-            except OSError as e:
-                print(str(e))
-                sleep(1)
-                self.save_cell_types()
+        if self.data_in_memory:
+            self.cells_type_list[self.cell_types_frame - 1] = self.cell_types
+        else:
+            if self.cell_types is not None:
+                file_path = os.path.join(self.working_dir, "frame_%d_types.npy" % self.cell_types_frame)
+                try:
+                    if os.path.isfile(file_path):
+                        os.remove(file_path)
+                    np.save(file_path, self.cell_types)
+                except OSError as e:
+                    print(str(e))
+                    sleep(1)
+                    self.save_cell_types()
         return 0
 
     def save_cells_info(self):
-        if self.cells_info is not None:
-            file_path = os.path.join(self.working_dir, "frame_%d_data.pkl" % self.cells_info_frame)
-            try:
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
-                self.cells_info.to_pickle(file_path)
-            except OSError as e:
-                print(str(e))
-                sleep(1)
-                self.save_cells_info()
+        if self.data_in_memory:
+            self.cell_info_list[self.cells_info_frame - 1] = self.cells_info
+        else:
+            if self.cells_info is not None:
+                file_path = os.path.join(self.working_dir, "frame_%d_data.pkl" % self.cells_info_frame)
+                try:
+                    if os.path.isfile(file_path):
+                        os.remove(file_path)
+                    self.cells_info.to_pickle(file_path)
+                except OSError as e:
+                    print(str(e))
+                    sleep(1)
+                    self.save_cells_info()
         return 0
 
     def save_events(self):
@@ -2554,6 +2648,8 @@ class Tissue(object):
         self.save_drifts()
         self.save_valid_frames()
         self.save_shape_fitting()
+        if self.data_in_memory:
+            self.save_data_from_memory()
         for percent_done in pack_archive_with_progress(self.working_dir, path.replace(".seg", "") + ".seg"):
             yield percent_done
         return 0
@@ -2568,6 +2664,8 @@ class Tissue(object):
             if not os.path.exists(os.path.join(self.working_dir, file)):
                 os.rename(os.path.join(old_working_dir, file), os.path.join(self.working_dir, file))
         rmtree(old_working_dir)
+        if self.data_in_memory:
+            self.load_data_to_memory()
         if self.labels_frame > 0:
             self.load_labels(self.labels_frame)
         if self.cell_types_frame > 0:
@@ -2579,6 +2677,72 @@ class Tissue(object):
         self.load_valid_frames()
         self.load_shape_fitting()
         return 0
+
+    def save_data_from_memory(self):
+        for index, labels in enumerate(self.labels_list):
+            frame = index + 1
+            if labels is None:
+                continue
+            file_path = os.path.join(self.working_dir, "frame_%d_labels.npy" % frame)
+            try:
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+                np.save(file_path, labels)
+            except OSError as e:
+                print(str(e))
+                sleep(1)
+                np.save(file_path, labels)
+        for index, cell_types in enumerate(self.cells_type_list):
+            frame = index + 1
+            if cell_types is None:
+                continue
+            file_path = os.path.join(self.working_dir, "frame_%d_types.npy" % frame)
+            try:
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+                np.save(file_path, cell_types)
+            except OSError as e:
+                print(str(e))
+                sleep(1)
+                np.save(file_path, cell_types)
+        for index, cell_info in enumerate(self.cell_info_list):
+            frame = index + 1
+            if cell_info is None:
+                continue
+            file_path = os.path.join(self.working_dir, "frame_%d_data.pkl" % frame)
+            try:
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+                cell_info.to_pickle(file_path)
+            except OSError as e:
+                print(str(e))
+                sleep(1)
+                cell_info.to_pickle(file_path)
+
+    def load_data_to_memory(self):
+        for index in range(len(self.labels_list)):
+            frame = index + 1
+            file_path = os.path.join(self.working_dir, "frame_%d_labels.npy" % frame)
+            if os.path.isfile(file_path):
+                self.labels_list[index] = np.load(file_path)
+            else:
+                self.labels_list[index] = None
+        for index in range(len(self.cells_type_list)):
+            frame = index + 1
+            file_path = os.path.join(self.working_dir, "frame_%d_types.npy" % frame)
+            if os.path.isfile(file_path):
+                self.cells_type_list[index] = np.load(file_path)
+            else:
+                self.cells_type_list[index] = None
+        for index in range(len(self.cell_info_list)):
+            frame = index + 1
+            file_path = os.path.join(self.working_dir, "frame_%d_data.pkl" % frame)
+            if os.path.isfile(file_path):
+                self.cell_info_list[index] = pd.read_pickle(file_path)
+            else:
+                self.cell_info_list[index] = None
+        return 0
+
 
     def flip_all_data(self):
         for frame in range(1, self.number_of_frames + 1):
@@ -2618,4 +2782,28 @@ class Tissue(object):
         self.save_cell_types()
         self.save_cells_info()
 
+    def fix_types_in_cell_info(self):
+        for frame in range(1, self.number_of_frames + 1):
+            cells_info = self.get_cells_info(frame)
+            valid_cells = cells_info.query("valid == 1 and empty_cell == 0")
+            cell_types = self.get_cell_types(frame)
+            cell_centroids = valid_cells.loc[:, ["cy", "cx"]].to_numpy()
+            types = cell_types[np.round(cell_centroids[:, 0]).astype(int),
+                               np.round(cell_centroids[:, 1]).astype(int)]
+            valid_cells_indices = valid_cells.index.to_numpy()
+            hc_indices = valid_cells_indices[types == HC_TYPE]
+            sc_indices = valid_cells_indices[types == SC_TYPE]
+            self.cells_info.loc[hc_indices, "type"] = "HC"
+            self.cells_info.loc[sc_indices, "type"] = "SC"
+            print("finished frame %d" % frame, flush=True)
+        return 0
 
+    def calculate_total_area_in_movie(self):
+        area = 0
+        for frame in range(1, self.number_of_frames + 1):
+            if self.is_frame_valid(frame):
+                cells_info = self.get_cells_info(frame)
+                valid_cells = cells_info.query("valid == 1 and empty_cell == 0")
+                area += np.sum(valid_cells.area.to_numpy())
+        print("Total area = %f pixels^2" % area)
+        return 0
