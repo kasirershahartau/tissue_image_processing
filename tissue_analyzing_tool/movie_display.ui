@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1460</width>
+    <width>1675</width>
     <height>956</height>
    </rect>
   </property>
@@ -17,7 +17,7 @@
    <widget class="QPushButton" name="open_file_pb">
     <property name="geometry">
      <rect>
-      <x>1290</x>
+      <x>1400</x>
       <y>40</y>
       <width>75</width>
       <height>23</height>
@@ -30,9 +30,9 @@
    <widget class="QCheckBox" name="zo_check_box">
     <property name="geometry">
      <rect>
-      <x>1290</x>
+      <x>1400</x>
       <y>70</y>
-      <width>91</width>
+      <width>121</width>
       <height>17</height>
      </rect>
     </property>
@@ -49,9 +49,9 @@
     </property>
     <property name="geometry">
      <rect>
-      <x>1290</x>
+      <x>1400</x>
       <y>90</y>
-      <width>101</width>
+      <width>131</width>
       <height>17</height>
      </rect>
     </property>
@@ -65,9 +65,9 @@
    <widget class="QLineEdit" name="frame_line_edit">
     <property name="geometry">
      <rect>
-      <x>660</x>
+      <x>640</x>
       <y>870</y>
-      <width>41</width>
+      <width>61</width>
       <height>20</height>
      </rect>
     </property>
@@ -88,10 +88,10 @@
    <widget class="QSpinBox" name="zo_spin_box">
     <property name="geometry">
      <rect>
-      <x>1380</x>
-      <y>70</y>
+      <x>1560</x>
+      <y>65</y>
       <width>42</width>
-      <height>16</height>
+      <height>21</height>
      </rect>
     </property>
     <property name="value">
@@ -104,10 +104,10 @@
     </property>
     <property name="geometry">
      <rect>
-      <x>1380</x>
-      <y>90</y>
+      <x>1560</x>
+      <y>86</y>
       <width>42</width>
-      <height>16</height>
+      <height>20</height>
      </rect>
     </property>
     <property name="value">
@@ -117,7 +117,7 @@
    <widget class="QScrollBar" name="atoh_level_scroll_bar">
     <property name="geometry">
      <rect>
-      <x>540</x>
+      <x>570</x>
       <y>760</y>
       <width>191</width>
       <height>16</height>
@@ -144,8 +144,8 @@
      <rect>
       <x>490</x>
       <y>760</y>
-      <width>47</width>
-      <height>13</height>
+      <width>91</width>
+      <height>16</height>
      </rect>
     </property>
     <property name="text">
@@ -155,7 +155,7 @@
    <widget class="QScrollBar" name="zo_level_scroll_bar">
     <property name="geometry">
      <rect>
-      <x>540</x>
+      <x>570</x>
       <y>780</y>
       <width>191</width>
       <height>20</height>
@@ -176,7 +176,7 @@
      <rect>
       <x>500</x>
       <y>780</y>
-      <width>41</width>
+      <width>61</width>
       <height>16</height>
      </rect>
     </property>
@@ -187,9 +187,9 @@
    <widget class="QPushButton" name="segment_frame_button">
     <property name="geometry">
      <rect>
-      <x>1290</x>
+      <x>1400</x>
       <y>170</y>
-      <width>81</width>
+      <width>131</width>
       <height>23</height>
      </rect>
     </property>
@@ -200,7 +200,7 @@
    <widget class="QSpinBox" name="segmentation_threshold_spin_box">
     <property name="geometry">
      <rect>
-      <x>1400</x>
+      <x>1540</x>
       <y>200</y>
       <width>42</width>
       <height>22</height>
@@ -216,7 +216,7 @@
    <widget class="QSpinBox" name="segmentation_kernel_std_spin_box">
     <property name="geometry">
      <rect>
-      <x>1400</x>
+      <x>1540</x>
       <y>230</y>
       <width>42</width>
       <height>22</height>
@@ -232,10 +232,10 @@
    <widget class="QLabel" name="segmentation_threshold_label">
     <property name="geometry">
      <rect>
-      <x>1300</x>
+      <x>1400</x>
       <y>200</y>
-      <width>101</width>
-      <height>31</height>
+      <width>133</width>
+      <height>34</height>
      </rect>
     </property>
     <property name="text">
@@ -246,9 +246,9 @@
    <widget class="QLabel" name="segmentation_kernel_std_label">
     <property name="geometry">
      <rect>
-      <x>1300</x>
+      <x>1410</x>
       <y>230</y>
-      <width>71</width>
+      <width>111</width>
       <height>31</height>
      </rect>
     </property>
@@ -260,7 +260,7 @@
    <widget class="QCheckBox" name="show_segmentation_check_box">
     <property name="geometry">
      <rect>
-      <x>1290</x>
+      <x>1400</x>
       <y>110</y>
       <width>121</width>
       <height>17</height>
@@ -276,9 +276,9 @@
    <widget class="QPushButton" name="segment_all_frames_button">
     <property name="geometry">
      <rect>
-      <x>1310</x>
+      <x>1510</x>
       <y>500</y>
-      <width>111</width>
+      <width>141</width>
       <height>23</height>
      </rect>
     </property>
@@ -289,9 +289,9 @@
    <widget class="QProgressBar" name="segment_all_frames_progress_bar">
     <property name="geometry">
      <rect>
-      <x>1340</x>
+      <x>1490</x>
       <y>500</y>
-      <width>121</width>
+      <width>161</width>
       <height>23</height>
      </rect>
     </property>
@@ -302,9 +302,9 @@
    <widget class="QPushButton" name="save_segmentation_button">
     <property name="geometry">
      <rect>
-      <x>1300</x>
+      <x>1500</x>
       <y>590</y>
-      <width>121</width>
+      <width>151</width>
       <height>23</height>
      </rect>
     </property>
@@ -315,9 +315,9 @@
    <widget class="QPushButton" name="load_segmentation_button">
     <property name="geometry">
      <rect>
-      <x>1300</x>
+      <x>1490</x>
       <y>620</y>
-      <width>121</width>
+      <width>161</width>
       <height>23</height>
      </rect>
     </property>
@@ -328,9 +328,9 @@
    <widget class="QPushButton" name="analyze_segmentation_button">
     <property name="geometry">
      <rect>
-      <x>1300</x>
+      <x>1490</x>
       <y>530</y>
-      <width>121</width>
+      <width>161</width>
       <height>23</height>
      </rect>
     </property>
@@ -341,9 +341,9 @@
    <widget class="QPushButton" name="cancel_segmentation_button">
     <property name="geometry">
      <rect>
-      <x>1300</x>
+      <x>1410</x>
       <y>500</y>
-      <width>41</width>
+      <width>81</width>
       <height>23</height>
      </rect>
     </property>
@@ -354,9 +354,9 @@
    <widget class="QProgressBar" name="analyze_segmentation_progress_bar">
     <property name="geometry">
      <rect>
-      <x>1340</x>
+      <x>1490</x>
       <y>530</y>
-      <width>121</width>
+      <width>161</width>
       <height>23</height>
      </rect>
     </property>
@@ -367,9 +367,9 @@
    <widget class="QPushButton" name="cancel_analysis_button">
     <property name="geometry">
      <rect>
-      <x>1300</x>
+      <x>1410</x>
       <y>530</y>
-      <width>41</width>
+      <width>81</width>
       <height>23</height>
      </rect>
     </property>
@@ -380,7 +380,7 @@
    <widget class="QProgressBar" name="save_data_progress_bar">
     <property name="geometry">
      <rect>
-      <x>1300</x>
+      <x>1490</x>
       <y>590</y>
       <width>161</width>
       <height>23</height>
@@ -396,7 +396,7 @@
     </property>
     <property name="geometry">
      <rect>
-      <x>1300</x>
+      <x>1490</x>
       <y>620</y>
       <width>161</width>
       <height>23</height>
@@ -409,9 +409,9 @@
    <widget class="QCheckBox" name="show_cell_types_check_box">
     <property name="geometry">
      <rect>
-      <x>1290</x>
+      <x>1400</x>
       <y>130</y>
-      <width>70</width>
+      <width>111</width>
       <height>17</height>
      </rect>
     </property>
@@ -422,9 +422,9 @@
    <widget class="QCheckBox" name="show_neighbors_check_box">
     <property name="geometry">
      <rect>
-      <x>1360</x>
+      <x>1560</x>
       <y>130</y>
-      <width>70</width>
+      <width>101</width>
       <height>17</height>
      </rect>
     </property>
@@ -435,9 +435,9 @@
    <widget class="QCheckBox" name="show_cell_tracking_check_box">
     <property name="geometry">
      <rect>
-      <x>1290</x>
+      <x>1400</x>
       <y>150</y>
-      <width>91</width>
+      <width>121</width>
       <height>17</height>
      </rect>
     </property>
@@ -448,9 +448,9 @@
    <widget class="QSpinBox" name="cell_tracking_spin_box">
     <property name="geometry">
      <rect>
-      <x>1370</x>
+      <x>1520</x>
       <y>150</y>
-      <width>51</width>
+      <width>91</width>
       <height>20</height>
      </rect>
     </property>
@@ -461,7 +461,7 @@
    <widget class="QPushButton" name="track_cells_button">
     <property name="geometry">
      <rect>
-      <x>1310</x>
+      <x>1540</x>
       <y>560</y>
       <width>111</width>
       <height>23</height>
@@ -474,9 +474,9 @@
    <widget class="QProgressBar" name="track_cells_progress_bar">
     <property name="geometry">
      <rect>
-      <x>1340</x>
+      <x>1490</x>
       <y>560</y>
-      <width>121</width>
+      <width>161</width>
       <height>23</height>
      </rect>
     </property>
@@ -487,9 +487,9 @@
    <widget class="QPushButton" name="cancel_tracking_button">
     <property name="geometry">
      <rect>
-      <x>1300</x>
+      <x>1410</x>
       <y>560</y>
-      <width>41</width>
+      <width>81</width>
       <height>23</height>
      </rect>
     </property>
@@ -500,7 +500,7 @@
    <widget class="QScrollBar" name="frame_slider">
     <property name="geometry">
      <rect>
-      <x>19</x>
+      <x>0</x>
       <y>870</y>
       <width>631</width>
       <height>20</height>
@@ -519,9 +519,9 @@
    <widget class="QLabel" name="plot_single_cell_data_label1">
     <property name="geometry">
      <rect>
-      <x>930</x>
+      <x>970</x>
       <y>840</y>
-      <width>51</width>
+      <width>71</width>
       <height>21</height>
      </rect>
     </property>
@@ -532,9 +532,9 @@
    <widget class="QSpinBox" name="plot_single_cell_data_spin_box">
     <property name="geometry">
      <rect>
-      <x>980</x>
+      <x>1050</x>
       <y>840</y>
-      <width>42</width>
+      <width>61</width>
       <height>21</height>
      </rect>
     </property>
@@ -545,9 +545,9 @@
    <widget class="QLabel" name="plot_single_cell_data_label2">
     <property name="geometry">
      <rect>
-      <x>1150</x>
+      <x>1290</x>
       <y>840</y>
-      <width>111</width>
+      <width>151</width>
       <height>21</height>
      </rect>
     </property>
@@ -558,7 +558,7 @@
    <widget class="QPushButton" name="plot_single_cell_data_button">
     <property name="geometry">
      <rect>
-      <x>1260</x>
+      <x>1430</x>
       <y>840</y>
       <width>41</width>
       <height>23</height>
@@ -571,9 +571,9 @@
    <widget class="QFontComboBox" name="plot_single_cell_data_combo_box">
     <property name="geometry">
      <rect>
-      <x>1030</x>
+      <x>1120</x>
       <y>840</y>
-      <width>111</width>
+      <width>161</width>
       <height>22</height>
      </rect>
     </property>
@@ -584,9 +584,9 @@
    <widget class="PhotoViewer" name="image_display">
     <property name="geometry">
      <rect>
-      <x>10</x>
+      <x>0</x>
       <y>-20</y>
-      <width>1271</width>
+      <width>1391</width>
       <height>711</height>
      </rect>
     </property>
@@ -597,9 +597,9 @@
     </property>
     <property name="geometry">
      <rect>
-      <x>1290</x>
-      <y>10</y>
-      <width>161</width>
+      <x>1400</x>
+      <y>0</y>
+      <width>241</width>
       <height>31</height>
      </rect>
     </property>
@@ -610,9 +610,9 @@
    <widget class="QPushButton" name="fix_segmentation_button">
     <property name="geometry">
      <rect>
-      <x>1320</x>
+      <x>1440</x>
       <y>380</y>
-      <width>101</width>
+      <width>171</width>
       <height>23</height>
      </rect>
     </property>
@@ -623,9 +623,9 @@
    <widget class="QLabel" name="fix_segmentation_label">
     <property name="geometry">
      <rect>
-      <x>1290</x>
+      <x>1400</x>
       <y>370</y>
-      <width>171</width>
+      <width>251</width>
       <height>61</height>
      </rect>
     </property>
@@ -639,7 +639,7 @@ Middle mouse button -  delete line
    <widget class="QPushButton" name="finish_fixing_segmentation_button">
     <property name="geometry">
      <rect>
-      <x>1370</x>
+      <x>1520</x>
       <y>420</y>
       <width>75</width>
       <height>23</height>
@@ -652,7 +652,7 @@ Middle mouse button -  delete line
    <widget class="QSpinBox" name="segmentation_block_size_spin_box">
     <property name="geometry">
      <rect>
-      <x>1400</x>
+      <x>1540</x>
       <y>260</y>
       <width>42</width>
       <height>22</height>
@@ -671,23 +671,22 @@ Middle mouse button -  delete line
    <widget class="QLabel" name="segmentation_block_size_label">
     <property name="geometry">
      <rect>
-      <x>1300</x>
+      <x>1410</x>
       <y>260</y>
-      <width>71</width>
-      <height>31</height>
+      <width>121</width>
+      <height>21</height>
      </rect>
     </property>
     <property name="text">
-     <string>Block size
- (pixels)</string>
+     <string>Block size (pixels)</string>
     </property>
    </widget>
    <widget class="QPushButton" name="analyze_frame_button">
     <property name="geometry">
      <rect>
-      <x>1370</x>
+      <x>1540</x>
       <y>170</y>
-      <width>81</width>
+      <width>121</width>
       <height>23</height>
      </rect>
     </property>
@@ -698,9 +697,9 @@ Middle mouse button -  delete line
    <widget class="QLabel" name="hc_threshold_label">
     <property name="geometry">
      <rect>
-      <x>1290</x>
+      <x>1410</x>
       <y>280</y>
-      <width>71</width>
+      <width>91</width>
       <height>41</height>
      </rect>
     </property>
@@ -712,7 +711,7 @@ Middle mouse button -  delete line
    <widget class="QSpinBox" name="hc_threshold_spin_box">
     <property name="geometry">
      <rect>
-      <x>1360</x>
+      <x>1540</x>
       <y>290</y>
       <width>41</width>
       <height>22</height>
@@ -725,9 +724,9 @@ Middle mouse button -  delete line
    <widget class="QPushButton" name="fix_cell_types_button">
     <property name="geometry">
      <rect>
-      <x>1330</x>
+      <x>1510</x>
       <y>450</y>
-      <width>81</width>
+      <width>101</width>
       <height>23</height>
      </rect>
     </property>
@@ -738,7 +737,7 @@ Middle mouse button -  delete line
    <widget class="QLabel" name="fix_cell_types_label">
     <property name="geometry">
      <rect>
-      <x>1290</x>
+      <x>1440</x>
       <y>430</y>
       <width>131</width>
       <height>31</height>
@@ -752,7 +751,7 @@ Middle mouse button -  delete line
    <widget class="QPushButton" name="finish_fixing_cell_types_button">
     <property name="geometry">
      <rect>
-      <x>1370</x>
+      <x>1580</x>
       <y>470</y>
       <width>75</width>
       <height>23</height>
@@ -765,7 +764,7 @@ Middle mouse button -  delete line
    <widget class="QLabel" name="data_analysis_label">
     <property name="geometry">
      <rect>
-      <x>1080</x>
+      <x>1280</x>
       <y>730</y>
       <width>101</width>
       <height>16</height>
@@ -785,7 +784,7 @@ Middle mouse button -  delete line
      <rect>
       <x>820</x>
       <y>750</y>
-      <width>101</width>
+      <width>141</width>
       <height>21</height>
      </rect>
     </property>
@@ -798,7 +797,7 @@ Middle mouse button -  delete line
      <rect>
       <x>820</x>
       <y>840</y>
-      <width>101</width>
+      <width>141</width>
       <height>20</height>
      </rect>
     </property>
@@ -809,9 +808,9 @@ Middle mouse button -  delete line
    <widget class="QFontComboBox" name="plot_single_frame_data_x_combo_box">
     <property name="geometry">
      <rect>
-      <x>960</x>
+      <x>1000</x>
       <y>752</y>
-      <width>111</width>
+      <width>151</width>
       <height>20</height>
      </rect>
     </property>
@@ -822,9 +821,9 @@ Middle mouse button -  delete line
    <widget class="QFontComboBox" name="plot_single_frame_data_y_combo_box">
     <property name="geometry">
      <rect>
-      <x>1120</x>
+      <x>1210</x>
       <y>750</y>
-      <width>111</width>
+      <width>151</width>
       <height>22</height>
      </rect>
     </property>
@@ -835,7 +834,7 @@ Middle mouse button -  delete line
    <widget class="QLabel" name="single_frame_x_data_label">
     <property name="geometry">
      <rect>
-      <x>920</x>
+      <x>950</x>
       <y>750</y>
       <width>47</width>
       <height>21</height>
@@ -848,9 +847,9 @@ Middle mouse button -  delete line
    <widget class="QLabel" name="single_frame_y_data_label">
     <property name="geometry">
      <rect>
-      <x>1080</x>
+      <x>1160</x>
       <y>750</y>
-      <width>47</width>
+      <width>51</width>
       <height>21</height>
      </rect>
     </property>
@@ -861,7 +860,7 @@ Middle mouse button -  delete line
    <widget class="QPushButton" name="plot_single_frame_data_button">
     <property name="geometry">
      <rect>
-      <x>1410</x>
+      <x>1610</x>
       <y>750</y>
       <width>41</width>
       <height>23</height>
@@ -874,9 +873,9 @@ Middle mouse button -  delete line
    <widget class="QLabel" name="plot_single_cell_data_cells_typ_label">
     <property name="geometry">
      <rect>
-      <x>1240</x>
+      <x>1370</x>
       <y>750</y>
-      <width>51</width>
+      <width>81</width>
       <height>21</height>
      </rect>
     </property>
@@ -887,9 +886,9 @@ Middle mouse button -  delete line
    <widget class="QFontComboBox" name="plot_single_frame_data_cell_type_combo_box">
     <property name="geometry">
      <rect>
-      <x>1290</x>
+      <x>1460</x>
       <y>750</y>
-      <width>111</width>
+      <width>141</width>
       <height>22</height>
      </rect>
     </property>
@@ -900,9 +899,9 @@ Middle mouse button -  delete line
    <widget class="QCheckBox" name="use_existing_cell_types_check_box">
     <property name="geometry">
      <rect>
-      <x>1290</x>
+      <x>1440</x>
       <y>360</y>
-      <width>151</width>
+      <width>181</width>
       <height>17</height>
      </rect>
     </property>
@@ -915,7 +914,7 @@ Middle mouse button -  delete line
      <rect>
       <x>820</x>
       <y>780</y>
-      <width>91</width>
+      <width>131</width>
       <height>21</height>
      </rect>
     </property>
@@ -926,7 +925,7 @@ Middle mouse button -  delete line
    <widget class="QLabel" name="compare_frames_data_label">
     <property name="geometry">
      <rect>
-      <x>910</x>
+      <x>950</x>
       <y>780</y>
       <width>47</width>
       <height>21</height>
@@ -939,9 +938,9 @@ Middle mouse button -  delete line
    <widget class="QFontComboBox" name="compare_frames_combo_box">
     <property name="geometry">
      <rect>
-      <x>940</x>
+      <x>990</x>
       <y>780</y>
-      <width>111</width>
+      <width>151</width>
       <height>20</height>
      </rect>
     </property>
@@ -952,7 +951,7 @@ Middle mouse button -  delete line
    <widget class="QLabel" name="compare_frames_frame_list_label">
     <property name="geometry">
      <rect>
-      <x>1230</x>
+      <x>1350</x>
       <y>780</y>
       <width>47</width>
       <height>16</height>
@@ -965,9 +964,9 @@ Middle mouse button -  delete line
    <widget class="QLineEdit" name="compare_frames_line_edit">
     <property name="geometry">
      <rect>
-      <x>1270</x>
+      <x>1410</x>
       <y>780</y>
-      <width>131</width>
+      <width>171</width>
       <height>20</height>
      </rect>
     </property>
@@ -981,7 +980,7 @@ Middle mouse button -  delete line
    <widget class="QPushButton" name="plot_compare_frames_button">
     <property name="geometry">
      <rect>
-      <x>1410</x>
+      <x>1610</x>
       <y>782</y>
       <width>41</width>
       <height>21</height>
@@ -994,9 +993,9 @@ Middle mouse button -  delete line
    <widget class="QLabel" name="plot_compare_frame_data_cells_type_label_2">
     <property name="geometry">
      <rect>
-      <x>1060</x>
+      <x>1150</x>
       <y>780</y>
-      <width>51</width>
+      <width>71</width>
       <height>21</height>
      </rect>
     </property>
@@ -1007,7 +1006,7 @@ Middle mouse button -  delete line
    <widget class="QFontComboBox" name="plot_compare_frame_data_cell_type_combo_box">
     <property name="geometry">
      <rect>
-      <x>1110</x>
+      <x>1230</x>
       <y>781</y>
       <width>111</width>
       <height>21</height>
@@ -1020,9 +1019,9 @@ Middle mouse button -  delete line
    <widget class="QCheckBox" name="show_events_check_box">
     <property name="geometry">
      <rect>
-      <x>1380</x>
+      <x>1560</x>
       <y>110</y>
-      <width>70</width>
+      <width>91</width>
       <height>17</height>
      </rect>
     </property>
@@ -1033,9 +1032,9 @@ Middle mouse button -  delete line
    <widget class="QPushButton" name="mark_event_button">
     <property name="geometry">
      <rect>
-      <x>1300</x>
+      <x>1400</x>
       <y>650</y>
-      <width>75</width>
+      <width>111</width>
       <height>23</height>
      </rect>
     </property>
@@ -1046,9 +1045,9 @@ Middle mouse button -  delete line
    <widget class="QFontComboBox" name="mark_event_combo_box">
     <property name="geometry">
      <rect>
-      <x>1380</x>
+      <x>1520</x>
       <y>650</y>
-      <width>71</width>
+      <width>131</width>
       <height>22</height>
      </rect>
     </property>
@@ -1062,7 +1061,7 @@ Middle mouse button -  delete line
     </property>
     <property name="geometry">
      <rect>
-      <x>1420</x>
+      <x>1630</x>
       <y>150</y>
       <width>31</width>
       <height>21</height>
@@ -1075,10 +1074,10 @@ Middle mouse button -  delete line
    <widget class="QLabel" name="fix_tracking_label">
     <property name="geometry">
      <rect>
-      <x>1290</x>
+      <x>1440</x>
       <y>150</y>
-      <width>161</width>
-      <height>16</height>
+      <width>181</width>
+      <height>20</height>
      </rect>
     </property>
     <property name="text">
@@ -1088,7 +1087,7 @@ Middle mouse button -  delete line
    <widget class="QCheckBox" name="load_to_memory_check_box">
     <property name="geometry">
      <rect>
-      <x>1370</x>
+      <x>1540</x>
       <y>30</y>
       <width>81</width>
       <height>41</height>
@@ -1102,9 +1101,9 @@ memory</string>
    <widget class="QPushButton" name="show_events_button">
     <property name="geometry">
      <rect>
-      <x>1300</x>
+      <x>1400</x>
       <y>680</y>
-      <width>75</width>
+      <width>111</width>
       <height>23</height>
      </rect>
     </property>
@@ -1115,7 +1114,7 @@ memory</string>
    <widget class="QPushButton" name="abort_event_marking_button">
     <property name="geometry">
      <rect>
-      <x>1300</x>
+      <x>1430</x>
       <y>650</y>
       <width>75</width>
       <height>23</height>
@@ -1130,7 +1129,7 @@ memory</string>
      <rect>
       <x>710</x>
       <y>870</y>
-      <width>81</width>
+      <width>101</width>
       <height>21</height>
      </rect>
     </property>
@@ -1141,9 +1140,9 @@ memory</string>
    <widget class="QPushButton" name="find_events_button">
     <property name="geometry">
      <rect>
-      <x>1380</x>
+      <x>1550</x>
       <y>680</y>
-      <width>75</width>
+      <width>101</width>
       <height>23</height>
      </rect>
     </property>
@@ -1154,9 +1153,9 @@ memory</string>
    <widget class="QProgressBar" name="find_events_progress_bar">
     <property name="geometry">
      <rect>
-      <x>1340</x>
+      <x>1500</x>
       <y>680</y>
-      <width>121</width>
+      <width>151</width>
       <height>23</height>
      </rect>
     </property>
@@ -1167,9 +1166,9 @@ memory</string>
    <widget class="QPushButton" name="cancel_event_finding_button">
     <property name="geometry">
      <rect>
-      <x>1300</x>
+      <x>1430</x>
       <y>680</y>
-      <width>41</width>
+      <width>51</width>
       <height>23</height>
      </rect>
     </property>
@@ -1180,9 +1179,9 @@ memory</string>
    <widget class="QLabel" name="hc_thresholod_percentage_label">
     <property name="geometry">
      <rect>
-      <x>1410</x>
-      <y>280</y>
-      <width>47</width>
+      <x>1590</x>
+      <y>270</y>
+      <width>71</width>
       <height>20</height>
      </rect>
     </property>
@@ -1193,10 +1192,10 @@ memory</string>
    <widget class="QSpinBox" name="hc_threshold_percentage_spin_box">
     <property name="geometry">
      <rect>
-      <x>1410</x>
-      <y>300</y>
+      <x>1600</x>
+      <y>290</y>
       <width>41</width>
-      <height>16</height>
+      <height>21</height>
      </rect>
     </property>
     <property name="value">
@@ -1206,9 +1205,9 @@ memory</string>
    <widget class="QLabel" name="cell_size_label_min">
     <property name="geometry">
      <rect>
-      <x>1290</x>
+      <x>1430</x>
       <y>320</y>
-      <width>61</width>
+      <width>91</width>
       <height>20</height>
      </rect>
     </property>
@@ -1219,9 +1218,9 @@ memory</string>
    <widget class="QSpinBox" name="cell_size_spin_box_min">
     <property name="geometry">
      <rect>
-      <x>1350</x>
+      <x>1520</x>
       <y>320</y>
-      <width>51</width>
+      <width>71</width>
       <height>22</height>
      </rect>
     </property>
@@ -1232,9 +1231,9 @@ memory</string>
    <widget class="QLabel" name="cell_size_label_max">
     <property name="geometry">
      <rect>
-      <x>1330</x>
+      <x>1490</x>
       <y>340</y>
-      <width>21</width>
+      <width>51</width>
       <height>20</height>
      </rect>
     </property>
@@ -1245,9 +1244,9 @@ memory</string>
    <widget class="QSpinBox" name="cell_size_spin_box_max">
     <property name="geometry">
      <rect>
-      <x>1350</x>
+      <x>1520</x>
       <y>340</y>
-      <width>51</width>
+      <width>71</width>
       <height>22</height>
      </rect>
     </property>
@@ -1264,9 +1263,9 @@ memory</string>
    <widget class="QPushButton" name="delete_events_button">
     <property name="geometry">
      <rect>
-      <x>1254</x>
+      <x>1380</x>
       <y>710</y>
-      <width>81</width>
+      <width>111</width>
       <height>23</height>
      </rect>
     </property>
@@ -1277,9 +1276,9 @@ memory</string>
    <widget class="QCheckBox" name="delete_events_frame_check_box">
     <property name="geometry">
      <rect>
-      <x>1340</x>
+      <x>1500</x>
       <y>700</y>
-      <width>111</width>
+      <width>171</width>
       <height>21</height>
      </rect>
     </property>
@@ -1293,7 +1292,7 @@ memory</string>
    <widget class="QCheckBox" name="delete_events_aout_detected_check_box">
     <property name="geometry">
      <rect>
-      <x>1340</x>
+      <x>1500</x>
       <y>720</y>
       <width>111</width>
       <height>17</height>
@@ -1309,9 +1308,9 @@ memory</string>
    <widget class="QLabel" name="window_radius_label">
     <property name="geometry">
      <rect>
-      <x>1070</x>
+      <x>1130</x>
       <y>810</y>
-      <width>131</width>
+      <width>171</width>
       <height>20</height>
      </rect>
     </property>
@@ -1322,9 +1321,9 @@ memory</string>
    <widget class="QSpinBox" name="window_radius_spin_box">
     <property name="geometry">
      <rect>
-      <x>1180</x>
+      <x>1290</x>
       <y>810</y>
-      <width>42</width>
+      <width>51</width>
       <height>22</height>
      </rect>
     </property>
@@ -1335,9 +1334,9 @@ memory</string>
    <widget class="QLabel" name="spatial_resolution_label">
     <property name="geometry">
      <rect>
-      <x>1230</x>
+      <x>1350</x>
       <y>810</y>
-      <width>131</width>
+      <width>191</width>
       <height>21</height>
      </rect>
     </property>
@@ -1348,9 +1347,9 @@ memory</string>
    <widget class="QSpinBox" name="spatial_resolution_spin_box">
     <property name="geometry">
      <rect>
-      <x>1360</x>
+      <x>1530</x>
       <y>810</y>
-      <width>42</width>
+      <width>51</width>
       <height>22</height>
      </rect>
     </property>
@@ -1364,7 +1363,7 @@ memory</string>
    <widget class="QPushButton" name="plot_spatial_map_button">
     <property name="geometry">
      <rect>
-      <x>1410</x>
+      <x>1610</x>
       <y>810</y>
       <width>41</width>
       <height>23</height>
@@ -1379,7 +1378,7 @@ memory</string>
      <rect>
       <x>10</x>
       <y>700</y>
-      <width>91</width>
+      <width>121</width>
       <height>23</height>
      </rect>
     </property>
@@ -1391,9 +1390,9 @@ memory</string>
     <property name="geometry">
      <rect>
       <x>820</x>
-      <y>810</y>
-      <width>231</width>
-      <height>31</height>
+      <y>800</y>
+      <width>311</width>
+      <height>41</height>
      </rect>
     </property>
     <property name="text">
@@ -1430,9 +1429,9 @@ memory</string>
    <widget class="QPushButton" name="plot_event_related_data_push_button">
     <property name="geometry">
      <rect>
-      <x>1310</x>
+      <x>1480</x>
       <y>840</y>
-      <width>141</width>
+      <width>171</width>
       <height>23</height>
      </rect>
     </property>
@@ -1443,9 +1442,9 @@ memory</string>
    <widget class="QPushButton" name="fit_a_shape_button">
     <property name="geometry">
      <rect>
-      <x>680</x>
+      <x>560</x>
       <y>700</y>
-      <width>75</width>
+      <width>101</width>
       <height>23</height>
      </rect>
     </property>
@@ -1456,9 +1455,9 @@ memory</string>
    <widget class="QPushButton" name="finish_fitting_a_shape_button">
     <property name="geometry">
      <rect>
-      <x>680</x>
+      <x>510</x>
       <y>700</y>
-      <width>81</width>
+      <width>151</width>
       <height>23</height>
      </rect>
     </property>
@@ -1469,9 +1468,9 @@ memory</string>
    <widget class="QFontComboBox" name="choose_marking_target_combo_box">
     <property name="geometry">
      <rect>
-      <x>770</x>
+      <x>670</x>
       <y>700</y>
-      <width>141</width>
+      <width>211</width>
       <height>20</height>
      </rect>
     </property>
@@ -1482,9 +1481,9 @@ memory</string>
    <widget class="QFontComboBox" name="choose_fitting_shape_combo_box">
     <property name="geometry">
      <rect>
-      <x>940</x>
+      <x>920</x>
       <y>700</y>
-      <width>141</width>
+      <width>161</width>
       <height>20</height>
      </rect>
     </property>
@@ -1495,7 +1494,7 @@ memory</string>
    <widget class="QLabel" name="fit_a_shape_label">
     <property name="geometry">
      <rect>
-      <x>920</x>
+      <x>890</x>
       <y>700</y>
       <width>21</width>
       <height>21</height>
@@ -1510,7 +1509,7 @@ memory</string>
      <rect>
       <x>1090</x>
       <y>700</y>
-      <width>113</width>
+      <width>151</width>
       <height>20</height>
      </rect>
     </property>
@@ -1523,7 +1522,7 @@ memory</string>
      <rect>
       <x>820</x>
       <y>870</y>
-      <width>91</width>
+      <width>121</width>
       <height>16</height>
      </rect>
     </property>
@@ -1534,9 +1533,9 @@ memory</string>
    <widget class="QLabel" name="event_type_label">
     <property name="geometry">
      <rect>
-      <x>910</x>
+      <x>950</x>
       <y>870</y>
-      <width>61</width>
+      <width>81</width>
       <height>16</height>
      </rect>
     </property>
@@ -1547,9 +1546,9 @@ memory</string>
    <widget class="QFontComboBox" name="event_type_combo_box">
     <property name="geometry">
      <rect>
-      <x>970</x>
+      <x>1030</x>
       <y>870</y>
-      <width>101</width>
+      <width>131</width>
       <height>21</height>
      </rect>
     </property>
@@ -1560,9 +1559,9 @@ memory</string>
    <widget class="QFontComboBox" name="event_statistics_x_data_combo_box">
     <property name="geometry">
      <rect>
-      <x>1120</x>
+      <x>1220</x>
       <y>872</y>
-      <width>111</width>
+      <width>141</width>
       <height>20</height>
      </rect>
     </property>
@@ -1573,9 +1572,9 @@ memory</string>
    <widget class="QLabel" name="event_statistics_y_data_label">
     <property name="geometry">
      <rect>
-      <x>1240</x>
+      <x>1370</x>
       <y>870</y>
-      <width>47</width>
+      <width>61</width>
       <height>21</height>
      </rect>
     </property>
@@ -1586,9 +1585,9 @@ memory</string>
    <widget class="QFontComboBox" name="event_statistics_y_data_combo_box">
     <property name="geometry">
      <rect>
-      <x>1280</x>
+      <x>1430</x>
       <y>870</y>
-      <width>111</width>
+      <width>151</width>
       <height>22</height>
      </rect>
     </property>
@@ -1599,7 +1598,7 @@ memory</string>
    <widget class="QLabel" name="event_statistics_x_data_label">
     <property name="geometry">
      <rect>
-      <x>1080</x>
+      <x>1170</x>
       <y>870</y>
       <width>47</width>
       <height>21</height>
@@ -1612,7 +1611,7 @@ memory</string>
    <widget class="QPushButton" name="plot_event_statistics_botton">
     <property name="geometry">
      <rect>
-      <x>1400</x>
+      <x>1600</x>
       <y>870</y>
       <width>41</width>
       <height>23</height>
@@ -1625,9 +1624,9 @@ memory</string>
    <widget class="QLabel" name="event_statistics_window_radius_x_data_label">
     <property name="geometry">
      <rect>
-      <x>1090</x>
+      <x>1160</x>
       <y>890</y>
-      <width>131</width>
+      <width>161</width>
       <height>20</height>
      </rect>
     </property>
@@ -1638,7 +1637,7 @@ memory</string>
    <widget class="QSpinBox" name="event_statistics_window_radius_x_data_label_spin_box">
     <property name="geometry">
      <rect>
-      <x>1200</x>
+      <x>1320</x>
       <y>893</y>
       <width>42</width>
       <height>20</height>
@@ -1651,7 +1650,7 @@ memory</string>
    <widget class="QSpinBox" name="event_statistics_window_radius_y_data_label_spin_box">
     <property name="geometry">
      <rect>
-      <x>1360</x>
+      <x>1540</x>
       <y>893</y>
       <width>42</width>
       <height>20</height>
@@ -1664,9 +1663,9 @@ memory</string>
    <widget class="QLabel" name="event_statistics_window_radius_y_data_label">
     <property name="geometry">
      <rect>
-      <x>1250</x>
+      <x>1370</x>
       <y>890</y>
-      <width>131</width>
+      <width>151</width>
       <height>20</height>
      </rect>
     </property>
@@ -1677,10 +1676,10 @@ memory</string>
    <widget class="QPushButton" name="remove_non_sensory_button">
     <property name="geometry">
      <rect>
-      <x>1300</x>
-      <y>470</y>
-      <width>71</width>
-      <height>31</height>
+      <x>1440</x>
+      <y>460</y>
+      <width>111</width>
+      <height>41</height>
      </rect>
     </property>
     <property name="text">
@@ -1691,10 +1690,10 @@ memory</string>
    <widget class="QLabel" name="scroling_frames_label">
     <property name="geometry">
      <rect>
-      <x>230</x>
+      <x>130</x>
       <y>890</y>
-      <width>331</width>
-      <height>16</height>
+      <width>471</width>
+      <height>21</height>
      </rect>
     </property>
     <property name="text">
@@ -1704,7 +1703,7 @@ memory</string>
    <widget class="QLabel" name="choose_reference_frame_label">
     <property name="geometry">
      <rect>
-      <x>930</x>
+      <x>970</x>
       <y>890</y>
       <width>47</width>
       <height>16</height>
@@ -1717,7 +1716,7 @@ memory</string>
    <widget class="QSpinBox" name="choose_reference_frame_spin_box">
     <property name="geometry">
      <rect>
-      <x>970</x>
+      <x>1030</x>
       <y>891</y>
       <width>61</width>
       <height>20</height>
@@ -1730,9 +1729,9 @@ memory</string>
    <widget class="QLabel" name="hc_thresholod_window_label">
     <property name="geometry">
      <rect>
-      <x>1410</x>
+      <x>1600</x>
       <y>310</y>
-      <width>47</width>
+      <width>61</width>
       <height>31</height>
      </rect>
     </property>
@@ -1744,7 +1743,7 @@ window</string>
    <widget class="QSpinBox" name="hc_threshold_window_spin_box">
     <property name="geometry">
      <rect>
-      <x>1410</x>
+      <x>1600</x>
       <y>341</y>
       <width>41</width>
       <height>20</height>
@@ -1887,8 +1886,8 @@ window</string>
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>1460</width>
-     <height>21</height>
+     <width>1675</width>
+     <height>22</height>
     </rect>
    </property>
   </widget>

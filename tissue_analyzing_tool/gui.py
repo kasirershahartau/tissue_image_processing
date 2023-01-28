@@ -1861,6 +1861,7 @@ if __name__ == "__main__":
     import sys
 
     app = QtWidgets.QApplication(sys.argv)
+    app.setStyle("Fusion")
     w = FormImageProcessing()
     w.show()
     sys.exit(app.exec_())
