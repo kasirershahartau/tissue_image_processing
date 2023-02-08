@@ -1328,10 +1328,10 @@ class Tissue(object):
     def calculate_contact_length(self, frame, cell_info, max_filtered_labels, min_filtered_labels, cell_type='all'):
         cells_info = self.get_cells_info(frame)
         cell_label = cells_info.query("label == %d" % cell_info.label).index.to_numpy() + 1
-        region_first_row = max(0, cell_info.bounding_box_min_row - 2)
-        region_last_row = cell_info.bounding_box_max_row + 2
-        region_first_col = max(0, cell_info.bounding_box_min_col - 2)
-        region_last_col = cell_info.bounding_box_max_col + 2
+        region_first_row = int(max(0, cell_info.bounding_box_min_row - 2))
+        region_last_row = int(cell_info.bounding_box_max_row + 2)
+        region_first_col = int(max(0, cell_info.bounding_box_min_col - 2))
+        region_last_col = int(cell_info.bounding_box_max_col + 2)
         max_filtered_region = max_filtered_labels[region_first_row:region_last_row, region_first_col:region_last_col]
         min_filtered_region = min_filtered_labels[region_first_row:region_last_row, region_first_col:region_last_col]
         neighbor_labels = np.array(list(cell_info.neighbors.copy()))
