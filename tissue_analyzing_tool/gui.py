@@ -1303,7 +1303,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                 img += self.tissue_info.draw_cell_types(frame_number)
             if neighbors:
                 img += self.tissue_info.draw_neighbors_connections(frame_number)
-            if track and track_cell_label > 0:
+            if track:
                 img += self.tissue_info.draw_cell_tracking(frame_number, track_cell_label)
             if events:
                 img += self.tissue_info.draw_events(frame_number)
@@ -1364,7 +1364,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             initial_frame = 1
             final_frame = self.number_of_frames
         self.cancel_tracking_button.show()
-        self.tracking_thread = TrackingThread(self.tissue_info, self.img, self.img_in_memory,
+        self.tracking_thread = TrackingThread(self.tissue_info, self.img[:, self.zo_spin_box.value(), 0, :, :], self.img_in_memory,
                                               initial_frame=initial_frame, final_frame=final_frame)
         self.tracking_thread._signal.connect(self.cells_tracking_done)
         self.track_cells_button.setEnabled(False)
@@ -1683,10 +1683,9 @@ class TrackingThread(QtCore.QThread):
         self.wait()
 
     def run(self):
-        tracking_generator = self.tissue_info.track_cells_iterator(initial_frame=self.initial_frame,
-                                                                   final_frame=self.final_frame,
-                                                                   images=self.images,
-                                                                   image_in_memory=self.img_in_memory)
+        tracking_generator = self.tissue_info.track_cells_iterator_with_trackpy(initial_frame=self.initial_frame,
+                                                                   final_frame=self.final_frame, images=self.images,
+                                                                                image_in_memory=self.img_in_memory)
         for frame in tracking_generator:
             percentage_done = np.round(100 * frame / self.tissue_info.number_of_frames)
             self.emit("%d" % percentage_done)
