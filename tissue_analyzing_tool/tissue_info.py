@@ -11,20 +11,26 @@ from shutil import rmtree
 import numpy as np
 import pandas as pd
 import copy
+
+import trackpy
 from matplotlib import pyplot as plt
 from matplotlib import cm as colormap
 from matplotlib.patches import Circle
 from scipy.ndimage.filters import maximum_filter, minimum_filter
 from scipy.interpolate import UnivariateSpline
 from scipy.spatial import Voronoi, Delaunay
+from scipy.io import savemat
 from skimage.draw import line, disk
 from skimage.measure import regionprops_table, regionprops
 from skimage.measure import label as label_image_regions
+from skimage.color import label2rgb
+from skimage.filters import threshold_local
 from skimage.registration import phase_cross_correlation
 import zipfile
-from basic_image_manipulations import read_tiff, blur_image
+from basic_image_manipulations import read_tiff, blur_image, save_tiff
 from time import sleep
 import json
+import trackpy
 
 HC_TYPE = 1
 SC_TYPE = 2
@@ -67,6 +73,7 @@ SC_COLOR = (1, 1, 0)
 MARKING_COLOR = (0.5, 0.5, 0.5)
 EVENTS_COLOR = {"ablation": (1,1,0), "division": (0,0,1), "delamination": (1,0,0), "differentiation": (0,1,1),
                 "promoted differentiation": (1,1,1)}
+TRACKING_COLOR_CYCLE = [(1,0,0), (0,1,0), (0,0,1), (1,1,0), (1,0,1), (0,1,1)]
 PIXEL_LENGTH = 0.1  # in microns. TODO: get from image metadata
 
 def make_df(number_of_lines, specs):
@@ -136,7 +143,9 @@ class Tissue(object):
          The tissue class holds the cells of a tissue, and organizes information
          according to cell area and centroid location.
     """
-    SPECIAL_FEATURES = ["shape index", "roundness", "neighbors from the same type", "HC neighbors", "SC neighbors", "contact length",
+    SPECIAL_FEATURES = ["shape index", "roundness", "neighbors from the same type", "HC neighbors", "SC neighbors",
+                        "HC second neighbors", "SC second neighbors", "second neighbors",
+                        "second neighbors from the same type", "contact length",
                         "HC contact length", "SC contact length", "Mean atoh intensity", "Distance from ablation"]
     SPATIAL_FEATURES = ["HC density", "SC density", "HC type_fraction", "SC type_fraction"]
     SPECIAL_X_ONLY_FEATURES = ["psi6"]
@@ -174,6 +183,8 @@ class Tissue(object):
         self.shape_fitting_points = None
         self.shape_fitting_results = [dict() for frame in range(self.number_of_frames)]
         self.shape_fitting_normalization = []
+        self.stage_locations = self.load_stage_loactions()
+        self.height_maps = self.load_height_map()
         self.data_in_memory = load_to_memory
         if load_to_memory:
             self.cell_info_list = [None]*self.number_of_frames
@@ -820,6 +831,14 @@ class Tissue(object):
                 data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='HC')
             elif feature == "SC neighbors":
                 data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='SC')
+            elif feature == "HC second neighbors":
+                data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='HC', second_neighbors=True)
+            elif feature == "SC second neighbors":
+                data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='SC', second_neighbors=True)
+            elif feature == "second neighbors":
+                data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='all', second_neighbors=True)
+            elif feature == "second neighbors from the same type":
+                data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='same', second_neighbors=True)
             elif feature == "Mean atoh intensity":
                 data = self.calculate_mean_intensity(frame, valid_cells, intensity_img=intensity_img)
             elif feature == "Distance from ablation":
@@ -1266,19 +1285,28 @@ class Tissue(object):
         else:
             return 0
 
-    def calculate_n_neighbors_from_type(self, frame, cells, cell_type='same'):
+    def calculate_n_neighbors_from_type(self, frame, cells, cell_type='same', second_neighbors=False):
         cell_info = self.get_cells_info(frame)
         if cell_info is None:
             return None
         neighbors_from_type = np.zeros((cells.shape[0],))
+        if second_neighbors:
+            second_type = 'all' if cell_type == 'same' else cell_type
+            second_order_neighbors = self.find_second_order_neighbors(frame, cells, second_type)
         index = 0
         for i, row in cells.iterrows():
             if cell_type == 'same':
                 look_for_type = row.type
             else:
                 look_for_type = cell_type
-            neighbors = np.array(list(row.neighbors))
-            neighbors_from_type[index] = np.sum((cell_info.type[neighbors - 1] == look_for_type).to_numpy().astype(int))
+            if second_neighbors:
+                neighbors = np.array(list(second_order_neighbors[index]))
+            else:
+                neighbors = np.array(list(row.neighbors))
+            if (cell_type != 'all' and (not second_neighbors)) or cell_type == 'same':
+                neighbors_from_type[index] = np.sum((cell_info.type[neighbors - 1] == look_for_type).to_numpy().astype(int))
+            else:
+                neighbors_from_type[index] = neighbors.size
             index += 1
         return neighbors_from_type
 
@@ -1348,11 +1376,116 @@ class Tissue(object):
         return neighbor_labels, contact_length
 
     def track_cells(self, initial_frame=1, final_frame=-1, images=None, image_in_memory=False):
-        iter = self.track_cells_iterator(initial_frame, final_frame, images, image_in_memory)
+        iter = self.track_cells_iterator_with_trackpy(initial_frame, final_frame, images, image_in_memory)
         last_frame = initial_frame
         for frame in iter:
             last_frame = frame
         return last_frame
+
+    def track_cells_iterator_with_trackpy(self, initial_frame=1, final_frame=-1, images=None, image_in_memory=False):
+        if final_frame == -1:
+            final_frame = self.number_of_frames
+        use_existing_drifts = (self.drifts > 0).any()
+
+        def cells_info_iterator(tissue):
+            previous_frame = 0
+            update_next_drift = False
+            overall_drift_x = 0
+            overall_drift_y = 0
+            index = 0
+            for frame in range(initial_frame, final_frame + 1):
+                if tissue.valid_frames[frame - 1] == 0:
+                    if not np.isnan(tissue.drifts[frame - 1, 0]):
+                        tissue.drifts[frame - 1, :] = np.nan
+                        update_next_drift = True
+                    continue
+                cells_info = tissue.get_cells_info(frame)
+                if cells_info is None:
+                    continue
+                frame_data = cells_info.query("valid == 1 and empty_cell == 0").copy(deep=True)
+                frame_data['frame'] = frame
+                frame_data['frame_index'] = index
+                index += 1
+                # Fix drifts
+                if frame > 1:
+                    if use_existing_drifts and not update_next_drift:
+                        overall_drift_x += tissue.drifts[frame - 1, 1]
+                        frame_data.loc[:,"cx"] = frame_data["cx"] + overall_drift_x
+                        overall_drift_y += tissue.drifts[frame - 1, 0]
+                        frame_data.loc[:,"cy"] = frame_data["cy"] + overall_drift_y
+                    else:
+                        shift_y, shift_x = tissue.update_drift(frame, previous_frame, images=images,
+                                                               image_in_memory=image_in_memory)
+                        overall_drift_x += shift_x
+                        frame_data.loc[:,"cx"] = frame_data["cx"] + overall_drift_x
+                        overall_drift_y += shift_y
+                        frame_data.loc[:,"cy"] = frame_data["cy"] + overall_drift_y
+                previous_frame = frame
+                yield frame_data
+        predictor = trackpy.predict.DriftPredict(pos_columns=["cy", "cx"])
+        tracking_iter = predictor.link_df_iter(cells_info_iterator(self), search_range=50, adaptive_stop=10,
+                                             pos_columns=["cy", "cx"], t_column="frame_index", memory=2)
+        for frame_data in tracking_iter:
+            frame = frame_data.frame.values[0]
+            cells_info = self.get_cells_info(frame)
+            cells_info.loc[frame_data.index, "label"] = frame_data["particle"]
+            yield frame
+        return 0
+
+    def update_drift(self, frame, previous_frame, images=None, image_in_memory=False):
+        if self.stage_locations is not None:
+            shift = (self.stage_locations.loc[frame - 1, ["z", "y", "x"]].to_numpy() -
+                     self.stage_locations.loc[previous_frame - 1, ["z", "y", "x"]].to_numpy()) / \
+                     self.stage_locations.loc[
+                        frame - 1, ["physical_size_z", "physical_size_y", "physical_size_x"]].to_numpy()
+        else:
+            shift = (0, 0)
+        shift_x = shift[-2]  # x/y are swapped between stage location and image
+        shift_y = shift[-1]
+        if images is not None:
+            # Refine drift prediction by phase cross correlation
+            rounded_shift_x = int(np.floor(shift_x))
+            rounded_shift_y = int(np.floor(shift_y))
+            if rounded_shift_x > 0:
+                if rounded_shift_y > 0:
+                    previous_img = images[previous_frame - 1, rounded_shift_x:, rounded_shift_y:]
+                    current_img = images[frame - 1, :-rounded_shift_x, :-rounded_shift_y]
+                elif rounded_shift_y < 0:
+                    previous_img = images[previous_frame - 1, rounded_shift_x:, :rounded_shift_y]
+                    current_img = images[frame - 1, :-rounded_shift_x, -rounded_shift_y:]
+                else:
+                    previous_img = images[previous_frame - 1, rounded_shift_x:, :]
+                    current_img = images[frame - 1, :-rounded_shift_x, :]
+            elif rounded_shift_x < 0:
+                if rounded_shift_y > 0:
+                    previous_img = images[previous_frame - 1, :rounded_shift_x, rounded_shift_y:]
+                    current_img = images[frame - 1, -rounded_shift_x:, :-rounded_shift_y]
+                elif rounded_shift_y < 0:
+                    previous_img = images[previous_frame - 1, :rounded_shift_x, :rounded_shift_y]
+                    current_img = images[frame - 1, -rounded_shift_x:, -rounded_shift_y:]
+                else:
+                    previous_img = images[previous_frame - 1, :rounded_shift_x, :]
+                    current_img = images[frame - 1, -rounded_shift_x:, :]
+            else:
+                if rounded_shift_y > 0:
+                    previous_img = images[previous_frame - 1, :, rounded_shift_y:]
+                    current_img = images[frame - 1, :, :-rounded_shift_y]
+                elif rounded_shift_y < 0:
+                    previous_img = images[previous_frame - 1, :, :rounded_shift_y]
+                    current_img = images[frame - 1, :, -rounded_shift_y:]
+                else:
+                    previous_img = images[previous_frame - 1, :, :]
+                    current_img = images[frame - 1, :, :]
+            if not image_in_memory:
+                previous_img = previous_img.compute()
+                current_img = current_img.compute()
+            refined_shift, error, diffphase = phase_cross_correlation(previous_img, current_img,
+                                                                      upsample_factor=100)
+            shift_x = rounded_shift_x + refined_shift[-2]
+            shift_y = rounded_shift_y + refined_shift[-1]
+        self.drifts[frame - 1, 0] = shift_y
+        self.drifts[frame - 1, 1] = shift_x
+        return shift_y, shift_x
 
     def track_cells_iterator(self, initial_frame=1, final_frame=-1, images=None, image_in_memory=False):
         if final_frame == -1:
@@ -1381,17 +1514,10 @@ class Tissue(object):
             if use_existing_drifts and not update_next_drift:
                 cx_previous_frame -= self.drifts[frame - 1, 1]
                 cy_previous_frame -= self.drifts[frame - 1, 0]
-            elif images is not None:
-                if image_in_memory:
-                    previous_img = images[previous_frame - 1, :, 0, :, :]
-                    current_img = images[frame - 1, :, 0, :, :]
-                else:
-                    previous_img = images[previous_frame-1, :, 0, :, :].compute()
-                    current_img = images[frame-1, :, 0, :, :].compute()
-                shift, error, diffphase = phase_cross_correlation(previous_img, current_img, upsample_factor=100)
-                self.drifts[frame-1, :] = shift[-2:]
-                cx_previous_frame -= shift[-1]
-                cy_previous_frame -= shift[-2]
+            else:
+                shift_y, shift_x = self.update_drift(frame, previous_frame, images=images, image_in_memory=image_in_memory)
+                cx_previous_frame -= shift_x
+                cy_previous_frame -= shift_y
 
             cells_info = self.get_cells_info(frame)
             labels = maximum_filter(self.get_labels(frame), (3, 3), mode='constant')
@@ -1448,21 +1574,7 @@ class Tissue(object):
             if len(cells_with_same_label_index) > 0:
                 cells_info.at[cells_with_same_label_index[0],"label"] = current_label
             cells_info.at[cell_idx, "label"] = new_label
-
-            # fixing drift
-            cell_location = np.array([float(cells_info.at[cell_idx, "cy"]), float(cells_info.at[cell_idx, "cx"])])
-            previouse_frame = frame - 1
-            if previouse_frame > 0:
-                while not self.is_valid_frame(previouse_frame):
-                    previouse_frame -= 1
-                    if previouse_frame == 0:
-                        break
-                if previouse_frame > 0:
-                    cells_info = self.get_cells_info(previouse_frame)
-                    previous_frame_cell = cells_info.query("label == %d and empty_cell == 0" % new_label)
-                    if previous_frame_cell.shape[0] > 0:
-                        previous_location = previous_frame_cell.loc[:,["cy", "cx"]].to_numpy()[0]
-                        self.drifts[frame - 1, :] = previous_location - cell_location
+            # Updating cell label in subsequent frames
             for future_frame in range(frame + 1, self.number_of_frames + 1):
                 cells_info = self.get_cells_info(future_frame)
                 if cells_info is not None:
@@ -1482,9 +1594,9 @@ class Tissue(object):
         for event_idx in self.events.index:
             start_frame = self.events.start_frame[event_idx]
             end_frame = self.events.end_frame[event_idx]
-            start_pos = (self.events.start_pos_x[event_idx], self.events.start_pos_y[event_idx])
-            end_pos = (self.events.end_pos_x[event_idx], self.events.end_pos_y[event_idx])
-            daughter_pos = (self.events.daughter_pos_x[event_idx], self.events.daughter_pos_y[event_idx])
+            start_pos = int(np.round(self.events.start_pos_x[event_idx])), int(np.round(self.events.start_pos_y[event_idx]))
+            end_pos = int(np.round(self.events.end_pos_x[event_idx])), int(np.round(self.events.end_pos_y[event_idx]))
+            daughter_pos = int(np.round(self.events.daughter_pos_x[event_idx])), int(np.round(self.events.daughter_pos_y[event_idx]))
             cell_id = self.get_cell_id_by_position(start_frame, start_pos)
             cell_end_id = self.get_cell_id_by_position(end_frame, end_pos)
 
@@ -1493,7 +1605,7 @@ class Tissue(object):
                 daughter_id = self.get_cell_id_by_position(end_frame, daughter_pos)
                 if cell_id == daughter_id:
                     daughter_id = cell_end_id
-                elif cell_end_id != cell_end_id:
+                elif cell_id != cell_end_id:
                     self.fix_cell_label(end_frame, end_pos, cell_id)
                 self.events.at[event_idx, "daughter_id"] = daughter_id
             else:
@@ -1501,11 +1613,42 @@ class Tissue(object):
                     self.fix_cell_label(end_frame, end_pos, cell_id)
         return 0
 
+    def fix_cell_pos_in_events(self):
+        if self.events is None:
+            return 0
+        for event_idx in self.events.index:
+            start_frame = self.events.start_frame[event_idx]
+            end_frame = self.events.end_frame[event_idx]
+            cell_id = self.events.cell_id[event_idx]
+            start_cell_data = self.get_cell_data_by_label(cell_id, start_frame)
+            start_pos_x = start_cell_data.cx.values[0]
+            start_pos_y = start_cell_data.cy.values[0]
+            end_cell_data = self.get_cell_data_by_label(cell_id, end_frame)
+            end_pos_x = end_cell_data.cx.values[0]
+            end_pos_y = end_cell_data.cy.values[0]
+            daughter_id = self.events.daughter_id[event_idx]
+            self.events.at[event_idx, "start_pos_x"] = start_pos_x
+            self.events.at[event_idx, "start_pos_y"] = start_pos_y
+            self.events.at[event_idx, "end_pos_x"] = end_pos_x
+            self.events.at[event_idx, "end_pos_y"] = end_pos_y
+            if daughter_id > 0:
+                daughter_data = self.get_cell_data_by_label(cell_id, end_frame)
+                daughter_pos_x = daughter_data.cx.values[0]
+                daughter_pos_y = daughter_data.cy.values[0]
+                self.events.at[event_idx, "daughter_pos_x"] = daughter_pos_x
+                self.events.at[event_idx, "daughter_pos_y"] = daughter_pos_y
+        return 0
+
     def calc_cell_types(self, hc_marker_image, frame_number, properties=None, hc_threshold=0.1,
-                        percentage_above_threshold=90, window_size=10):
+                        percentage_above_threshold=90, window_size=10, blocksize=100):
         cells_info = self.get_cells_info(frame_number)
         labels = self.get_labels(frame_number)
         self.get_cell_types(frame_number)
+        def local_thresh_helper(flatten_array):
+            return hc_threshold * np.max(flatten_array)
+        if blocksize % 2 == 0:
+            blocksize += 1
+        threshold = threshold_local(hc_marker_image, block_size=blocksize, method='generic', param=local_thresh_helper)
         max_brightness = np.percentile(hc_marker_image, 99)
         local_maxima = find_local_maxima(hc_marker_image, window_size=window_size)
         cell_types = np.zeros(labels.shape)
@@ -1515,7 +1658,8 @@ class Tissue(object):
                     cell_pixels = hc_marker_image[labels == cell_index]
                     percentile_cell_brightness = np.percentile(cell_pixels, 100-percentage_above_threshold)
                     includes_local_maximum = local_maxima[labels == cell_index].any()
-                    if percentile_cell_brightness > hc_threshold*max_brightness and includes_local_maximum:
+                    current_threshold = np.mean(threshold[labels == cell_index])
+                    if percentile_cell_brightness > current_threshold and includes_local_maximum:
                         self.cells_info.at[cell_index, "type"] = "HC"
                         cell_types[labels == cell_index] = HC_TYPE
                     else:
@@ -1626,6 +1770,8 @@ class Tissue(object):
         return np.tile(img, (3,1,1))*np.array(NEIGHBORS_COLOR).reshape((3,1,1))
 
     def draw_cell_tracking(self, frame_number, cell_label, radius=5):
+        if cell_label == 0:
+            return self.draw_all_cell_tracking(frame_number)
         labels = self.get_labels(frame_number)
         if labels is None:
             return 0
@@ -1639,6 +1785,18 @@ class Tissue(object):
             rr, cc = disk((cell.cy.values[0], cell.cx.values[0]), radius, shape=img.shape)
             img[rr, cc] = 1
         return img[np.newaxis, :,:] * np.array(TRACK_COLOR).reshape((3,1,1))
+
+    def draw_all_cell_tracking(self, frame):
+        track_labels = self.get_trackking_labels(frame)
+        colors_num = len(TRACKING_COLOR_CYCLE)
+        output = np.zeros((3,) + track_labels.shape)
+        for i in range(colors_num):
+            for j in range(3):
+                output[j][track_labels%colors_num == i] = TRACKING_COLOR_CYCLE[i][j]
+        # removing color from background
+        for j in range(3):
+            output[j][track_labels == 0] = 0
+        return output
 
     def draw_marking_points(self, frame_number, radius=5):
         labels = self.get_labels(frame_number)
@@ -2503,6 +2661,24 @@ class Tissue(object):
                 self.shape_fitting_results = json.load(file)
         return self.shape_fitting_results
 
+    def load_stage_loactions(self):
+        file_name = "stage_locations_%s.pkl" % os.path.basename(self.data_path).replace(".tif", "")
+        directory = os.path.dirname(self.data_path)
+        file_path = os.path.join(directory, file_name)
+        if os.path.isfile(file_path):
+            return pd.DataFrame(pd.read_pickle(file_path))
+        else:
+            return None
+
+    def load_height_map(self):
+        file_name = "zmap_%s.npy" % os.path.basename(self.data_path).replace(".tif", "")
+        directory = os.path.dirname(self.data_path)
+        file_path = os.path.join(directory, file_name)
+        if os.path.isfile(file_path):
+            return np.load(file_path, mmap_mode="r")
+        else:
+            return None
+
     def remove_labels(self):
         if self.data_in_memory:
             self.labels_list[self.labels_frame - 1] = None
@@ -2778,6 +2954,8 @@ class Tissue(object):
                                   "bounding_box_max_row", "bounding_box_max_col"]].values
         else:
             print("cell info on frame %d are none" % frame)
+        self.fix_cell_pos_in_events()
+        self.save_events()
         self.save_labels()
         self.save_cell_types()
         self.save_cells_info()
@@ -2806,4 +2984,91 @@ class Tissue(object):
                 valid_cells = cells_info.query("valid == 1 and empty_cell == 0")
                 area += np.sum(valid_cells.area.to_numpy())
         print("Total area = %f pixels^2" % area)
+        return 0
+
+    def save_event_statistics_data(self, ref_frames, output_dir):
+        event_types = ["division", "delamination", "differentiation", "overall reference SC"]
+        event_labels = ["division", "delamination", "differentiation", "reference_SC"]
+        features = [("area", "roundness"), ("HC contact length", "SC contact length"),
+                    ("HC density", "HC type_fraction"), ("HC neighbors", "SC neighbors"),
+                    ("n_neighbors",), ("HC second neighbors", "SC second neighbors"),
+                    ("timing histogram",)]
+        feature_labels = ["area_and_roundness", "contact_length_by_type", "HC_density_and_fraction",
+                          "neighbors_by_type", "number_of_neighbors", "second_neighbors_by_type", "timing"]
+        for event_type, event_label in zip(event_types, event_labels):
+            for feature, feature_label in zip(features, feature_labels):
+
+                x_feature = feature[0]
+                if len(feature) > 1:
+                    y_feature = feature[1]
+                else:
+                    y_feature = None
+                x_radius = 200
+                y_radius = 200
+                if "reference" in event_type:
+                    if x_feature == "timing histogram":
+                        continue
+                    for frame in ref_frames:
+                        fig, ax = plt.subplots()
+                        filename = "%s_%s_frame%d.png" % (feature_label, event_label, frame)
+                        data_filename = "%s_%s_frame%d_data" % (feature_label, event_label, frame)
+                        res, msg = self.plot_overall_statistics(frame, x_feature, y_feature, ax, intensity_img=None,
+                                x_cells_type="SC", y_cells_type="SC", x_radius=x_radius, y_radius=y_radius)
+
+                        fig.savefig(os.path.join(output_dir, filename))
+                        if isinstance(res, pd.DataFrame):
+                            res.to_pickle(os.path.join(output_dir, data_filename))
+                        elif isinstance(res, np.ndarray):
+                            np.save(os.path.join(output_dir, data_filename), res)
+                else:
+                    fig, ax = plt.subplots()
+                    filename = "%s_%s.png" % (feature_label, event_label)
+                    data_filename = "%s_%s_data" % (feature_label, event_label)
+                    res, msg = self.plot_event_statistics(event_type, x_feature, x_radius, y_feature, y_radius, ax,
+                                               intensity_images=None)
+
+                    fig.savefig(os.path.join(output_dir, filename))
+                    plt.close(fig)
+                    if isinstance(res, pd.DataFrame):
+                        res.to_pickle(os.path.join(output_dir, data_filename))
+                    elif isinstance(res, np.ndarray):
+                        np.save(os.path.join(output_dir, data_filename), res)
+
+    def get_trackking_labels(self, frame):
+        labels = self.get_labels(frame)
+        cells_info = self.get_cells_info(frame)
+        if labels is None or cells_info is None:
+            return None
+        cell_ids = np.insert(cells_info.label.to_numpy(), 0, 0)
+        cells_id_in_order = cell_ids[np.searchsorted(cells_info.index.to_numpy() + 1, labels, side='right')]
+        return cells_id_in_order
+
+    def export_segmentation_to_matlab(self, outfolder, filename):
+        out = dict()
+        for frame in range(1, self.number_of_frames + 1):
+            labels = self.get_trackking_labels(frame)
+            out["frame%d" % frame] = labels.astype("uint16")
+        out["valid_frames"] = self.valid_frames
+        out["number_of_frames"] = self.number_of_frames
+        savemat(os.path.join(outfolder, filename + '.mat'), out)
+        return 0
+
+    def export_segmentation_to_tiff(self, outfolder, filename):
+        out = np.zeros((self.number_of_frames, 2, 1, self.labels.shape[0], self.labels.shape[1]),dtype="uint16")
+        for frame in range(1, self.number_of_frames + 1):
+            if self.is_frame_valid(frame):
+                labels = self.get_trackking_labels(frame)
+                out[frame - 1, 0, 0, :,:] = labels.astype("uint16")
+                cell_types = self.get_cell_types(frame)
+                out[frame - 1, 1, 0, :, :] = cell_types.astype("uint16")
+        save_tiff(os.path.join(outfolder, filename + '.tif'),out , axes="TCZYX", data_type="uint16")
+        return 0
+
+    def export_segmentation_to_npy(self, outfolder, filename):
+        out = [None] * self.number_of_frames
+        for frame in range(1, self.number_of_frames + 1):
+            labels = self.get_trackking_labels(frame)
+            out[frame - 1] = labels.astype("uint16")
+        out = np.array(out).astype("uint16")
+        np.save(os.path.join(outfolder, filename + '.tif'), out)
         return 0
