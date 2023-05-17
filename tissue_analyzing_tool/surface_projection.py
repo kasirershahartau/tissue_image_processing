@@ -227,14 +227,14 @@ def movie_surface_projection(files, reference_channel, position_final_movie, ini
         movie_zmap = np.concatenate([np.load(zmap_files[position][i]).astype("uint16") for i in range(len(zmap_files[position]))], axis=0)
         np.save(os.path.join(output_dir, "zmap_position%d.npy" %(position+1)), movie_zmap)
     # Saving stage location (to correct for stage movement between movies)
-    save_stage_positions(files, position_final_movie, initial_positions_number, output_dir)
+    save_stage_positions(files, position_final_movie, initial_positions_number, output_dir, only_position=only_position)
     # Removing timepoints projection
     for position_files in projection_files + zmap_files:
         for projection_file in position_files:
             os.remove(projection_file)
 
 
-def save_stage_positions(files, position_final_movie, initial_positions_number, output_dir):
+def save_stage_positions(files, position_final_movie, initial_positions_number, output_dir, only_position=0):
     positions = list(range(initial_positions_number))
     meta = get_image_metadata(files[0])
     stage_pos = [{"x": [meta.images[i].stage_label.x]*meta.images[i].pixels.size_t,
@@ -253,6 +253,8 @@ def save_stage_positions(files, position_final_movie, initial_positions_number, 
         meta = get_image_metadata(files[file_index])
         remove_positions = []
         for position_index, position in enumerate(positions):
+            if only_position > 0 and position != only_position - 1:
+                continue
             stage_pos[position]["x"].extend(
                 [meta.images[position_index].stage_label.x]*meta.images[position_index].pixels.size_t)
             stage_pos[position]["y"].extend(
