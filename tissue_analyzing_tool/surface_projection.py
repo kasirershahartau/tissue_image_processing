@@ -12,6 +12,7 @@ from optparse import OptionParser
 from basic_image_manipulations import *
 from skimage.measure import block_reduce
 from skimage.transform import resize
+from glob import glob
 
 def time_point_surface_projection(time_point, axes, reference_channel, min_z=0, max_z=0,
                        method='max_averages', bin_size=1, airyscan=True, z_map=False, atoh_shift=0,
@@ -164,9 +165,8 @@ def find_pixel_plane(score, chozen_z, pixel_row, pixel_col, max_row, max_col, ma
         return (neighbor1_plane + neighbor2_plane) / 2
 
 
-
 def movie_surface_projection(files, reference_channel, position_final_movie, initial_positions_number, output_dir,
-                             method, bin_size, build_manifold, only_position, zmin, zmax, airyscan):
+                             method, bin_size, build_manifold, only_position, zmin, zmax, airyscan, output_name=""):
     """
     @param files: list of movie czi files in order
     @param reference_channel: Index of channel that will be used for projection
@@ -214,7 +214,7 @@ def movie_surface_projection(files, reference_channel, position_final_movie, ini
 
         for to_delete in remove_positions:
             positions.remove(to_delete)
-    #  Updating meta data and saving projections
+    # Updating meta data and saving projections
     for position in range(initial_positions_number):
         if only_position > 0 and position != only_position - 1:
             continue
@@ -222,19 +222,20 @@ def movie_surface_projection(files, reference_channel, position_final_movie, ini
         new_metadata = update_projection_metadata(former_metadata, np.sum(time_points_number[position, :]),
                                                   series=position)
         movie_projection = concatenate_time_points(projection_files[position])
-        save_tiff(os.path.join(output_dir, "position%d.tif" %(position+1)), movie_projection,
+        save_tiff(os.path.join(output_dir, output_name + "position%d.tif" %(position+1)), movie_projection,
                   metadata=new_metadata, axes="TCYX",data_type="uint16")
-        movie_zmap = np.concatenate([np.load(zmap_files[position][i]).astype("uint16") for i in range(len(zmap_files[position]))], axis=0)
-        np.save(os.path.join(output_dir, "zmap_position%d.npy" %(position+1)), movie_zmap)
+        movie_zmap = np.concatenate([np.load(zmap_files[position][i]).astype(
+        "uint16") for i in range(len(zmap_files[position]))], axis=0)
+        np.save(os.path.join(output_dir, output_name + "zmap_position%d.npy" %(position+1)), movie_zmap)
     # Saving stage location (to correct for stage movement between movies)
-    save_stage_positions(files, position_final_movie, initial_positions_number, output_dir, only_position=only_position)
+    save_stage_positions(files, position_final_movie, initial_positions_number, output_dir, only_position=only_position, output_name=output_name)
     # Removing timepoints projection
     for position_files in projection_files + zmap_files:
         for projection_file in position_files:
             os.remove(projection_file)
 
 
-def save_stage_positions(files, position_final_movie, initial_positions_number, output_dir, only_position=0):
+def save_stage_positions(files, position_final_movie, initial_positions_number, output_dir, only_position=0, output_name=""):
     positions = list(range(initial_positions_number))
     meta = get_image_metadata(files[0])
     stage_pos = [{"x": [meta.images[i].stage_label.x]*meta.images[i].pixels.size_t,
@@ -253,6 +254,8 @@ def save_stage_positions(files, position_final_movie, initial_positions_number, 
         meta = get_image_metadata(files[file_index])
         remove_positions = []
         for position_index, position in enumerate(positions):
+            if position_final_movie[position] == file_index + 1:
+                remove_positions.append(position)
             if only_position > 0 and position != only_position - 1:
                 continue
             stage_pos[position]["x"].extend(
@@ -261,12 +264,12 @@ def save_stage_positions(files, position_final_movie, initial_positions_number, 
                 [meta.images[position_index].stage_label.y] * meta.images[position_index].pixels.size_t)
             stage_pos[position]["z"].extend(
                 [meta.images[position_index].stage_label.z] * meta.images[position_index].pixels.size_t)
-            if position_final_movie[position] == file_index + 1:
-                remove_positions.append(position)
         for to_delete in remove_positions:
             positions.remove(to_delete)
     for i in range(initial_positions_number):
-        out_path = os.path.join(output_dir, "stage_locations_position%d.pkl" %(i + 1))
+        if only_position > 0 and i != only_position - 1:
+            continue
+        out_path = os.path.join(output_dir, output_name + "stage_locations_position%d.pkl" %(i + 1))
         with open(out_path, 'wb') as f:
             pickle.dump(stage_pos[i], f)
 
@@ -364,6 +367,9 @@ def getOptions():
     parser.add_option("--max-z", dest="zmax",
                       help="Last z surface to consider for projection [default: all surfaces]",
                       type=int, default=0)
+    parser.add_option("--separate-files", dest="separate_files",
+                      help="Project each czi file separately [default:False]",
+                      default=False, action="store_true")
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -392,6 +398,12 @@ if __name__ == "__main__":
                                bin_size=bin_size, method=method ,build_manifold=build_manifold, min_z=zmin, max_z=zmax,
                                airyscan=airyscan)
 
+    elif options.separate_files:
+        files = glob(os.path.join(input_dir, "*.czi"))
+        for file in files:
+            movie_surface_projection([file], reference_channel, (1,), position_number, output_dir,
+                                     method, bin_size, build_manifold, only_position, zmin, zmax, airyscan,
+                                     output_name=os.path.basename(file))
     else:
         movie_number = options.movie_number
         position_final_movie = options.position_final_movie
