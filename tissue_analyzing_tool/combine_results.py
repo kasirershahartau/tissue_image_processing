@@ -14,7 +14,8 @@ E17_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-11-11-E
                "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-12-23_E17.5_utricle_atoh_zo\\position4-analysis"]
 P0_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-07-31_P0\\position3-analysis\\Events statistics\\",
               "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-07-31_P0\\position2-analysis\\"]
-
+Rho_inhibition_E17_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-12-01_E17.5_utricle_rho_inhibition\\position2_event_statistics\\"]
+Rho_inhibition_P0_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2023-06-25_P0_atoh_zo_rock_inhibitor\\position3_event_statistics\\"]
 
 def combine_frame_compare_results():
     # Contact length with SC
@@ -271,6 +272,20 @@ def plot_E17_neighbors_by_type():
                              normalization_list,
                              data_labels, y_labels, continues=False)
 
+def plot_E17_rho_inhibition_neighbors_by_type():
+    folder = Rho_inhibition_E17_folders
+    x_labels = ["Near differentiations",
+                "reference SC 24h"]
+    data_files_list = [["neighbors_by_type_differentiation_data"]]
+    reference_files_list = [["neighbors_by_type_reference_SC_frame91_data"]]
+    normalization_list = [1, 1]
+    pairs_to_compare = [(0, 1)]
+    y_labels = ["# SC neighbors", "# HC neighbors"]
+    data_labels = ["SC neighbors", "HC neighbors"]
+    compare_event_statistics(folder, data_files_list, reference_files_list, x_labels, pairs_to_compare,
+                             normalization_list,
+                             data_labels, y_labels, continues=False)
+
 def plot_E17_second_neighbors_by_type():
     folder = E17_folders
     x_labels = ["Near delaminations", "Near divisions", "Near differentiations",
@@ -368,6 +383,28 @@ def compare_E17_P0_neighbors_by_type():
     edge_color = ["blue", "blue", "red", "red"]
 
     compare_event_statistics((E17_folder,P0_folder), E17_data_files_list, P0_reference_files_list , x_labels, pairs_to_compare,
+                             normalization_list,
+                             data_labels, y_labels, continues=False, color=color, edge_color=edge_color)
+
+def compare_E17_P0_rho_inhibition_neighbors_by_type():
+    E17_folder = Rho_inhibition_E17_folders
+    P0_folder = Rho_inhibition_P0_folders
+    # x_labels = ["Differentiating\ncells",  "All\nSCs", "Differentiating\ncells",
+    #             "All\nSCs"]
+    x_labels = [""] * 4
+    E17_data_files_list = [
+        ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame91_data"]]
+    P0_reference_files_list = [
+        ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame93_data"]]
+    normalization_list = [1, 1]
+    pairs_to_compare = [(0, 1), (2, 3), (0, 2)]
+    y_labels = ["# SC neighbors", "# HC neighbors"]
+    data_labels = ["SC neighbors", "HC neighbors"]
+    color = ["blue", "white", "red", "white"]
+    edge_color = ["blue", "blue", "red", "red"]
+
+    compare_event_statistics((E17_folder, P0_folder), E17_data_files_list, P0_reference_files_list, x_labels,
+                             pairs_to_compare,
                              normalization_list,
                              data_labels, y_labels, continues=False, color=color, edge_color=edge_color)
 
@@ -678,10 +715,13 @@ if __name__ == "__main__":
     # compare_E17_P0_neighbors_by_type()
     # compare_E17_P0_number_of_neighbors()
     # compare_E17_P0_area_and_roundness()
-    compare_E17_P0_contact_length()
+    # compare_E17_P0_contact_length()
+
     # compare_distance_from_ablation()
     # compare_normal_and_promoted_differentiation()
     # plot_number_of_events()
     # compare_deformability()
     # plot_E17_second_neighbors_by_type()
     # plot_P0_second_neighbors_by_type()
+    # plot_E17_rho_inhibition_neighbors_by_type()
+    compare_E17_P0_rho_inhibition_neighbors_by_type()
