@@ -11,21 +11,20 @@ from shutil import rmtree
 import numpy as np
 import pandas as pd
 import copy
-
-import trackpy
 from matplotlib import pyplot as plt
 from matplotlib import cm as colormap
 from matplotlib.patches import Circle
+from matplotlib.colors import LogNorm
 from scipy.ndimage.filters import maximum_filter, minimum_filter
+from scipy.ndimage import convolve1d
 from scipy.interpolate import UnivariateSpline
 from scipy.spatial import Voronoi, Delaunay
 from scipy.io import savemat
 from skimage.draw import line, disk
-from skimage.measure import regionprops_table, regionprops
+from skimage.measure import regionprops_table
 from skimage.measure import label as label_image_regions
-from skimage.color import label2rgb
 from skimage.filters import threshold_local
-from skimage.registration import phase_cross_correlation
+from skimage.registration import phase_cross_correlation, optical_flow_tvl1
 import zipfile
 from basic_image_manipulations import read_tiff, blur_image, save_tiff
 from time import sleep
@@ -35,6 +34,7 @@ import trackpy
 HC_TYPE = 1
 SC_TYPE = 2
 INVALID_TYPE = 0
+DIFFERENTIATING_TYPE = 3
 MAX_SEG_LINE_LENGTH = 100
 CELL_INFO_SPECS = {"area": 0,
                    "perimeter": 0,
@@ -146,12 +146,14 @@ class Tissue(object):
     SPECIAL_FEATURES = ["shape index", "roundness", "neighbors from the same type", "HC neighbors", "SC neighbors",
                         "HC second neighbors", "SC second neighbors", "second neighbors",
                         "second neighbors from the same type", "contact length",
-                        "HC contact length", "SC contact length", "Mean atoh intensity", "Distance from ablation"]
+                        "HC contact length", "SC contact length", "Mean atoh intensity", "Distance from ablation",
+                        ]
     SPATIAL_FEATURES = ["HC density", "SC density", "HC type_fraction", "SC type_fraction"]
     SPECIAL_X_ONLY_FEATURES = ["psi6"]
     SPECIAL_Y_ONLY_FEATURES = ["histogram"]
-    GLOBAL_FEATURES = ["density", "type_fraction", "total_area", "number_of_cells"]
-    SPECIAL_EVENT_STATISTICS_FEATURES = ["timing histogram"]
+    GLOBAL_FEATURES = ["density", "type_fraction", "total_area", "number_of_cells",
+                       "neighbors correlation", "neighbors correlation average",]
+    SPECIAL_EVENT_STATISTICS_FEATURES = ["timing histogram", "spatio-temporal correlation"]
     CELL_TYPES = ["all", "HC", "SC"]
     FITTING_SHAPES = ["ellipse", "circle arc", "line", "spline"]
     EVENT_TYPES = ["ablation", "division", "delamination", "differentiation", "promoted differentiation"]
@@ -281,6 +283,22 @@ class Tissue(object):
             self.cell_types = self.load_cell_types(frame_number)
         return self.cell_types
 
+    def merge_invalid_neighboring_cells(self, frame):
+        labels = self.get_labels(frame)
+        cell_types = self.get_cell_types(frame)
+        # Find pixels that are inside invalid cell or on the border between invalid cells
+        candidate_pixels = maximum_filter(cell_types, (3, 3), mode='constant') == 0
+        # Filter only border pixels
+        to_remove = np.logical_and(labels == 0, candidate_pixels)
+        remove_list = np.argwhere(to_remove)
+        while len(remove_list) > 0:
+            self.remove_segmentation_line(frame, (remove_list[0,1], remove_list[0,0]), use_existing_types=True)
+            labels = self.get_labels(frame)
+            to_remove = np.logical_and(labels == 0, candidate_pixels)
+            remove_list = np.argwhere(to_remove)
+        self.update_labels(frame)
+        return 0
+
     def get_segmentation(self, frame_number):
         labels = self.get_labels(frame_number)
         if labels is None:
@@ -355,7 +373,7 @@ class Tissue(object):
 
     def get_cell_centroid_by_id(self, frame, id):
         cells_info = self.get_cells_info(frame)
-        cell = cells_info.query("label == %d" % id)
+        cell = cells_info.query("label == %d and valid == 1 and empty_cell == 0" % id)
         if cell.shape[0] < 1:
             return None
         if cell.shape[0] > 1:
@@ -643,6 +661,94 @@ class Tissue(object):
             yield frame
         return 0
 
+    def calc_overall_drift(self):
+        overall_drift = np.zeros(self.drifts.shape)
+        last_drift_y = 0
+        last_drift_x = 0
+        for frame in range(self.number_of_frames):
+            if self.is_frame_valid(frame + 1):
+                last_drift_y += self.drifts[frame, 0]
+                last_drift_x += self.drifts[frame, 1]
+            overall_drift[frame, 0] = last_drift_y
+            overall_drift[frame, 1] = last_drift_x
+        return overall_drift
+
+    def calculate_neighbors_correlation_function(self, frame, valid_cells, set_state_by="type", method="neighbors"):
+        if set_state_by == "intensity":
+            state = valid_cells.mean_intensity
+        elif set_state_by == "type":
+            state = pd.Series(data=0, index=valid_cells.index)
+            HC_indices = valid_cells.query("type == \"HC\"").index
+            state[HC_indices] = 1
+        state_avg = np.average(state)
+        states_var = np.var(state)
+        if method == "neighbors":
+            frame_corr = 0
+            contacts_counter = 0
+            for index, cell in valid_cells.iterrows():
+                cell_state = state[index]
+                cell_state_minus_average = cell_state - state_avg
+                for neighbor_index in list(cell.neighbors):
+                    if neighbor_index - 1 in valid_cells.index:
+                        neighbor_state = state[neighbor_index - 1]
+                        frame_corr += (neighbor_state - state_avg) * cell_state_minus_average
+                        contacts_counter += 1
+            frame_corr /= (contacts_counter * states_var)
+
+        elif method == "neighbors average":
+            neighbors_states = np.zeros((valid_cells.shape[0],))
+            i = 0
+            for index, cell in valid_cells.iterrows():
+                neighbors_state_sum = 0
+                valid_neighbors_counter = 0
+                for neighbor_index in list(cell.neighbors):
+                    if neighbor_index - 1 in valid_cells.index:
+                        neighbors_state_sum += state[neighbor_index - 1]
+                        valid_neighbors_counter += 1
+                if valid_neighbors_counter > 0:
+                    neighbors_states[i] = neighbors_state_sum/valid_neighbors_counter
+                i += 1
+            frame_corr = np.sum((state.to_numpy() - state_avg)*(neighbors_states - np.average(neighbors_states)))/\
+                         (valid_cells.shape[0] * np.sqrt(states_var) * np.std(neighbors_states))
+        else:
+            raise NotImplementedError
+        return frame_corr
+
+    def calc_neighborwise_distance(self):
+        #skimage.graph.RAG(label_image=None)
+        pass
+
+    def calculate_events_correlation_function(self, spatial_bin_size, temporal_bin_size, event_type="all"):
+        events = self.get_events()
+        if event_type != "all":
+            events = events.query("type == \"%s\"" % event_type)
+        overall_drift = self.calc_overall_drift()
+        frame_shape = self.get_labels(self.labels_frame).shape
+        initial_r_bins = frame_shape[1] // spatial_bin_size
+        initial_t_bins = self.number_of_frames//temporal_bin_size
+        correlation = np.zeros((initial_t_bins, initial_r_bins))
+        for index1, event1 in events.iterrows():
+            for index2, event2 in events.iterrows():
+                if index2 < index1:
+                    continue
+                x_dist = event1.start_pos_x + overall_drift[event1.start_frame, 1] - event2.start_pos_x - overall_drift[event2.start_frame, 1]
+                y_dist = event1.start_pos_y + overall_drift[event1.start_frame, 0] - event2.start_pos_y - overall_drift[event2.start_frame, 0]
+                r_dist = np.sqrt(x_dist**2 + y_dist**2)
+                t_dist = abs(event1.start_frame - event2.start_frame)
+                r_bin = r_dist // spatial_bin_size
+                t_bin = t_dist // temporal_bin_size
+                if abs(t_bin) >= correlation.shape[0] or abs(r_bin) >= correlation.shape[1]:
+                    new_correlation = np.zeros((correlation.shape[0]*2, correlation.shape[1]*2))
+                    new_correlation[:correlation.shape[0], :correlation.shape[1]] = correlation
+                    correlation = new_correlation
+                correlation[int(t_bin), int(r_bin)] = correlation[int(t_bin), int(r_bin)] + 1
+        # normalizing by the number of pixels in every distance
+        bin_average_dist = spatial_bin_size/2
+        for r_bin_index in range(correlation.shape[1]):
+            correlation[:,r_bin_index] = correlation[:,r_bin_index]/(2*np.pi*bin_average_dist)
+            bin_average_dist += spatial_bin_size
+        return correlation/events.shape[0]
+
     def calculate_frame_cellinfo(self, frame_number, hc_marker_image=None, hc_threshold=0.01, use_existing_types=False,
                                  percentage_above_HC_threshold=90, peak_window_radius=10):
         """
@@ -693,7 +799,7 @@ class Tissue(object):
         cells_info = self.get_cells_info(frame)
         if cells_info is None:
             return None
-        cells_with_matching_label = cells_info.query("label == %d" % cell_id)
+        cells_with_matching_label = cells_info.query("label == %d and valid == 1 and empty_cell == 0" % cell_id)
         if cells_with_matching_label.shape[0] > 0:
             return cells_with_matching_label
         else:
@@ -879,6 +985,10 @@ class Tissue(object):
                 data = self.calculate_type_fraction(frame, valid_cells, reference)
             elif feature == "number_of_cells":
                 data = valid_cells.shape[0]
+            elif "neighbors correlation" in feature:
+                method = "neighbors_average" if "average" in feature else "neighbors"
+                data = self.calculate_neighbors_correlation_function(frame, valid_cells, set_state_by="type",
+                                                                     method=method)
         elif feature in spatial_features:
             cells_info = self.get_cells_info(frame)
             relevant_cells = self.get_valid_non_edge_cells(frame, cells_info)
@@ -1062,6 +1172,24 @@ class Tissue(object):
         ax.set_title(title)
         return res, ""
 
+    def plot_spatial_map_over_time(self, frames, feature, window_radius, window_step, ax, cells_type='all'):
+        maps_list = []
+        valid_frames = []
+        for frame in frames:
+            if self.is_frame_valid(frame):
+                map, msg = self.calculate_spatial_data(frame, window_radius, window_step, feature, cells_type=cells_type)
+                valid_frames.append(frame)
+            maps_list.append(map)
+        maps_list = np.dstack(maps_list)
+        time = np.array(valid_frames)/4
+        for x in maps_list.shape[0]:
+            for y in maps_list.shape[1]:
+                location_x = np.round(x*window_step + window_radius/2)
+                location_y = np.round(y*window_step + window_radius/2)
+                ax.plot(valid_frames, maps_list[x, y, :], label="x=%d um, y=%d um" % (location_x, location_y))
+        ax.set_xlabel("Time (hours)")
+        ax.set_ylabel("Neighbors Correlation")
+
     def plot_spatial_map(self, frame, feature, window_radius, window_step, ax, cells_type='all', vmin=None, vmax=None):
         map, msg = self.calculate_spatial_data(frame, window_radius, window_step, feature, cells_type=cells_type)
         labels = self.get_labels(frame)
@@ -1191,6 +1319,21 @@ class Tissue(object):
             if x_feature in self.SPECIAL_EVENT_STATISTICS_FEATURES:
                 if x_feature == "timing histogram":
                     x_data = event_data.significant_frame.to_numpy().astype("float")
+                elif x_feature == "spatio-temporal correlation":
+                    x_data = self.calculate_events_correlation_function(y_radius, x_radius, event_type)
+                    im = ax.matshow(np.flipud(x_data.T), cmap=plt.cm.RdBu,
+                                    extent=[0, x_data.shape[0] * x_radius * 15, 0,
+                                            x_data.shape[1] * y_radius * 0.1], aspect='auto',
+                                    vmin=0, vmax=np.max(x_data[x_data < x_data[0,0]]))
+                    plt.colorbar(im)
+                    ax.set_xlabel("Time (minutes)")
+                    ax.set_ylabel("Distance (microns)")
+                    time_axis = np.arange(start=0, stop=x_data.shape[0] * x_radius * 15, step=x_radius*15)
+                    distance_axis = np.arange(start=0, stop=x_data.shape[1] * y_radius * 0.1, step=y_radius*0.1)
+                    msg = ""
+                    res_dict = {"event type": event_type, "distance axis": distance_axis,
+                                        "time axis": time_axis, "correlation": x_data}
+                    return res_dict, msg
                 x_data_calculated = True
             else:
                 x_data = np.zeros(event_data.shape[0])
@@ -1278,7 +1421,7 @@ class Tissue(object):
         if cells_info is None:
             return -1
         if reference_cell_num is None:
-            all_cells = cells_info.query("valid == 1")
+            all_cells = cells_info.query("valid == 1 and empty_cell == 0")
             reference_cell_num = all_cells.shape[0]
         if reference_cell_num > 0:
             return relevant_cells.shape[0] / reference_cell_num
@@ -1355,7 +1498,7 @@ class Tissue(object):
 
     def calculate_contact_length(self, frame, cell_info, max_filtered_labels, min_filtered_labels, cell_type='all'):
         cells_info = self.get_cells_info(frame)
-        cell_label = cells_info.query("label == %d" % cell_info.label).index.to_numpy() + 1
+        cell_label = cells_info.query("label == %d and valid == 1 and empty_cell == 0" % cell_info.label).index.to_numpy() + 1
         region_first_row = int(max(0, cell_info.bounding_box_min_row - 2))
         region_last_row = int(cell_info.bounding_box_max_row + 2)
         region_first_col = int(max(0, cell_info.bounding_box_min_col - 2))
@@ -1407,7 +1550,7 @@ class Tissue(object):
                 frame_data['frame_index'] = index
                 index += 1
                 # Fix drifts
-                if frame > 1:
+                if frame > initial_frame:
                     if use_existing_drifts and not update_next_drift:
                         overall_drift_x += tissue.drifts[frame - 1, 1]
                         frame_data.loc[:,"cx"] = frame_data["cx"] + overall_drift_x
@@ -1422,15 +1565,63 @@ class Tissue(object):
                         frame_data.loc[:,"cy"] = frame_data["cy"] + overall_drift_y
                 previous_frame = frame
                 yield frame_data
-        predictor = trackpy.predict.DriftPredict(pos_columns=["cy", "cx"])
-        tracking_iter = predictor.link_df_iter(cells_info_iterator(self), search_range=50, adaptive_stop=10,
-                                             pos_columns=["cy", "cx"], t_column="frame_index", memory=2)
+
+        tracking_iter = trackpy.link_df_iter(cells_info_iterator(self), search_range=100, adaptive_stop=10,
+                                             pos_columns=["cy", "cx", "area"], t_column="frame_index", memory=3,
+                                             neighbor_strategy='BTree', dist_func=self.tracking_dist_func)
         for frame_data in tracking_iter:
             frame = frame_data.frame.values[0]
             cells_info = self.get_cells_info(frame)
-            cells_info.loc[frame_data.index, "label"] = frame_data["particle"]
+            cells_info.loc[frame_data.index, "label"] = frame_data["particle"] + 1
             yield frame
         return 0
+
+    @staticmethod
+    def tracking_dist_func(first, second):
+        return np.sqrt((first[0] - second[0]) ** 2 + (first[1] - second[1]) ** 2 + 0.5 * (
+                    np.sqrt(first[2]) - np.sqrt(second[2])) ** 2)
+
+    @staticmethod
+    def calculate_refine_drift(previous_image, current_image,
+                               course_shift_x, course_shift_y):
+        # Refine drift prediction by phase cross correlation
+        rounded_shift_x = int(np.floor(course_shift_x))
+        rounded_shift_y = int(np.floor(course_shift_y))
+        if rounded_shift_x > 0:
+            if rounded_shift_y > 0:
+                previous_img = previous_image[rounded_shift_x:, rounded_shift_y:]
+                current_img = current_image[:-rounded_shift_x, :-rounded_shift_y]
+            elif rounded_shift_y < 0:
+                previous_img = previous_image[rounded_shift_x:, :rounded_shift_y]
+                current_img = current_image[:-rounded_shift_x, -rounded_shift_y:]
+            else:
+                previous_img = previous_image[rounded_shift_x:, :]
+                current_img = current_image[:-rounded_shift_x, :]
+        elif rounded_shift_x < 0:
+            if rounded_shift_y > 0:
+                previous_img = previous_image[:rounded_shift_x, rounded_shift_y:]
+                current_img = current_image[-rounded_shift_x:, :-rounded_shift_y]
+            elif rounded_shift_y < 0:
+                previous_img = previous_image[:rounded_shift_x, :rounded_shift_y]
+                current_img = current_image[-rounded_shift_x:, -rounded_shift_y:]
+            else:
+                previous_img = previous_image[:rounded_shift_x, :]
+                current_img = current_image[-rounded_shift_x:, :]
+        else:
+            if rounded_shift_y > 0:
+                previous_img = previous_image[:, rounded_shift_y:]
+                current_img = current_image[:, :-rounded_shift_y]
+            elif rounded_shift_y < 0:
+                previous_img = previous_image[:, :rounded_shift_y]
+                current_img = current_image[:, -rounded_shift_y:]
+            else:
+                previous_img = previous_image[:, :]
+                current_img = current_image[:, :]
+        refined_shift, error, diffphase = phase_cross_correlation(previous_img, current_img,
+                                                                  upsample_factor=100)
+        shift_x = rounded_shift_x + refined_shift[-2]
+        shift_y = rounded_shift_y + refined_shift[-1]
+        return shift_x, shift_y
 
     def update_drift(self, frame, previous_frame, images=None, image_in_memory=False):
         if self.stage_locations is not None:
@@ -1480,14 +1671,14 @@ class Tissue(object):
                 previous_img = previous_img.compute()
                 current_img = current_img.compute()
             refined_shift, error, diffphase = phase_cross_correlation(previous_img, current_img,
-                                                                      upsample_factor=100)
+                                                                        upsample_factor=100)
             shift_x = rounded_shift_x + refined_shift[-2]
             shift_y = rounded_shift_y + refined_shift[-1]
         self.drifts[frame - 1, 0] = shift_y
         self.drifts[frame - 1, 1] = shift_x
         return shift_y, shift_x
 
-    def track_cells_iterator(self, initial_frame=1, final_frame=-1, images=None, image_in_memory=False):
+    def track_cells_iterator(self, initial_frame=1, final_frame=-1, images=None, image_in_memory=False, use_piv=False):
         if final_frame == -1:
             final_frame = self.number_of_frames
         cells_info = self.get_cells_info(initial_frame)
@@ -1511,7 +1702,18 @@ class Tissue(object):
                     self.drifts[frame - 1, :] = np.nan
                     update_next_drift = True
                 continue
-            if use_existing_drifts and not update_next_drift:
+            if use_piv and images is not None:
+                last_image = images[previous_frame - 1]
+                current_image = images[frame - 1]
+                if not image_in_memory:
+                    last_image = last_image.compute()
+                    current_image = current_image.compute()
+                piv_x, piv_y = optical_flow_tvl1(last_image, current_image)
+                drift_map_x = piv_x[np.round(cx_previous_frame).astype(int), np.round(cy_previous_frame).astype(int)]
+                drift_map_y = piv_y[np.round(cx_previous_frame).astype(int), np.round(cy_previous_frame).astype(int)]
+                cx_previous_frame -= drift_map_x
+                cy_previous_frame -= drift_map_y
+            elif use_existing_drifts and not update_next_drift:
                 cx_previous_frame -= self.drifts[frame - 1, 1]
                 cy_previous_frame -= self.drifts[frame - 1, 0]
             else:
@@ -1554,6 +1756,134 @@ class Tissue(object):
             yield frame
         return 0
 
+    def fix_one_frame_tracking_using_local_drifts(self, start_frame, images, step_size=100, window_size=500,
+                                                  image_in_memory=False):
+
+        # find next valid frame
+        next_frame = -1
+        for frame in range(start_frame + 1, self.number_of_frames):
+            if self.valid_frames[frame - 1] == 1:
+                next_frame = frame
+                break
+        if next_frame < 0:
+            return 0
+        if self.stage_locations is not None:
+            shift = (self.stage_locations.loc[next_frame - 1, ["z", "y", "x"]].to_numpy() -
+                     self.stage_locations.loc[start_frame - 1, ["z", "y", "x"]].to_numpy()) / \
+                    self.stage_locations.loc[
+                        frame - 1, ["physical_size_z", "physical_size_y", "physical_size_x"]].to_numpy()
+        else:
+            shift = (0, 0)
+        initial_shift_x = shift[-2]  # x/y are swapped between stage location and image
+        initial_shift_y = shift[-1]
+
+        first_image = images[start_frame - 1]
+        second_image = images[next_frame - 1]
+        first_cell_info = self.get_cells_info(start_frame).query("valid == 1 and empty_cell == 0")
+        first_cx = np.copy(first_cell_info.cx.to_numpy())
+        first_cy = np.copy(first_cell_info.cy.to_numpy())
+        if not image_in_memory:
+            first_image = first_image.compute()
+            second_image = second_image.compute()
+        local_shifts_x = np.zeros(first_image.shape)
+        local_shifts_y = np.zeros(first_image.shape)
+        shifts_counter = np.zeros(first_image.shape)
+        for initial_row in range(0, first_image.shape[0] - window_size, step_size):
+            for initial_col in range(0, first_image.shape[1] - window_size, step_size):
+                if initial_row + step_size + window_size > first_image.shape[0]:
+                    final_row = first_image.shape[0]
+                else:
+                    final_row = initial_row+window_size
+                if initial_col + step_size + window_size > first_image.shape[1]:
+                    final_col = first_image.shape[1]
+                else:
+                    final_col = initial_col + window_size
+                local_first_image = first_image[initial_row:final_row, initial_col:final_col]
+                local_second_image = second_image[initial_row:final_row, initial_col:final_col]
+                shift_x, shift_y = self.calculate_refine_drift(local_first_image, local_second_image, initial_shift_x, initial_shift_y)
+                local_shifts_x[initial_row:final_row, initial_col:final_col] += shift_x
+                local_shifts_y[initial_row:final_row, initial_col:final_col] += shift_y
+                shifts_counter[initial_row:final_row, initial_col:final_col] += 1
+        local_shifts_x = local_shifts_x / shifts_counter
+        local_shifts_y = local_shifts_y / shifts_counter
+        drift_map_x = local_shifts_x[np.round(first_cx).astype(int), np.round(first_cy).astype(int)]
+        drift_map_y = local_shifts_y[np.round(first_cx).astype(int), np.round(first_cy).astype(int)]
+        first_cx -= drift_map_x
+        first_cy -= drift_map_y
+        first_frame_linking_info = pd.DataFrame({"cx": first_cx, "cy": first_cy,
+                                                 "area": np.copy(first_cell_info.area.to_numpy()),
+                                                 "frame_index": np.zeros(first_cx.shape),
+                                                 "label": np.copy(first_cell_info.label.to_numpy())}, index=first_cell_info.index,)
+        second_cell_info = self.get_cells_info(next_frame).query("valid == 1 and empty_cell == 0")
+        second_frame_linking_info = pd.DataFrame({"cx": second_cell_info.cx.to_numpy(), "cy": second_cell_info.cy.to_numpy(),
+                                                  "area": np.copy(second_cell_info.area.to_numpy()),
+                                                  "frame_index": np.ones((second_cell_info.shape[0],)),
+                                                  "label": np.copy(second_cell_info.label.to_numpy())}, index=second_cell_info.index)
+        link_info = trackpy.link(pd.concat([first_frame_linking_info, second_frame_linking_info]), search_range=100,
+                                 adaptive_stop=10, pos_columns=["cy", "cx", "area"], t_column="frame_index", memory=0,
+                                 neighbor_strategy='BTree', dist_func=self.tracking_dist_func)
+        # Re-linking the cells
+        first_frame_linking_info = link_info.query("frame_index == 0").loc[:, ["label", "particle"]]
+        second_frame_linking_info = link_info.query("frame_index == 1").loc[:, ["label", "particle"]]
+        first_frame_labels = first_frame_linking_info.label.to_numpy()
+        second_frame_particle_numbers = second_frame_linking_info.particle.to_numpy()
+        # creating a LUT for the second frame
+        old_labels = second_frame_linking_info.label.to_numpy()
+        new_labels = np.copy(old_labels)
+        # There are 4 groups that should be handled -
+        # 1. Unliked cells that appear only in the second frame cells that were unlinked and should stay the same -
+        # These were already handled since the old labels were copied
+        # 2. Cells that where linked in the new tracking should get their updated label
+        linked_labels = second_frame_particle_numbers < first_frame_labels.size
+        new_labels[linked_labels] = first_frame_labels[second_frame_particle_numbers[linked_labels]]
+        # 3. Unlinked cells which has a label that exist in the first frame - i.e they were linked before but now
+        # they're not. These cells should get a new label
+        unlinked_recurring_labels = np.logical_and(~linked_labels, np.isin(new_labels, first_frame_labels))
+        first_free_label = max(np.max(first_frame_labels), np.max(new_labels)) + 1
+        number_of_new_labels = np.sum(unlinked_recurring_labels.astype(int))
+        new_labels[unlinked_recurring_labels] = np.arange(first_free_label, first_free_label + number_of_new_labels)
+        # At this point we can assign the new labels to the second frame
+        assigning_indices = second_frame_linking_info.index.to_numpy()
+        self.cells_info.loc[assigning_indices, "label"] = new_labels
+        # But for subsequent frames we will also need to handle another group:
+        # 4. Unliked cells that do not appear in the second frame - should have an unchanged label since they
+        # might skip a frame
+        skip_labels = first_frame_labels[np.logical_and(~np.isin(first_frame_labels, old_labels, assume_unique=True),
+                                                        ~np.isin(first_frame_labels, new_labels, assume_unique=True))]
+        old_labels = np.hstack([old_labels, skip_labels])
+        new_labels = np.hstack([new_labels, skip_labels])
+        # Updating labels in all subsequent frames
+        for frame in range(next_frame + 1, self.number_of_frames):
+            if self.is_frame_valid(frame):
+                cells_info = self.get_cells_info(frame).query("valid == 1 and empty_cell == 0")
+                current_frame_labels = cells_info.label.to_numpy()
+                # First we need to update the LUT, There are 3 kinds of labels -
+                # 1. Labels that are already in the LUT keys - no need to do anything
+                # 2. Labels that are not in the LUT keys or values - should be skipped
+                in_keys = np.isin(current_frame_labels, old_labels, assume_unique=True)
+                in_values = np.isin(current_frame_labels, new_labels, assume_unique=True)
+                skip_labels = np.logical_and(~in_keys, ~in_values)
+                old_labels = np.hstack([old_labels, current_frame_labels[skip_labels]])
+                new_labels = np.hstack([new_labels, current_frame_labels[skip_labels]])
+                # 3. Labels that are not in the LUT keys but are already in its values - should get a new label
+                needs_new_label = np.logical_and(~in_keys, in_values)
+                first_free_label = max(np.max(old_labels), np.max(new_labels)) + 1
+                number_of_new_labels = np.sum(needs_new_label.astype(int))
+                old_labels = np.hstack([old_labels, current_frame_labels[needs_new_label]])
+                new_labels = np.hstack([new_labels, np.arange(first_free_label, first_free_label + number_of_new_labels)])
+                # Now that the LUT has been updates we can assign the new values
+                # We first take only the keys wee need
+                relevant_indices = np.isin(old_labels, current_frame_labels, assume_unique=True)
+                relevant_old_labels = old_labels[relevant_indices]
+                relevant_new_labels = new_labels[relevant_indices]
+                # sorting relevant LUT
+                keys_sorting_indices = np.argsort(relevant_old_labels)
+                # Assigning values
+                labels_sorting_indices = np.argsort(current_frame_labels)
+                assigning_indices = cells_info.index.to_numpy()
+                self.cells_info.loc[assigning_indices[labels_sorting_indices], "label"] = relevant_new_labels[keys_sorting_indices]
+        return 0
+
     def fix_cell_label(self, frame, position, new_label):
         if new_label <= 0:
             return 0
@@ -1570,7 +1900,7 @@ class Tissue(object):
         cells_info = self.get_cells_info(frame)
         if cells_info is not None:
             current_label = cells_info.label[cell_idx]
-            cells_with_same_label_index = cells_info.query("label == %d" % new_label).index
+            cells_with_same_label_index = cells_info.query("label == %d and valid == 1 and empty_cell == 0" % new_label).index
             if len(cells_with_same_label_index) > 0:
                 cells_info.at[cells_with_same_label_index[0],"label"] = current_label
             cells_info.at[cell_idx, "label"] = new_label
@@ -1578,9 +1908,9 @@ class Tissue(object):
             for future_frame in range(frame + 1, self.number_of_frames + 1):
                 cells_info = self.get_cells_info(future_frame)
                 if cells_info is not None:
-                    cell_idx = cells_info.query("label == %d" % current_label).index
+                    cell_idx = cells_info.query("label == %d and valid == 1 and empty_cell == 0" % current_label).index
                     if len(cell_idx) > 0:
-                        cells_with_same_label_index = cells_info.query("label == %d" % new_label).index
+                        cells_with_same_label_index = cells_info.query("label == %d and valid == 1 and empty_cell == 0" % new_label).index
                         if len(cells_with_same_label_index) > 0:
                             cells_info.at[cells_with_same_label_index[0], "label"] = current_label
                         cells_info.at[cell_idx[0], "label"] = new_label
@@ -1650,16 +1980,16 @@ class Tissue(object):
             blocksize += 1
         threshold = threshold_local(hc_marker_image, block_size=blocksize, method='generic', param=local_thresh_helper)
         max_brightness = np.percentile(hc_marker_image, 99)
-        local_maxima = find_local_maxima(hc_marker_image, window_size=window_size)
+        # local_maxima = find_local_maxima(hc_marker_image, window_size=window_size)
         cell_types = np.zeros(labels.shape)
         if properties is None:
             for cell_index in range(len(cells_info)):
                 if cells_info.valid[cell_index] == 1:
                     cell_pixels = hc_marker_image[labels == cell_index]
                     percentile_cell_brightness = np.percentile(cell_pixels, 100-percentage_above_threshold)
-                    includes_local_maximum = local_maxima[labels == cell_index].any()
+                    # includes_local_maximum = local_maxima[labels == cell_index].any()
                     current_threshold = np.mean(threshold[labels == cell_index])
-                    if percentile_cell_brightness > current_threshold and includes_local_maximum:
+                    if percentile_cell_brightness > current_threshold:# and includes_local_maximum:
                         self.cells_info.at[cell_index, "type"] = "HC"
                         cell_types[labels == cell_index] = HC_TYPE
                     else:
@@ -1669,12 +1999,12 @@ class Tissue(object):
             cell_indices = properties['label'] - 1
             threshold = hc_threshold * max_brightness
             atoh_intensities = properties["percentile_intensity"]
-            indices_with_local_maximum = np.unique(labels[local_maxima]) - 1
-            indices_with_local_maximum = indices_with_local_maximum[indices_with_local_maximum > 0]
-            HC_indices = np.intersect1d(cell_indices[atoh_intensities > threshold], indices_with_local_maximum)
-            SC_indices = np.union1d(cell_indices[atoh_intensities <= threshold],
-                                    np.setdiff1d(cell_indices[atoh_intensities > threshold],
-                                                 indices_with_local_maximum))
+            # indices_with_local_maximum = np.unique(labels[local_maxima]) - 1
+            # indices_with_local_maximum = indices_with_local_maximum[indices_with_local_maximum > 0]
+            HC_indices = cell_indices[atoh_intensities > threshold] #np.intersect1d(cell_indices[atoh_intensities > threshold], indices_with_local_maximum)
+            SC_indices = cell_indices[atoh_intensities <= threshold] #np.union1d(cell_indices[atoh_intensities <= threshold],
+                                    # np.setdiff1d(cell_indices[atoh_intensities > threshold],
+                                    #              indices_with_local_maximum))
             self.cells_info.loc[HC_indices, "type"] = "HC"
             self.cells_info.loc[SC_indices, "type"] = "SC"
             cell_types[np.isin(labels, HC_indices+1)] = HC_TYPE
@@ -1683,6 +2013,111 @@ class Tissue(object):
         self.cells_info.loc[invalid_cells, "type"] = "invalid"
         cell_types[np.isin(labels, invalid_cells+1)] = INVALID_TYPE
         self.set_cell_types(frame_number, cell_types)
+
+    def fix_cell_types_after_tracking(self, window_size=11, consistency_threshold=0.5, min_frame_for_diff_detection=10, min_frames_to_change_type=3):
+        # Get cell types from each frame:
+        types_over_time = None
+        number_of_cells = 0
+        valid_frame_index = 0
+        for frame in range(1, self.number_of_frames + 1):
+            if not self.is_frame_valid(frame):
+                continue
+            cells_info = self.get_cells_info(frame)
+            if cells_info is None:
+                continue
+            frame_type_data = cells_info.query("valid == 1 and empty_cell == 0").loc[:,["label", "type"]].copy()
+            if types_over_time is None:
+                number_of_cells = int(np.max(frame_type_data["label"]))
+                types_over_time = np.zeros((number_of_cells, self.get_number_of_valid_frames()))
+            else:
+                frame_number_of_cells = int(np.max(frame_type_data["label"]))
+                if number_of_cells < frame_number_of_cells:
+                    types_over_time = np.vstack([types_over_time,np.zeros((frame_number_of_cells - number_of_cells,
+                                                                           self.get_number_of_valid_frames()))])
+                    number_of_cells = frame_number_of_cells
+            HC_labels = frame_type_data.query("type == \"HC\"").label.to_numpy().astype(int)
+            SC_labels = frame_type_data.query("type == \"SC\"").label.to_numpy().astype(int)
+            types_over_time[HC_labels - 1, valid_frame_index] = HC_TYPE
+            types_over_time[SC_labels - 1, valid_frame_index] = SC_TYPE
+            hc_over_time = (types_over_time == HC_TYPE).astype(int)
+            sc_over_time = (types_over_time == SC_TYPE).astype(int)
+            valid_frame_index += 1
+
+
+        # Majority vote on moving window
+        HC_vote = convolve1d(hc_over_time, np.ones((window_size,)), axis=1, mode='nearest')
+        SC_vote = convolve1d(sc_over_time, np.ones((window_size,)), axis=1, mode='nearest')
+        invalid_vote = convolve1d((types_over_time == 0).astype(int), np.ones((window_size,)), axis=1, mode='nearest')
+        # first and last frames do not count because convolution enhances their "power"
+        HC_vote[:,:window_size // 2] = 0
+        SC_vote[:,:window_size // 2] = 0
+        HC_vote[:,-window_size // 2:] = 0
+        SC_vote[:,-window_size // 2:] = 0
+        result = np.argmax(np.dstack((invalid_vote, HC_vote, SC_vote)), axis=2)
+
+        # Finding differentiation candidates - Frames where cell type switches from SC to HC
+        diff_candidates = np.logical_and(result == SC_TYPE, np.diff(result, axis=1, append=0) == -1)
+
+        # Scoring each candidate. score = %frames where cell was SC before candidate frame + %frames where cell was HC after candidate frame
+        valid_frames_for_cell = np.sum((result > 0).astype(int), axis=1)
+        cumSC = np.cumsum((result == SC_TYPE).astype(int),axis=1)
+        cumHC = np.fliplr(np.cumsum(np.fliplr((result == HC_TYPE).astype(int)), axis=1))
+        consistency_scores = np.zeros(diff_candidates.shape)
+        consistency_scores[diff_candidates] = (cumSC[diff_candidates] + cumHC[diff_candidates])
+
+        # Keeping only the best candidate from each cell and only if its consistency score is above threshold
+        max_scores = np.max(consistency_scores, axis=1)/valid_frames_for_cell
+        diff_frames_candidates = np.argmax(consistency_scores, axis=1)
+        diff_cells_label = np.argwhere(np.logical_and(max_scores > consistency_threshold,
+                                                      valid_frames_for_cell > min_frame_for_diff_detection)) + 1
+        diff_frames = diff_frames_candidates[diff_cells_label - 1]
+
+        # Deciding if non-differentiating cells are HCs, SCs or Unknown
+        votes_for_each_type = np.apply_along_axis(np.bincount, axis=1, arr=result, minlength=3)
+        max_votes = np.max(votes_for_each_type[:,1:], axis=1)
+        new_types = np.argmax(votes_for_each_type[:,1:], axis=1)+1
+        new_types[max_votes < min_frames_to_change_type] = 0
+        new_types[diff_cells_label - 1] = DIFFERENTIATING_TYPE
+        diff_type_diff_frames = np.zeros(new_types.shape)
+        diff_type_diff_frames[diff_cells_label - 1] = diff_frames
+
+        # Update cell types
+        valid_frame_index = 0
+        for frame in range(1, self.number_of_frames + 1):
+            if not self.is_frame_valid(frame):
+                continue
+            cells_info = self.get_cells_info(frame)
+            if cells_info is None:
+                continue
+            # update cell types in cells info
+            valid_cells = cells_info.query("valid == 1 and empty_cell == 0 and type != \"invalid\"")
+            labels = valid_cells.label.to_numpy().astype(int)
+            change_to_HC = np.zeros((valid_cells.shape[0],))
+            change_to_HC[new_types[labels - 1] == HC_TYPE] = 1
+            change_to_SC = np.zeros((valid_cells.shape[0],))
+            change_to_SC[new_types[labels - 1] == SC_TYPE] = 1
+            change_to_diff = np.zeros((valid_cells.shape[0],))
+            change_to_diff[new_types[labels - 1] == DIFFERENTIATING_TYPE] = 1
+            before_diff_frame = np.zeros((valid_cells.shape[0],))
+            before_diff_frame[diff_type_diff_frames[labels - 1] > valid_frame_index] = 1
+            change_to_SC[np.logical_and(change_to_diff == 1, before_diff_frame == 1)] = 1
+            change_to_HC[np.logical_and(change_to_diff == 1, before_diff_frame == 0)] = 1
+            valid_indices = valid_cells.index.to_numpy()
+            HC_indices = valid_indices[change_to_HC == 1]
+            SC_indices = valid_indices[change_to_SC == 1]
+            self.cells_info.loc[HC_indices, "type"] = "HC"
+            self.cells_info.loc[SC_indices, "type"] = "SC"
+
+
+            # update cell types map
+            labels_map = self.get_labels(frame)
+            cell_types = self.get_cell_types(frame)
+            if cell_types is None or labels is None:
+                continue
+            cell_types[np.isin(labels_map, HC_indices + 1)] = HC_TYPE
+            cell_types[np.isin(labels_map, SC_indices + 1)] = SC_TYPE
+            valid_frame_index += 1
+        return 0
 
     def find_second_order_neighbors(self, frame, cells=None, cell_type='all'):
         cell_info = self.get_cells_info(frame)
@@ -1863,9 +2298,13 @@ class Tissue(object):
         def remove_neighboring_points_on_line(last_point, initial_point=False):
             x, y = last_point
             labels[y, x] = -1  # Removing the initial point
-            neighborhood = labels[max(0,y-1):y+2, max(0,x-1):x+2]
+            neighborhood = labels[max(0,y-1):min(y+2, labels.shape[0]), max(0,x-1):min(x+2, labels.shape[1])]
             unique_neighborhood = np.unique(neighborhood[neighborhood > 0])
-            neighbors_relative_indices = np.where(neighborhood == 0)
+            neighbors_relative_indices = np.array(np.where(neighborhood == 0))
+            if y == 0:
+                neighbors_relative_indices[0] += 1
+            if x == 0:
+                neighbors_relative_indices[1] += 1
             neighbors_xs = neighbors_relative_indices[1] + x - 1
             neighbors_ys = neighbors_relative_indices[0] + y - 1
             if initial_point or len(neighbors_xs) == 1:
@@ -1910,6 +2349,8 @@ class Tissue(object):
                 self.cells_info.at[cell_idx, "type"] = new_type
                 if current_type == "invalid":
                     self.cells_info.at[cell_idx, "valid"] = 1
+                    if cells_info.label[cell_idx] in cells_info.label.values:
+                        self.cells_info.at[cell_idx, "label"] = 0
             except IndexError:
                 return 0
         cell_types = self.get_cell_types(frame)
@@ -1981,9 +2422,10 @@ class Tissue(object):
                                                             (area1 + area2)
                         cell_info.at[new_label - 1, "cy"] = (cell1_info.cy*area1 + cell2_info.cy*area2)/\
                                                             (area1 + area2)
-                        cell_info.at[new_label - 1, "mean_intensity"] = (cell1_info.mean_intensity * area1 +
-                                                                         cell2_info.mean_intensity * area2) / \
-                                                                        (area1 + area2)
+                        if "mean_intensity" in cell_info.columns:
+                            cell_info.at[new_label - 1, "mean_intensity"] = (cell1_info.mean_intensity * area1 +
+                                                                             cell2_info.mean_intensity * area2) / \
+                                                                            (area1 + area2)
                         cell_info.at[new_label - 1, "bounding_box_min_row"] = min(cell1_info.bounding_box_min_row,
                                                                                   cell2_info.bounding_box_min_row)
                         cell_info.at[new_label - 1, "bounding_box_min_col"] = min(cell1_info.bounding_box_min_col,
@@ -2218,12 +2660,12 @@ class Tissue(object):
             nearest_edge = np.argmin(edges_distances)
             distance_from_edge = edges_distances[nearest_edge]
         for distance in range(distance_from_edge):
-            for i in [y-distance, y+distance]:
-                for j in range(x-distance, x+distance+1):
+            for i in [max(y-distance, 0), min(y+distance, labels.shape[0])]:
+                for j in range(max(x-distance, 0), min(x+distance+1, labels.shape[1])):
                     if labels[i, j] == 0:
                         return j, i
-            for j in [x-distance, x+distance]:
-                for i in range(y-distance, y+distance+1):
+            for j in [max(x-distance, 0), min(x+distance, labels.shape[1])]:
+                for i in range(max(y-distance, 0), min(y+distance+1, labels.shape[0])):
                     if labels[i, j] == 0:
                         return j, i
         if distance_limit > 0:
