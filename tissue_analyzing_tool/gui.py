@@ -5,6 +5,7 @@ import pandas as pd
 from PyQt5 import QtCore, uic, QtWidgets, QtGui, QtWebEngineWidgets
 import tissue_info
 import matplotlib
+import pickle
 matplotlib.use('Qt5Agg')
 import os.path, shutil, sys
 import re
@@ -24,6 +25,11 @@ from IPython.lib import guisupport
 COLORTABLE=[]
 WORKING_DIR = "D:\\Kasirer\\experimental_results\\"
 BASEDIR = os.path.dirname(__file__)
+
+sys.path.insert(1, '..\\Segmentation')
+from prediction_local import SegmentationPredictor
+UNET_WEIGHTS_PATH = os.path.join('C:\\Users\\Kasirer\\Phd\\mouse_ear_project\\tissue_image_processing\\Segmentation',
+                                   'model_image_segmentation_run_after_load_weights_large_dataset_3_ADAM.h5')
 from numexpr import utils
 
 utils.MAX_THREADS = 8
@@ -58,6 +64,9 @@ class CustomNavigationToolbar(NavigationToolbar):
                     self.data.to_pickle(file_path)
                 elif isinstance(self.data, np.ndarray):
                     np.save(file_path, self.data)
+                elif isinstance(self.data, dict):
+                    with open(file_path, 'wb') as f:
+                        pickle.dump(self.data, f)
 
 class PlotDataWindow(QtWidgets.QMainWindow):
     def __init__(self, parent=None, working_dir=None):
@@ -682,6 +691,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                     else:
                         cell_id = cell.label
                     text += '\ncell id = %d' % cell_id
+                    if double_click:
+                        self.cell_tracking_spin_box.setValue(cell_id)
                 self.pixel_info.setText(text)
 
     def undo_last_action(self):
@@ -1096,7 +1107,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             y_feature = self.event_statistics_y_data_combo_box.currentText()
             if y_feature == "None":
                 y_feature = None
-            y_radius = self.event_statistics_window_radius_x_data_label_spin_box.value()
+            y_radius = self.event_statistics_window_radius_y_data_label_spin_box.value()
         plot_window = PlotDataWindow(self, working_dir=self.working_directory)
         if "reference" in event_type:
             cells_type = "HC" if "HC" in event_type else "SC" if "SC" in event_type else "all"
@@ -1131,9 +1142,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         if data is not None:
             plot_window.show(data)
 
-
-
-
+    def frame_segmentation_and_analysis_done(self, msg):
+        self.frame_segmentation_done(msg)
+        self.frame_analysis_done(msg)
 
     def frame_segmentation_done(self, msg):
         split_msg = msg.split("/")
@@ -1151,7 +1162,6 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.segment_all_frames_button.setEnabled(True)
             self.cancel_segmentation_button.hide()
             self.segment_all_frames_progress_bar.hide()
-
 
     def segment_frames(self, frame_numbers):
         self.segment_all_frames_progress_bar.reset()
@@ -1176,7 +1186,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             frame_number = self.frame_slider.value()
         else:
             self.frame_slider.setValue(frame_number)
-        if self.segment_using_epyseg_question():
+        if self.segment_using_Unet_question():
+            self.segment_frames_using_ShachafNET([frame_number])
+        elif self.segment_using_epyseg_question():
             self.segment_frames_using_epyseg([frame_number])
         else:
             self.segment_frames([frame_number])
@@ -1191,6 +1203,21 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         zo_channel = self.zo_spin_box.value()
         self.segmentation_thread = SaveImagesThread(self.img, self.epyseg_dir, frames, zo_channel, self.img_in_memory)
         self.segmentation_thread._signal.connect(self.saving_segmentation_images_done)
+        self.segment_all_frames_button.setEnabled(False)
+        self.segmentation_thread.start()
+
+    def segment_frames_using_ShachafNET(self, frames):
+        self.segment_all_frames_progress_bar.reset()
+        self.segment_all_frames_progress_bar.show()
+        self.cancel_segmentation_button.show()
+        self.analyze_segmentation_progress_bar.reset()
+        self.analyze_segmentation_progress_bar.show()
+        self.cancel_analysis_button.show()
+        zo_channel = self.zo_spin_box.value()
+        atoh_channel = self.atoh_spin_box.value()
+        self.segmentation_thread = UnetSegmentationThread(self.img, frames, zo_channel, atoh_channel, self.tissue_info,
+                                                          self.img_in_memory)
+        self.segmentation_thread._signal.connect(self.frame_segmentation_and_analysis_done)
         self.segment_all_frames_button.setEnabled(False)
         self.segmentation_thread.start()
 
@@ -1226,7 +1253,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
     def segment_all_frames(self):
         if not self.data_lost_warning(self.segment_all_frames):
             return 0
-        if self.segment_using_epyseg_question():
+        if self.segment_using_Unet_question():
+            self.segment_frames_using_ShachafNET(np.arange(1,self.number_of_frames+1))
+        elif self.segment_using_epyseg_question():
             self.segment_frames_using_epyseg(np.arange(1,self.number_of_frames+1))
         else:
             if self.this_might_take_a_while_message():
@@ -1239,6 +1268,13 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         message_box = QtWidgets.QMessageBox
         ret = message_box.question(self, '',
                                    "Do you want to use epySeg (Deep-Learning based segmentation, will open up in a new window)?",
+                                   message_box.Yes | message_box.No)
+        return ret == message_box.Yes
+
+    def segment_using_Unet_question(self):
+        message_box = QtWidgets.QMessageBox
+        ret = message_box.question(self, '',
+                                   "Do you want to use Unet (Deep-Learning based segmentation)?",
                                    message_box.Yes | message_box.No)
         return ret == message_box.Yes
 
@@ -1340,6 +1376,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.frame_line_edit.setEnabled(True)
             self.show_events_button.show()
             self.show_events_button.setEnabled(True)
+            self.find_events_button.setEnabled(True)
+            self.find_events_button.show()
 
     def correct_tracking(self, off=False):
         if off:
@@ -1798,6 +1836,47 @@ class SaveImagesThread(QtCore.QThread):
     def emit(self, msg):
         self._signal.emit(int(msg))
 
+class UnetSegmentationThread(QtCore.QThread):
+    _signal = QtCore.pyqtSignal(str)
+
+    def __init__(self, img, frame_numbers, zo_channel, atoh_channel, out, img_in_memory=False):
+        super(UnetSegmentationThread, self).__init__()
+        self.img = img
+        self.zo_channel = zo_channel
+        self.atoh_channel = atoh_channel
+        self.out = out
+        self.frame_numbers = frame_numbers
+        self.is_killed = False
+        self.img_in_memory = img_in_memory
+
+    def __del__(self):
+        self.wait()
+
+    def run(self):
+        done_frames = 0
+        for frame in self.frame_numbers:
+            if self.img_in_memory:
+                img = self.img[frame - 1, [self.atoh_channel, self.zo_channel], 0, :, :]
+            else:
+                img = self.img[frame - 1, [self.atoh_channel, self.zo_channel], 0, :, :].compute()
+            predictor = SegmentationPredictor(UNET_WEIGHTS_PATH, img.shape)
+            labels, HC = predictor.predict(img)
+            self.out.set_labels(frame, labels, reset_data=True)
+            self.out.calculate_frame_cellinfo(frame, hc_marker_image=HC, hc_threshold=0.5,
+                                     use_existing_types=False,
+                                     percentage_above_HC_threshold=50, peak_window_radius=10)
+            done_frames += 1
+            percentage_done = np.round(100*done_frames/len(self.frame_numbers))
+            self.emit("%d/%d" % (frame, percentage_done))
+            if self.is_killed:
+                self.emit("%d/%d" % (frame, 100))
+                break
+
+    def emit(self, msg):
+        self._signal.emit(msg)
+
+    def kill(self):
+        self.is_killed = True
 
 class ExternalSegmentationThread(QtCore.QThread):
     _signal = QtCore.pyqtSignal(str)
