@@ -24,6 +24,8 @@ class TwoSampleCompare:
 
     @staticmethod
     def dagostino_test(sample):
+        if sample.size < 8:
+            return 0
         res = sp.stats.normaltest(sample, nan_policy='omit')
         return res.pvalue
 
@@ -217,12 +219,12 @@ def compare_and_plot_samples(samples_list, labels, pairs_to_compare, continues=T
         for pc, c, ec in zip(parts['bodies'], color, edge_color):
             pc.set_facecolor(c)
             pc.set_edgecolor(ec)
-    for index in range(len(samples_list)):
-        ax.text(x[index],
-                (averages[index] + standard_errors[index])*1.1,
-                "N = %d" % sample_sizes[index],
-                horizontalalignment='center'
-                )
+    # for index in range(len(samples_list)):
+    #     ax.text(x[index],
+    #             (averages[index] + standard_errors[index])*1.1,
+    #             "N = %d" % sample_sizes[index],
+    #             horizontalalignment='center'
+    #             )
     if scatter:
         # Adding scattered points on top of the bars
         for i in range(len(x)):
@@ -242,21 +244,20 @@ def compare_and_plot_samples(samples_list, labels, pairs_to_compare, continues=T
     min_error = np.min(np.array([averages[i] - standard_errors[i] for i in range(len(samples_list))]))
     low_lim = min(min_error, data_min)
     high_lim = max(max_error, data_max)
-    # addition = (high_lim - low_lim) * 0.1
-    # ax.set_ylim([low_lim - addition, high_lim + addition])
+    addition = (high_lim - low_lim) * 0.1
+    ax.set_ylim([low_lim - addition, high_lim + addition])
 
     # Adding p-value brackets for each compared pair
     heights = np.zeros((len(samples_list),))
     for index, pair in enumerate(pairs_to_compare):
         sample1_index, sample2_index = pair
-        dh = max(np.max(heights[sample1_index:sample2_index])/4 + 0.2, 0.2)
+        dh = max(np.max(heights[sample1_index:sample2_index])/2 +0.1, 0.3)
         heights[sample1_index:sample2_index] = barplot_annotate_brackets(sample1_index, sample2_index, pvalues[index], x,
-                                  averages, yerr=standard_errors, fs=40, maxasterix=4, dh=dh, ax=ax)
+                                  averages, yerr=standard_errors, fs=10, maxasterix=4, dh=0.1, ax=ax)
 
     res = {"averages": averages, "standard errors":standard_errors, "sample sizes": sample_sizes,
            "pvalues": {pairs_to_compare[i]: pvalues[i] for i in range(len(pairs_to_compare))}}
     return fig, ax, res
-
 
 if __name__ == "__main__":
     # Testing methods
