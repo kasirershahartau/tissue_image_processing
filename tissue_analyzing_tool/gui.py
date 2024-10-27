@@ -167,6 +167,24 @@ class ConsoleWidget(RichJupyterWidget):
         self._execute(command, False)
 
 
+class ChannelsNameInputDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None, input_num=1):
+        super().__init__(parent)
+
+        self.inputs = []
+        layout = QtWidgets.QFormLayout(self)
+        for i in range(input_num):
+            self.inputs.append(QtWidgets.QLineEdit(self))
+            layout.addRow("Channel %d name:" % (i + 1), self.inputs[i])
+        buttonBox = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel, self)
+        layout.addWidget(buttonBox)
+        buttonBox.accepted.connect(self.accept)
+        buttonBox.rejected.connect(self.reject)
+
+    def get_inputs(self):
+        return [input.text() for input in self.inputs]
+
+
 class FormImageProcessing(QtWidgets.QMainWindow):
     def __init__(self, parent=None):
         super(FormImageProcessing, self).__init__(parent)
@@ -196,6 +214,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.tissue_info = None
         self.segmentation_saved = True
         self.number_of_frames = 0
+        self.number_of_channels = 0
+        self.channels_names = []
         self.analysis_saved = True
         self.waiting_for_data_save = []
         self.fixing_segmentation_mode = FIX_SEGMENTATION_OFF
@@ -248,7 +268,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.zo_level_scroll_bar.valueChanged.connect(self.zo_related_widget_changed)
         self.atoh_level_scroll_bar.valueChanged.connect(self.atoh_related_widget_changed)
         self.segment_frame_button.clicked.connect(self.segment_frame)
-        self.analyze_frame_button.clicked.connect(self.analyze_frame)
+        self.analyze_frame_button.clicked.connect(self.find_cell_types_in_frame)
         self.open_file_pb.clicked.connect(self.open_file)
         self.segment_all_frames_button.clicked.connect(self.segment_all_frames)
         self.show_segmentation_check_box.stateChanged.connect(self.segmentation_related_widget_changed)
@@ -325,7 +345,19 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             return 0
         self.working_directory = os.path.dirname(fname)
         self.number_of_frames = self.img_dimensions.T
+        self.number_of_channels = self.img_dimensions.C
+        dialog = ChannelsNameInputDialog(self, self.number_of_channels)
+        if dialog.exec():
+            self.channels_names = dialog.get_inputs()
+        else:
+            self.channels_names = [str(i + 1) for i in range(self.number_of_channels)]
+        zo_channel_name = self.channels_names[self.zo_spin_box.value()]
+        self.zo_check_box.setText("Seg channel: %s" % zo_channel_name)
+        self.zo_level_label.setText("%s level" % zo_channel_name)
         self.zo_changed = True
+        atoh_channel_name = self.channels_names[self.atoh_spin_box.value()]
+        self.atoh_check_box.setText("Type channel: %s" % atoh_channel_name)
+        self.atoh_level_label.setText("%s level" % atoh_channel_name)
         self.atoh_changed = True
         self.atoh_spin_box.setMaximum(self.img_dimensions.C-1)
         self.zo_spin_box.setMaximum(self.img_dimensions.C-1)
@@ -357,10 +389,12 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             if self.zo_check_box.isChecked():
                 zo_channel = self.zo_spin_box.value()
                 if self.img_in_memory:
-                    self.current_frame[1, :, :] = 0.1 * self.zo_level_scroll_bar.value() * self.img[frame_number - 1,
-                                                                                           zo_channel, 0, :, :].T
+                    disp_img = self.img[frame_number - 1, zo_channel, 0, :, :].T
                 else:
-                    self.current_frame[1, :, :] = 0.1*self.zo_level_scroll_bar.value()*self.img[frame_number - 1, zo_channel, 0, :, :].compute().T
+                    disp_img = self.img[frame_number - 1, zo_channel, 0, :, :].compute().T
+                disp_img = disp_img * self.zo_level_scroll_bar.value() * (10  / np.average(disp_img))
+                np.putmask(disp_img, disp_img > 255, 255)
+                self.current_frame[1, :, :] = disp_img
             else:
                 self.current_frame[1, :, :] = 0
             self.zo_changed = False
@@ -368,10 +402,12 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             if self.atoh_check_box.isChecked():
                 atoh_channel = self.atoh_spin_box.value()
                 if self.img_in_memory:
-                    self.current_frame[2, :, :] = 0.01 * self.atoh_level_scroll_bar.value() * self.img[frame_number - 1,
-                                                                                              atoh_channel, 0, :, :].T
+                   disp_img = self.img[frame_number - 1, atoh_channel, 0, :, :].T
                 else:
-                    self.current_frame[2, :, :] = 0.01*self.atoh_level_scroll_bar.value()*self.img[frame_number - 1, atoh_channel, 0, :, :].compute().T
+                   disp_img = self.img[frame_number - 1, atoh_channel, 0, :, :].compute().T
+                disp_img = self.atoh_level_scroll_bar.value() * disp_img * (10 / np.average(disp_img))
+                np.putmask(disp_img, disp_img > 255, 255)
+                self.current_frame[2, :, :] = disp_img
             else:
                 self.current_frame[2, :, :] = 0
             self.atoh_changed = False
@@ -507,9 +543,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.plot_single_frame_data_y_combo_box.addItems(self.tissue_info.SPECIAL_FEATURES)
         self.plot_single_frame_data_y_combo_box.addItems(self.tissue_info.SPECIAL_Y_ONLY_FEATURES)
         self.plot_single_frame_data_cell_type_combo_box.clear()
-        self.plot_single_frame_data_cell_type_combo_box.addItems(self.tissue_info.CELL_TYPES)
+        self.plot_single_frame_data_cell_type_combo_box.addItems(self.tissue_info.get_cell_type_names())
         self.plot_compare_frame_data_cell_type_combo_box.clear()
-        self.plot_compare_frame_data_cell_type_combo_box.addItems(self.tissue_info.CELL_TYPES)
+        self.plot_compare_frame_data_cell_type_combo_box.addItems(self.tissue_info.get_cell_type_names())
         self.event_statistics_x_data_combo_box.clear()
         self.event_statistics_x_data_combo_box.addItems(features)
         self.event_statistics_x_data_combo_box.addItems(self.tissue_info.SPECIAL_FEATURES)
@@ -639,7 +675,6 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                             self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()), final=True,
                                                                    hc_marker_image=hc_marker_img,
                                                                    hc_threshold=self.hc_threshold_spin_box.value()/100,
-                                                                   use_existing_types=self.use_existing_cell_types_check_box.isChecked(),
                                                                    percentile_above_threshold=self.hc_threshold_percentage_spin_box.value())
                     else:
                         points_too_far = self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()),
@@ -657,7 +692,6 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                     self.tissue_info.remove_segmentation_line(frame, (pos.x(), pos.y()),
                                                               hc_marker_image=hc_marker_img,
                                                               hc_threshold=self.hc_threshold_spin_box.value()/100,
-                                                              use_existing_types=self.use_existing_cell_types_check_box.isChecked(),
                                                               percentage_above_threshold=self.hc_threshold_percentage_spin_box.value())
                 self.segmentation_changed = True
                 self.current_segmentation = self.tissue_info.get_segmentation(frame)
@@ -665,7 +699,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             elif self.fix_cell_types_on:
                 frame = self.frame_slider.value()
                 if button == QtCore.Qt.LeftButton:
-                    self.tissue_info.change_cell_type(frame, (pos.x(), pos.y()))
+                    self.tissue_info.change_cell_type(frame, (pos.x(), pos.y()), type_name=self.channels_names[self.atoh_spin_box.value()])
                 elif button == QtCore.Qt.MiddleButton:
                     self.tissue_info.make_invalid_cell(frame, (pos.x(), pos.y()))
                 self.analysis_changed = True
@@ -715,10 +749,16 @@ class FormImageProcessing(QtWidgets.QMainWindow):
 
     def zo_related_widget_changed(self):
         self.zo_changed = True
+        channel_name = self.channels_names[self.zo_spin_box.value()]
+        self.zo_check_box.setText("Seg channel: %s" % channel_name)
+        self.zo_level_label.setText("%s level" % channel_name)
         self.display_frame()
 
     def atoh_related_widget_changed(self):
         self.atoh_changed = True
+        channel_name = self.channels_names[self.atoh_spin_box.value()]
+        self.atoh_check_box.setText("Type channel: %s" % channel_name)
+        self.atoh_level_label.setText("%s level" % channel_name)
         self.display_frame()
 
     def segmentation_related_widget_changed(self):
@@ -859,7 +899,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.hc_threshold_label.setEnabled(True)
             self.hc_threshold_spin_box.setEnabled(True)
             self.hc_thresholod_percentage_label.setEnabled(True)
-            self.hc_thresholod_window_label.setEnabled(True)
+            self.peak_window_size_label.setEnabled(True)
             self.hc_threshold_percentage_spin_box.setEnabled(True)
             self.hc_threshold_window_spin_box.setEnabled(True)
             self.cell_size_label_max.setEnabled(True)
@@ -883,7 +923,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.hc_threshold_label.setEnabled(False)
             self.hc_threshold_spin_box.setEnabled(False)
             self.hc_thresholod_percentage_label.setEnabled(False)
-            self.hc_thresholod_window_label.setEnabled(False)
+            self.peak_window_size_label.setEnabled(False)
             self.hc_threshold_percentage_spin_box.setEnabled(False)
             self.hc_threshold_window_spin_box.setEnabled(False)
             self.cell_size_label_max.setEnabled(False)
@@ -920,7 +960,6 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.compare_frames_line_edit.setEnabled(True)
             self.compare_frames_combo_box.setEnabled(True)
             self.plot_compare_frame_data_cell_type_combo_box.setEnabled(True)
-            self.use_existing_cell_types_check_box.setEnabled(True)
             self.fix_cell_types_button.setEnabled(True)
             self.mark_event_button.setEnabled(True)
             self.delete_events_button.setEnabled(True)
@@ -962,7 +1001,6 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.compare_frames_line_edit.setEnabled(False)
             self.compare_frames_combo_box.setEnabled(False)
             self.plot_compare_frame_data_cell_type_combo_box.setEnabled(False)
-            self.use_existing_cell_types_check_box.setEnabled(False)
             self.mark_event_button.setEnabled(False)
             self.delete_events_button.setEnabled(False)
             self.delete_events_frame_check_box.setEnabled(False)
@@ -1172,8 +1210,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         std = self.segmentation_kernel_std_spin_box.value()
         block_size = self.segmentation_block_size_spin_box.value()
         self.segmentation_thread = SegmentAllThread(self.img, zo_channel, threshold, std, block_size,
-                                                    frame_numbers, self.tissue_info, self.img_in_memory)
-        self.segmentation_thread._signal.connect(self.frame_segmentation_done)
+                                                    frame_numbers,self.img_in_memory)
+        self.segmentation_thread._signal.connect(self.frame_segmentation_and_analysis_done)
         self.segment_all_frames_button.setEnabled(False)
         self.frame_slider.setEnabled(False)
         self.frame_line_edit.setEnabled(False)
@@ -1296,37 +1334,41 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.analysis_changed = True
             self.display_frame()
 
-    def analyze_frames(self, frame_numbers):
+    def find_cell_types_in_frames(self, frame_numbers):
         self.analyze_segmentation_progress_bar.reset()
         self.analyze_segmentation_progress_bar.show()
         self.cancel_analysis_button.show()
         atoh_channel = self.atoh_spin_box.value()
         hc_threshold = self.hc_threshold_spin_box.value()/100
         hc_threshold_percentage = self.hc_threshold_percentage_spin_box.value()
-        peak_window_radius = self.hc_threshold_window_spin_box.value()
-        self.analysis_thread = AnalysisThread(self.img, self.tissue_info, frame_numbers, atoh_channel, hc_threshold,
+        if self.peak_window_size_label.isChecked():
+            peak_window_radius = self.hc_threshold_window_spin_box.value()
+        else:
+            peak_window_radius = 0
+        type_name = self.channels_names[self.atoh_spin_box.value()]
+        self.analysis_thread = CellTypesThread(self.img, self.tissue_info, frame_numbers, atoh_channel, hc_threshold,
                                               hc_threshold_percentage, peak_window_radius,
-                                              self.use_existing_cell_types_check_box.isChecked(), self.img_in_memory)
+                                              type_name, self.img_in_memory)
         self.analysis_thread._signal.connect(self.frame_analysis_done)
         self.analyze_segmentation_button.setEnabled(False)
         self.frame_slider.setEnabled(False)
         self.frame_line_edit.setEnabled(False)
         self.analysis_thread.start()
 
-    def analyze_frame(self, frame_number=0):
-        if not self.data_lost_warning(self.analyze_frame):
+    def find_cell_types_in_frame(self, frame_number=0):
+        if not self.data_lost_warning(self.find_cell_types_in_frame):
             return 0
         if frame_number == 0:
             frame_number = self.frame_slider.value()
         else:
             self.frame_slider.setValue(frame_number)
-        self.analyze_frames([frame_number])
+        self.find_cell_types_in_frames([frame_number])
 
     def analyze_segmentation(self):
         if not self.data_lost_warning(self.analyze_segmentation):
             return 0
         if self.this_might_take_a_while_message():
-            self.analyze_frames(np.arange(1, self.number_of_frames+1))
+            self.find_cell_types_in_frames(np.arange(1, self.number_of_frames+1))
 
     def cancel_analysis(self):
         self.analysis_thread.kill()
@@ -1336,7 +1378,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         if types or neighbors or track or events or marking_points:
             img = np.zeros(self.current_frame.shape)
             if types:
-                img += self.tissue_info.draw_cell_types(frame_number)
+                img += self.tissue_info.draw_cell_types(frame_number, type_name=self.channels_names[self.atoh_spin_box.value()])
             if neighbors:
                 img += self.tissue_info.draw_neighbors_connections(frame_number)
             if track:
@@ -1456,7 +1498,6 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.tissue_info.add_segmentation_line(frame, self.fix_segmentation_last_position, final=True,
                                                    hc_marker_image=hc_marker_img,
                                                    hc_threshold=self.hc_threshold_spin_box.value()/100,
-                                                   use_existing_types=self.use_existing_cell_types_check_box.isChecked(),
                                                    percentile_above_threshold=self.hc_threshold_percentage_spin_box.value())
             self.fix_segmentation_last_position = None
         self.tissue_info.update_labels(self.frame_slider.value())
@@ -1593,7 +1634,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         if name:
             self.load_data_progress_bar.reset()
             self.load_data_progress_bar.show()
-            self.load_thread = LoadDataThread(self.tissue_info, name)
+            self.load_thread = LoadDataThread(self.tissue_info, name, self.channels_names[self.atoh_spin_box.value()])
             self.load_thread._signal.connect(self.frame_loading_done)
             try:
                 self.load_thread.start()
@@ -1611,7 +1652,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.display_frame()
             self.load_data_progress_bar.hide()
             self.setState(image=True, segmentation=self.tissue_info.is_any_segmented(),
-                          analysis=self.tissue_info.is_any_analyzed())
+                          analysis=self.tissue_info.is_any_analyzed(type_name=self.channels_names[self.atoh_spin_box.value()]))
             self.cells_number_changed()
             self.update_single_cell_features()
             self.update_single_frame_features()
@@ -1622,11 +1663,10 @@ class FormImageProcessing(QtWidgets.QMainWindow):
 class SegmentAllThread(QtCore.QThread):
     _signal = QtCore.pyqtSignal(str)
 
-    def __init__(self, img, zo_channel, threshold, std, block_size, frame_numbers, out, img_in_memory=False):
+    def __init__(self, img, zo_channel, threshold, std, block_size, frame_numbers, img_in_memory=False):
         super(SegmentAllThread, self).__init__()
         self.img = img
         self.zo_channel = zo_channel
-        self.out = out
         self.frame_numbers = frame_numbers
         self.threshold = threshold
         self.std = std
@@ -1645,7 +1685,8 @@ class SegmentAllThread(QtCore.QThread):
             else:
                 zo_img = self.img[frame - 1, self.zo_channel, 0, :, :].compute().T
             labels = watershed_segmentation(zo_img, self.threshold, self.std, self.block_size)
-            self.out.set_labels(frame, labels, reset_data=True)
+            self.tissue_info.set_labels(frame, labels, reset_data=True)
+            self.tissue_info.calculate_frame_cellinfo(frame)
             done_frames += 1
             percentage_done = np.round(100*done_frames/len(self.frame_numbers))
             self.emit("%d/%d" % (frame, percentage_done))
@@ -1660,14 +1701,14 @@ class SegmentAllThread(QtCore.QThread):
         self.is_killed = True
 
 
-class AnalysisThread(QtCore.QThread):
+class CellTypesThread(QtCore.QThread):
     _signal = QtCore.pyqtSignal(str)
 
     def __init__(self, img, tissue_info, frame_numbers, atoh_channel, hc_threshold,
                  percentage_above_threshold, peak_window_radius,
-                 use_existing_types=False,
+                 type_name="HC",
                  img_in_memory=False):
-        super(AnalysisThread, self).__init__()
+        super(CellTypesThread, self).__init__()
         self.tissue_info = tissue_info
         self.img = img
         self.frame_numbers = frame_numbers
@@ -1676,7 +1717,7 @@ class AnalysisThread(QtCore.QThread):
         self.percentage_above_threshold = percentage_above_threshold
         self.peak_window_radius = peak_window_radius
         self.is_killed = False
-        self.use_existing_types = use_existing_types
+        self.type_name = type_name
         self.img_in_memory = img_in_memory
 
     def __del__(self):
@@ -1689,8 +1730,8 @@ class AnalysisThread(QtCore.QThread):
                 atoh_img = self.img[frame - 1, self.atoh_channel, 0, :, :].T
             else:
                 atoh_img = self.img[frame - 1, self.atoh_channel, 0, :, :].compute().T
-            self.tissue_info.calculate_frame_cellinfo(frame, atoh_img, self.hc_threshold, self.use_existing_types,
-                                                      self.percentage_above_threshold, self.peak_window_radius)
+            self.tissue_info.calc_cell_types(atoh_img, frame, self.type_name, threshold=self.hc_threshold,
+                            percentage_above_threshold=self.percentage_above_threshold, peak_window_size=self.peak_window_radius)
             done_frames += 1
             percentage_done = np.round(100*done_frames/len(self.frame_numbers))
             self.emit("%d/%d" % (frame, percentage_done))
@@ -1789,16 +1830,17 @@ class SaveDataThread(QtCore.QThread):
 class LoadDataThread(QtCore.QThread):
     _signal = QtCore.pyqtSignal(int)
 
-    def __init__(self, tissue_info, file_path):
+    def __init__(self, tissue_info, file_path, type_name):
         super(LoadDataThread, self).__init__()
         self.tissue_info = tissue_info
         self.path = file_path
+        self.type_name = type_name
 
     def __del__(self):
         self.wait()
 
     def run(self):
-        for percent_done in self.tissue_info.load(self.path):
+        for percent_done in self.tissue_info.load(self.path, type_name=self.type_name):
             self.emit(percent_done)
         self.emit(100)
 
@@ -1913,6 +1955,7 @@ class ExternalSegmentationThread(QtCore.QThread):
         if file_name.startswith("frame"):
             frame_number = int(file_name.split("_")[1])
             self.tissue_info.load_labels_from_external_file(frame_number, path)
+            self.tissue_info.calculate_frame_cellinfo(frame_number)
             self.frames_done += 1
             self.emit("%d/%d" %(frame_number,100*self.frames_done/len(self.frames)))
 
