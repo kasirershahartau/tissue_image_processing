@@ -156,7 +156,7 @@ def barplot_annotate_brackets(num1, num2, data, center, height, yerr=None, dh=.0
 
 
 def compare_and_plot_samples(samples_list, labels, pairs_to_compare, continues=True, plot_style="violin", color='white',
-                             edge_color='grey', fig=None, ax=None):
+                             edge_color='grey', fig=None, ax=None, show_statistics=False, show_N=False):
 
     # Statistical analysis for each sample
     averages = [np.average(sample) for sample in samples_list]
@@ -175,7 +175,7 @@ def compare_and_plot_samples(samples_list, labels, pairs_to_compare, continues=T
                                     labels[sample1_index], labels[sample2_index], continouse=continues_sample)
         pvalues[index] = analyzer.compare_samples()
 
-    # Creating bar plot
+    # Creating box plot
     w = 0.6  # bar width
     x = np.arange(len(samples_list))  # x-coordinates of your bars
     if fig is None:
@@ -198,14 +198,20 @@ def compare_and_plot_samples(samples_list, labels, pairs_to_compare, continues=T
                )
         scatter = False
     elif plot_style == "box":
-        ax.boxplot(samples_list,
+        parts = ax.boxplot(samples_list,
                    vert=True,
-                   showmeans=False,
+                   showmeans=True,
                    labels=labels,
                    positions=x,
-                   showcaps=False
+                   showcaps=False,
+                   patch_artist=True,
+                   showfliers=True,
                    )
-        errors = True
+        for pc, c, ec in zip(parts['boxes'], color, edge_color):
+            pc.set_facecolor(c)
+            pc.set_edgecolor(ec)
+        errors = False
+
     elif plot_style == "violin":
         parts = ax.violinplot(samples_list,
                       vert=True,
@@ -219,22 +225,23 @@ def compare_and_plot_samples(samples_list, labels, pairs_to_compare, continues=T
         for pc, c, ec in zip(parts['bodies'], color, edge_color):
             pc.set_facecolor(c)
             pc.set_edgecolor(ec)
-    # for index in range(len(samples_list)):
-    #     ax.text(x[index],
-    #             (averages[index] + standard_errors[index])*1.1,
-    #             "N = %d" % sample_sizes[index],
-    #             horizontalalignment='center'
-    #             )
+    if show_N:
+        for index in range(len(samples_list)):
+            ax.text(x[index],
+                    (averages[index] + standard_errors[index])*1.1,
+                    "N = %d" % sample_sizes[index],
+                    horizontalalignment='center'
+                    )
     if scatter:
         # Adding scattered points on top of the bars
         for i in range(len(x)):
             # distribute scatter randomly across whole width of bar
-            ax.scatter(x[i] + np.random.random(sample_sizes[i]) * w - w / 2, samples_list[i], color=(0., 0.5, 0.5, 0.5))
+            ax.scatter(x[i] + np.random.random(sample_sizes[i]) * w/4 - w / 8, samples_list[i], color=(0., 0.5, 0.5, 0.5))
     if errors:
         ax.errorbar(x,
                     averages,
                     yerr=standard_errors,
-                    fmt="ob",
+                    fmt="om",
                     capsize=20
                     )
     # Setting plot y-limits
@@ -248,12 +255,13 @@ def compare_and_plot_samples(samples_list, labels, pairs_to_compare, continues=T
     ax.set_ylim([low_lim - addition, high_lim + addition])
 
     # Adding p-value brackets for each compared pair
-    heights = np.zeros((len(samples_list),))
-    for index, pair in enumerate(pairs_to_compare):
-        sample1_index, sample2_index = pair
-        dh = max(np.max(heights[sample1_index:sample2_index])/2 +0.1, 0.3)
-        heights[sample1_index:sample2_index] = barplot_annotate_brackets(sample1_index, sample2_index, pvalues[index], x,
-                                  averages, yerr=standard_errors, fs=10, maxasterix=4, dh=0.1, ax=ax)
+    if show_statistics:
+        heights = np.zeros((len(samples_list),))
+        for index, pair in enumerate(pairs_to_compare):
+            sample1_index, sample2_index = pair
+            dh = max(np.max(heights[sample1_index:sample2_index])/2 +0.1, 0.3)
+            heights[sample1_index:sample2_index] = barplot_annotate_brackets(sample1_index, sample2_index, pvalues[index], x,
+                                      averages, yerr=standard_errors, fs=10, maxasterix=4, dh=0.1, ax=ax)
 
     res = {"averages": averages, "standard errors":standard_errors, "sample sizes": sample_sizes,
            "pvalues": {pairs_to_compare[i]: pvalues[i] for i in range(len(pairs_to_compare))}}

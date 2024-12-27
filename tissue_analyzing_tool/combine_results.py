@@ -7,12 +7,14 @@ from matplotlib.animation import FuncAnimation
 import pandas as pd
 import os, sys
 import subprocess
-
+import seaborn as sns
+from statistical_analysis import compare_and_plot_samples
 
 # Change before running
-E17_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-11-11-E17.5-utricle\\position3-analysis\\Event statistics\\",
-               "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-12-23_E17.5_utricle_atoh_zo\\position4-analysis"]
-P0_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-07-31_P0\\position3-analysis\\Events statistics\\",
+E17_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-11-11-E17.5-utricle\\position3-analysis\\",
+               "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-12-23_E17.5_utricle_atoh_zo\\position4-analysis",
+               "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-11-11-E17.5-utricle\\position4-analysis\\"]
+P0_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-07-31_P0\\position3-analysis\\",
               "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-07-31_P0\\position2-analysis\\"]
 Rho_inhibition_E17_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-12-01_E17.5_utricle_rho_inhibition\\position2_event_statistics\\"]
 Rho_inhibition_P0_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2023-06-25_P0_atoh_zo_rock_inhibitor\\position3_event_statistics\\"]
@@ -51,14 +53,14 @@ def combine_frame_compare_results():
 
     # Combining and plotting
     labels = ["E17.5 SCs", "E17.5 HCs", "P0 SCs", "P0 HCs"]
-    E17_HC_data = pd.read_pickle(os.path.join(E17_folder, HC_file))
-    E17_SC_data = pd.read_pickle(os.path.join(E17_folder, SC_file))
-    P0_HC_data = pd.read_pickle(os.path.join(E17_folder, HC_file))
-    P0_SC_data = pd.read_pickle(os.path.join(E17_folder, SC_file))
+    E17_HC_data = pd.read_pickle(os.path.join(E17_folders, HC_file))
+    E17_SC_data = pd.read_pickle(os.path.join(E17_folders, SC_file))
+    P0_HC_data = pd.read_pickle(os.path.join(E17_folders, HC_file))
+    P0_SC_data = pd.read_pickle(os.path.join(E17_folders, SC_file))
 
     x = np.arange(len(labels))  # the label locations
     width = 0.35  # the width of the bars
-    compare_event_statistics([E17_folder, P0_folder], [SC_file, HC_file], [SC_file, HC_file], labels, [(0,1), (2,3)],
+    compare_event_statistics([E17_folders, P0_folders], [SC_file, HC_file], [SC_file, HC_file], labels, [(0,1), (2,3)],
                              [1],["roundness"], ["Roundness"], continues=True, color=["red", "green", "red", "green"],
                              edge_color=["red", "green", "red", "green"])
 
@@ -183,15 +185,7 @@ def plot_animation(x, y, graphs, fig, out_path):
         ["C:\Program Files\ImageMagick-7.1.0-Q16-HDRI\convert", (movies_dir / "movie_*.png").as_posix(), out_path]
     )
     shutil.rmtree(movies_dir)
-
-
-def compare_event_statistics(folder_list, data_files_list, reference_files_list, x_labels, pairs_to_compare,
-                             normalization_list,
-                             data_labels, y_labels, continues, color='white', edge_color='grey'):
-    font = {'family': 'sans',
-            'size': 25}
-    import matplotlib
-    matplotlib.rc('font', **font)
+def load_data(folder_list, data_files_list, reference_files_list, data_labels, normalization_list):
     if isinstance(folder_list, tuple):
         folder = folder_list[0]
         ref_folder = folder_list[1]
@@ -200,7 +194,7 @@ def compare_event_statistics(folder_list, data_files_list, reference_files_list,
         ref_folder = folder
 
     from statistical_analysis import compare_and_plot_samples
-    for data_label, normalization, y_label in zip(data_labels, normalization_list, y_labels):
+    for data_label, normalization in zip(data_labels, normalization_list):
         if isinstance(folder, list):
             samples = [np.empty(0) for i in range(np.max([len(data_files_list[j]) for j in range(len(data_files_list))]) +
                                          np.max([len(reference_files_list[j]) for j in range(len(reference_files_list))]))]
@@ -219,9 +213,30 @@ def compare_event_statistics(folder_list, data_files_list, reference_files_list,
             samples = [data[data_label].to_numpy()/normalization for data in data_list]
             samples += [ref_data[data_label].to_numpy()/normalization for ref_data in ref_list]
             samples = [sample[~np.isnan(sample)] for sample in samples]
-        style = "violin" if continues else "bar"
+        yield samples
+
+def compare_event_statistics(folder_list, data_files_list, reference_files_list, x_labels, pairs_to_compare,
+                             normalization_list,
+                             data_labels, y_labels, continues, color='white', edge_color='grey',
+                             show_statistics=False, show_N=False):
+    font = {'family': 'sans',
+            'size': 25}
+    import matplotlib
+    matplotlib.rc('font', **font)
+    if isinstance(folder_list, tuple):
+        folder = folder_list[0]
+        ref_folder = folder_list[1]
+    else:
+        folder = folder_list
+        ref_folder = folder
+    for samples, y_label in zip(load_data(folder_list, data_files_list,
+                                          reference_files_list, data_labels, normalization_list),
+                                y_labels):
+
+        style = "violin" if continues else "box"
         fig, ax, res = compare_and_plot_samples(samples, x_labels, pairs_to_compare, continues=continues,
-                                                plot_style=style, color=color, edge_color=edge_color)
+                                                plot_style=style, color=color, edge_color=edge_color,
+                                                show_statistics=show_statistics, show_N=show_N)
         ax.set_ylabel(y_label)
         print(res)
     # ax.set_xticklabels([])
@@ -236,12 +251,17 @@ def plot_E17_HC_density_and_fraction():
     data_files_list = [["HC_fraction_and_density_delamination_data", "HC_fraction_and_density_division_data",
                        "HC_fraction_and_density_differentiation_rad_200_pixels_data"],
                        ["HC_density_and_fraction_delamination_data", "HC_density_and_fraction_division_data",
-                       "HC_density_and_fraction_differentiation_data"]]
+                       "HC_density_and_fraction_differentiation_data"],
+                       ["HC_density_and_fraction_delamination_data", "HC_density_and_fraction_division_data",
+                        "HC_density_and_fraction_differentiation_data"]]
     reference_files_list = [["HC_fraction_and_density_overall_SC_frame1_data",
                             "HC_fraction_and_density_overall_SC_frame96_data",
                             "HC_fraction_and_density_overall_SC_frame191_data"],
                             ["HC_density_and_fraction_reference_SC_frame1_data",
-                            "HC_density_and_fraction_reference_SC_frame97_data"]]
+                            "HC_density_and_fraction_reference_SC_frame97_data"],
+                            ["HC_density_and_fraction_reference_SC_frame1_data",
+                             "HC_density_and_fraction_reference_SC_frame96_data"]
+                            ]
     x_labels = ["Near delaminations", "Near divisions", "Near differentiations", "reference SC initial",
                 "reference SC 24h", "reference SC 48h"]
     normalization_list = [0.01, 1]
@@ -261,9 +281,13 @@ def plot_E17_neighbors_by_type():
     data_files_list = [["neighbors_by_type_delamination_data", "neighbors_by_type_division_data",
                        "neighbors_by_type_differentiation_data"],
                        ["neighbors_by_type_delamination_data", "neighbors_by_type_division_data",
-                        "neighbors_by_type_differentiation_data"]]
+                        "neighbors_by_type_differentiation_data"],
+                       ["neighbors_by_type_delamination_data", "neighbors_by_type_division_data",
+                        "neighbors_by_type_differentiation_data"]
+                       ]
     reference_files_list = [["neighbors_by_type_reference_SC_frame96_data"],
-                            ["neighbors_by_type_reference_SC_frame97_data"]]
+                            ["neighbors_by_type_reference_SC_frame97_data"],
+                            ["neighbors_by_type_reference_SC_frame96_data"]]
     normalization_list = [1, 1]
     pairs_to_compare = [(0, 1), (1, 2), (1,3), (2,3), (0,3)]
     y_labels = ["# SC neighbors", "# HC neighbors"]
@@ -293,13 +317,19 @@ def plot_E17_second_neighbors_by_type():
     data_files_list = [["second_neighbors_by_type_delamination_data", "second_neighbors_by_type_division_data",
                        "second_neighbors_by_type_differentiation_data"],
                        ["second_neighbors_by_type_delamination_data", "second_neighbors_by_type_division_data",
-                        "second_neighbors_by_type_differentiation_data"]]
+                        "second_neighbors_by_type_differentiation_data"],
+                       ["second_neighbors_by_type_delamination_data", "second_neighbors_by_type_division_data",
+                        "second_neighbors_by_type_differentiation_data"]
+                       ]
     reference_files_list = [["second_neighbors_by_type_reference_SC_frame1_data",
                              "second_neighbors_by_type_reference_SC_frame96_data",
                              "second_neighbors_by_type_reference_SC_frame191_data"],
                             ["second_neighbors_by_type_reference_SC_frame1_data",
                              "second_neighbors_by_type_reference_SC_frame96_data",
-                             "second_neighbors_by_type_reference_SC_frame191_data"]]
+                             "second_neighbors_by_type_reference_SC_frame191_data"],
+                            ["second_neighbors_by_type_reference_SC_frame1_data",
+                             "second_neighbors_by_type_reference_SC_frame96_data"]
+                            ]
     normalization_list = [1, 1]
     pairs_to_compare = [(0, 1), (1, 2), (1, 3), (2, 3), (0, 3)]
     y_labels = ["# SC neighbors", "# HC neighbors"]
@@ -316,9 +346,13 @@ def plot_E17_contact_length_by_type():
     data_files_list = [["contact_length_by_type_delamination_data", "contact_length_by_type_division_data",
                        "contact_length_by_type_differentiation_data"],
                        ["contach_length_delamination_data", "contach_length_division_data",
-                        "contach_length_differentiation_data"]]
+                        "contach_length_differentiation_data"],
+                       ["contach_length_delamination_data", "contach_length_division_data",
+                        "contach_length_differentiation_data"]
+                       ]
     reference_files_list = [["contact_length_by_type_reference_SC_frame95_data"],
-                            ["contach_length_reference_SC_frame97_data"]]
+                            ["contach_length_reference_SC_frame97_data"],
+                            ["contach_length_reference_SC_frame96_data"]]
     normalization_list = [10, 10]
     pairs_to_compare = [(0, 1), (1, 2), (1,3), (2,3), (0,3)]
     y_labels = ["contact length with SC neighbors", "contact length with neighbors"]
@@ -334,9 +368,13 @@ def plot_E17_number_of_neighbors():
     data_files_list = [["number_of_neighbors_delamination_data", "number_of_neighbors_division_data",
                        "number_of_neighbors_differentiation_data"],
                        ["number_of_neighbors_delamination_data", "number_of_neighbors_division_data",
-                        "number_of_neighbors_differentiation_data"]]
+                        "number_of_neighbors_differentiation_data"],
+                       ["number_of_neighbors_delamination_data", "number_of_neighbors_division_data",
+                        "number_of_neighbors_differentiation_data"]
+                       ]
     reference_files_list = [["number_of_neighbors_reference_SC_frame96_data"],
-                            ["number_of_neighbors_reference_SC_frame97_data"]]
+                            ["number_of_neighbors_reference_SC_frame97_data"],
+                            ["number_of_neighbors_reference_SC_frame96_data"]]
     normalization_list = [1]
     pairs_to_compare = [(2, 3), (1, 3), (0, 3)]
     y_labels = ["# neighbors"]
@@ -353,9 +391,13 @@ def plot_E17_area_and_roundness():
     data_files_list = [["area_and_roundness_delamination_data", "area_and_roundness_division_data",
                        "area_and_roundness_differentiation_data"],
                        ["area_and_roundness_delamination_data", "area_and_roundness_division_data",
-                        "area_and_roundness_differentiation_data"]]
+                        "area_and_roundness_differentiation_data"],
+                       ["area_and_roundness_delamination_data", "area_and_roundness_division_data",
+                        "area_and_roundness_differentiation_data"]
+                       ]
     reference_files_list = [["area_and_roundness_reference_SC_frame96_data"],
-                            ["area_and_roundness_reference_SC_frame97_data"]]
+                            ["area_and_roundness_reference_SC_frame97_data"],
+                            ["area_and_roundness_reference_SC_frame96_data"]]
     normalization_list = [100, 1]
     pairs_to_compare = [(2, 3), (1, 3), (0, 3)]
     y_labels = ["Area (um^2)", "Roundness"]
@@ -368,21 +410,114 @@ def plot_E17_area_and_roundness():
 def compare_E17_P0_neighbors_by_type():
     E17_folder = E17_folders
     P0_folder = P0_folders
+    x_labels = ["E17.5", "E17.5", "+24h", "+24h", "+48h","+48h",  # "Diff.\ncells",
+                "P0", "P0", "+24h", "+24h", "+48h", "+48h"]  # "Diff.\ncells"]
+    x_labels = [""]*12
+    E17_data_files_list = [["neighbors_by_type_reference_SC_frame1_data",
+                            "neighbors_by_type_reference_HC_frame1_data",
+                            "neighbors_by_type_reference_SC_frame96_data",
+                            "neighbors_by_type_reference_HC_frame96_data",
+                            "neighbors_by_type_reference_SC_frame191_data",
+                            "neighbors_by_type_reference_HC_frame191_data",
+                            ],
+                           ["neighbors_by_type_reference_SC_frame1_data",
+                            "neighbors_by_type_reference_HC_frame1_data",
+                            "neighbors_by_type_reference_SC_frame97_data",
+                            "neighbors_by_type_reference_HC_frame97_data",
+                            "neighbors_by_type_reference_SC_frame199_data",
+                            "neighbors_by_type_reference_HC_frame199_data",
+                            ],
+                           ["neighbors_by_type_reference_SC_frame1_data",
+                            "neighbors_by_type_reference_HC_frame1_data",
+                            "neighbors_by_type_reference_SC_frame96_data",
+                            "neighbors_by_type_reference_HC_frame96_data",
+                            ]
+                           ]
+    P0_files_list = [["neighbors_by_type_reference_SC_frame1_data",
+                      "neighbors_by_type_reference_HC_frame1_data",
+                      "neighbors_by_type_reference_SC_frame96_data",
+                      "neighbors_by_type_reference_HC_frame96_data",
+                      "neighbors_by_type_reference_SC_frame165_data",
+                      "neighbors_by_type_reference_HC_frame165_data",
+                      ],
+                      ["neighbors_by_type_reference_SC_frame1_data",
+                       "neighbors_by_type_reference_HC_frame1_data",
+                       "neighbors_by_type_reference_SC_frame96_data",
+                       "neighbors_by_type_reference_HC_frame96_data",
+                       ]]
+    normalization_list = [1, 1]
+    pairs_to_compare = [(0, 1), (2,3), (4,5), (6,7), (8,9), (10,11), (0,2), (2, 4), (4,6), (6,8), (8,10),
+                        (1,3), (3,5), (5,7), (7,9), (9,11)]
+    y_labels = ["# SC neighbors", "# HC neighbors"]
+    data_labels = ["SC neighbors", "HC neighbors"]
+    color = ["mediumpurple", "white"] * 3 + ["lightpink", "white"] * 3
+    edge_color = ["mediumpurple", "mediumpurple"] * 3+ ["lightpink", "lightpink"] * 3
+
+    compare_event_statistics((E17_folder,P0_folder), E17_data_files_list, P0_files_list , x_labels, pairs_to_compare,
+                             normalization_list,
+                             data_labels, y_labels, continues=False, color=color, edge_color=edge_color)
+
+    SC_with_Zero_HC_neighbors = np.zeros((5,2))
+    for experiment_idx in range(2):
+        for samples in load_data((E17_folder[experiment_idx],P0_folder[experiment_idx]),
+                                 E17_data_files_list[experiment_idx],P0_files_list[experiment_idx],
+                                 data_labels, normalization_list):
+            for i in range(SC_with_Zero_HC_neighbors.shape[0]):
+                SC_with_Zero_HC_neighbors[i, experiment_idx] = 100*np.sum((samples[2*i] == 0).astype(int))/samples[2*i].size
+    fig, ax = plt.subplots()
+
+    color = ["mediumpurple"] * 3 + ["lightpink"] * 2
+    edge_color = ["mediumpurple"] * 3 + ["lightpink"] * 2
+    compare_and_plot_samples(list(SC_with_Zero_HC_neighbors), [""]*5, [], continues=True, plot_style="box", color=color,
+    edge_color=edge_color, fig=fig, ax=ax, show_statistics=False, show_N=False)
+    plt.show()
+
+def compare_E17_P0_neighbors_by_type_for_differentiation():
+    E17_folder = E17_folders
+    P0_folder = P0_folders
     # x_labels = ["Differentiating\ncells",  "All\nSCs", "Differentiating\ncells",
     #             "All\nSCs"]
     x_labels = [""]*4
     E17_data_files_list = [["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame96_data"],
-                           ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame97_data"]]
+                           ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame97_data"],
+                           ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame96_data"]]
     P0_reference_files_list = [["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame96_data"],
                                ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame96_data"]]
+
     normalization_list = [1, 1]
     pairs_to_compare = [(0, 1), (2,3), (0,2)]
     y_labels = ["# SC neighbors", "# HC neighbors"]
     data_labels = ["SC neighbors", "HC neighbors"]
-    color = ["blue", "white", "red", "white"]
+    # color = ["blue", "white", "red", "white"]
+    color = ["white"]*4
     edge_color = ["blue", "blue", "red", "red"]
 
-    compare_event_statistics((E17_folder,P0_folder), E17_data_files_list, P0_reference_files_list , x_labels, pairs_to_compare,
+    compare_event_statistics((E17_folder,P0_folder), E17_data_files_list, P0_reference_files_list,
+                             x_labels, pairs_to_compare,
+                             normalization_list,
+                             data_labels, y_labels, continues=False, color=color, edge_color=edge_color,
+                             show_statistics=True, show_N=True)
+
+def compare_P0_neighbors_by_type_for_differentiation_and_transdiff():
+    P0_folder = P0_folders
+    transdiff_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-06-05_P0_utricle_ablation\\position2-analysis\\Event statistics"]
+    # x_labels = ["Differentiating\ncells",  "All\nSCs", "Differentiating\ncells",
+    #             "All\nSCs"]
+    x_labels = [""]*4
+    P0_reference_files_list = [["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame96_data"],
+                               ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame96_data"]]
+    trans_diffreference_files_list = [["neighbors_by_type_promoted_differentiation_data", "neighbors_by_type_reference_SC_frame96_data"]]
+
+    normalization_list = [1, 1]
+    pairs_to_compare = [(0, 1), (2,3), (0,2)]
+    y_labels = ["# SC neighbors", "# HC neighbors"]
+    data_labels = ["SC neighbors", "HC neighbors"]
+    # color = ["blue", "white", "red", "white"]
+    color = ["white"]*4
+    edge_color = ["blue", "blue", "red", "red"]
+
+    compare_event_statistics((P0_folder, transdiff_folders), P0_reference_files_list, trans_diffreference_files_list,
+                             x_labels, pairs_to_compare,
                              normalization_list,
                              data_labels, y_labels, continues=False, color=color, edge_color=edge_color)
 
@@ -400,7 +535,7 @@ def compare_E17_P0_rho_inhibition_neighbors_by_type():
     pairs_to_compare = [(0, 1), (2, 3), (0, 2)]
     y_labels = ["# SC neighbors", "# HC neighbors"]
     data_labels = ["SC neighbors", "HC neighbors"]
-    color = ["blue", "white", "red", "white"]
+    color = ["white"] * 4
     edge_color = ["blue", "blue", "red", "red"]
 
     compare_event_statistics((E17_folder, P0_folder), E17_data_files_list, P0_reference_files_list, x_labels,
@@ -411,12 +546,15 @@ def compare_E17_P0_rho_inhibition_neighbors_by_type():
 def compare_E17_P0_density_and_fraction():
     E17_folder = E17_folders
     P0_folder = P0_folders
-    E17_data_files_list = [["HC_fraction_and_density_overall_SC_frame1_data",
-                            "HC_fraction_and_density_overall_SC_frame96_data",
-                            "HC_fraction_and_density_overall_SC_frame191_data"],
+    E17_data_files_list = [["HC_density_and_fraction_reference_SC_frame1_data",
+                            "HC_density_and_fraction_reference_SC_frame96_data",
+                            "HC_density_and_fraction_reference_SC_frame191_data"],
                            ["HC_density_and_fraction_reference_SC_frame1_data",
                             "HC_density_and_fraction_reference_SC_frame97_data",
-                            "HC_density_and_fraction_reference_SC_frame199_data"]]
+                            "HC_density_and_fraction_reference_SC_frame199_data"],
+                           ["HC_density_and_fraction_reference_SC_frame1_data",
+                            "HC_density_and_fraction_reference_SC_frame96_data"]
+                           ]
     P0_reference_files_list = [["HC_density_and_fraction_reference_SC_frame1_data",
                                 "HC_density_and_fraction_reference_SC_frame96_data",
                                 "HC_density_and_fraction_reference_SC_frame165_data"],
@@ -424,7 +562,7 @@ def compare_E17_P0_density_and_fraction():
                                 "HC_density_and_fraction_reference_SC_frame96_data"]]
     x_labels = ["E17.5", "+24h", "+48h",# "Diff.\ncells",
                  "P0", "+24h", "+48h"] #"Diff.\ncells"]
-    normalization_list = [0.01, 1]
+    normalization_list = [0.01/(20**2), 1]
     pairs_to_compare = [(0, 1), (1,2), (2,3), (3,4), (4,5)]
     y_labels = ["", "HC type fraction"]
     data_labels = ["HC density", "HC type_fraction"]
@@ -439,7 +577,8 @@ def compare_E17_P0_number_of_neighbors():
     E17_folder = E17_folders
     P0_folder = P0_folders
     E17_data_files_list = [["number_of_neighbors_differentiation_data", "number_of_neighbors_reference_SC_frame96_data"],
-                           ["number_of_neighbors_differentiation_data", "number_of_neighbors_reference_SC_frame97_data"]]
+                           ["number_of_neighbors_differentiation_data", "number_of_neighbors_reference_SC_frame97_data"],
+                           ["number_of_neighbors_differentiation_data", "number_of_neighbors_reference_SC_frame96_data"]]
     P0_reference_files_list = [["number_of_neighbors_differentiation_data", "number_of_neighbors_reference_SC_frame96_data"],
                                ["number_of_neighbors_differentiation_data", "number_of_neighbors_reference_SC_frame96_data"]]
     x_labels = ["Differentiating cells E17.5", "All SCs E17.5", "Differentiating cells P0",
@@ -457,7 +596,8 @@ def compare_E17_P0_area_and_roundness():
     E17_folder = E17_folders
     P0_folder = P0_folders
     E17_data_files_list = [["area_and_roundness_differentiation_data", "area_and_roundness_reference_SC_frame96_data"],
-                           ["area_and_roundness_differentiation_data", "area_and_roundness_reference_SC_frame97_data"]]
+                           ["area_and_roundness_differentiation_data", "area_and_roundness_reference_SC_frame97_data"],
+                           ["area_and_roundness_differentiation_data", "area_and_roundness_reference_SC_frame96_data"]]
     P0_reference_files_list = [["area_and_roundness_differentiation_data", "area_and_roundness_reference_SC_frame96_data"],
                                ["area_and_roundness_differentiation_data","area_and_roundness_reference_SC_frame96_data"]]
     x_labels = ["Differentiating cells E17.5", "All SCs E17.5", "Differentiating cells P0",
@@ -479,7 +619,10 @@ def compare_E17_P0_contact_length():
     E17_data_files_list = [["contact_length_by_type_differentiation_data",
                             "contact_length_by_type_reference_SC_frame95_data"],
                            ["contach_length_differentiation_data",
-                            "contach_length_reference_SC_frame97_data"]]
+                            "contach_length_reference_SC_frame97_data"],
+                           ["contach_length_differentiation_data",
+                            "contach_length_reference_SC_frame96_data"]
+                           ]
     P0_reference_files_list = [["contact_length_by_type_differentiation_data",
                             "contact_length_by_type_reference_SC_frame96_data"],
                                ["contact_length_by_type_differentiation_data",
@@ -607,7 +750,7 @@ def compare_distance_from_ablation():
                              normalization_list,
                              data_labels, y_labels, continues=True, color="blue", edge_color="blue")
 
-def compare_normal_and_promoted_differentiation():
+def compare_normal_and_promoted_differentiation_HC_density_and_fraction():
     folder = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-06-05_P0_utricle_ablation\\position2-analysis\\Event statistics\\"
     x_labels = ["Promoted differentiations", "Normal differentiations"]
     pairs_to_compare = [(0, 1)]
@@ -621,6 +764,22 @@ def compare_normal_and_promoted_differentiation():
                              pairs_to_compare,
                              normalization_list,
                              data_labels, y_labels, continues=True, color=["red", "purple"], edge_color=["red", "purple"])
+
+def compare_normal_and_promoted_differentiation_HC_neighbors():
+    folder = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-06-05_P0_utricle_ablation\\position2-analysis\\Event statistics\\"
+    x_labels = ["Promoted differentiations", "Normal differentiations"]
+    pairs_to_compare = [(0, 1)]
+
+    data_files_list = ["neighbors_by_type_normal_differentiation_data"]
+    reference_files_list = ["neighbors_by_type_promoted_differentiation_data"]
+    normalization_list = [1, 1]
+    y_labels = ["# HC neighbors"]
+    data_labels = ["HC neighbors"]
+    compare_event_statistics(folder, data_files_list, reference_files_list, x_labels,
+                             pairs_to_compare,
+                             normalization_list,
+                             data_labels, y_labels, continues=False, color=["red", "purple"],
+                             edge_color=["red", "purple"])
 
 def compare_deformability():
     folder = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-06-05_P0_utricle_ablation\\position2-analysis\\Event statistics\\"
@@ -665,39 +824,68 @@ def compare_deformability():
     plt.show()
 
 def plot_number_of_events():
-    data = {"E17.5": {"division": 24, "delamination":30, "differentiation":32, "frames":173, "area":5661947},
-            "P0": {"division": 0, "delamination":0, "differentiation":14, "frames":121, "area":2826552},
-            "P0 with ablation": {"division": 2, "delamination":20, "differentiation":25, "frames":168, "area":5942121}}
+    data = pd.DataFrame({"stage": ["E17.5"] * 6 + ["P0"] * 6, #+ ["P0 with ablation"] * 3,
+                         "type": ["division", "delamination", "differentiation"] * 4,
+                        "number_of_events": [24, 30, 32, 11, 3, 28, 0, 0, 14, 2, 10, 9],#, 2, 20, 25],
+                        "frames": [173] * 3 + [221] * 3 + [121] * 3 + [107] * 3,# + [168] * 3,
+                        "area": [5661946.62] * 3 + [7256274.51] * 3 + [2826552.3] * 3 + [3535219.79] * 3# + [5942120.84] * 3
+                         })
 
-    x = np.arange(3)  # the label locations
-    width = 0.35  # the width of the bars
-
+    data['number of events per frame per (100 microns)^2'] = data.eval("10000 * 92 * number_of_events / area")
     font_size = 25
     plt.rcParams.update({'font.size': font_size})
-    fig, ax = plt.subplots()
-    colors = ["red", "blue", "green"]
-    w = width / 2
-    color_index = 0
-    rects = []
-    for key, value in data.items():
-        y = np.array([value[type] for type in ["division", "delamination", "differentiation"]])/(value["area"]*4)
-        rects.append(ax.bar(x - w, y, width/3, label=key, alpha=0.5, ecolor=colors[color_index]))
-        w -= width/3
-        color_index += 1
-
-    # Add some text for labels, title and custom x-axis tick labels, etc.
-    ax.set_ylabel("Events per micron^2 per hour", fontsize=font_size)
-    ax.set_xticks(x, ["division", "delamination", "differentiation"], fontsize=font_size)
-    ax.legend(loc="upper left")
-
-
-    fig.tight_layout()
-
+    g = sns.catplot(x='type', y='number of events per frame per (100 microns)^2', hue='stage',  data=data,
+                    kind="box", palette=["#FFA7A0", "#ABEAC9"], legend_out=True,
+                    )
+    g.map_dataframe(sns.stripplot, x='type', y='number of events per frame per (100 microns)^2', hue='stage',
+                    palette=["#404040"], alpha=0.5, jitter=0, dodge=True, size=10)
     plt.show()
 
+def plot_DAPT_data():
+    folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-01-06-E17.5_DAPT\\position2-results",
+               "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-02-20_P0_DAPT"]
+    file_names = ["HC_fraction_vs_time_data"] *2
+    colors = ["blue", "red"]
+    for folder, file, color in zip(folders, file_names, colors):
+        path = os.path.join(folder, file)
+        if os.path.isfile(path):
+            data = pd.read_pickle(path)
+            time_in_hours = data["Frame"].to_numpy()/4
+            HC_fraction = data["type_fraction average"].to_numpy()
+            plt.plot(time_in_hours[time_in_hours<=48], HC_fraction[time_in_hours<=48], linewidth=7, color=color)
+            plt.ylim([0,1])
+    plt.show()
 
+def plot_rho_inhibition_roundness():
+    folders = [Rho_inhibition_E17_folders[0], Rho_inhibition_P0_folders[0], E17_folders[0], P0_folders[1]]
+    file_name = "HC_roundness_compare_data"
+    avg = []
+    se = []
+    x = [0,24,48]
+    for folder in folders:
+        path = os.path.join(folder, file_name)
+        if os.path.isfile(path):
+            data = pd.read_pickle(path)
+            avg.append(data["roundness average"].to_numpy())
+            se.append(data["roundness se"].to_numpy())
+    count = 0
+    for a,s in zip(avg,se):
+        if count == 0:
+            fmt = "o-r"
+        elif count == 1:
+            fmt = "o--r"
+        elif count == 2:
+            fmt = "o-b"
+        else:
+            fmt = "o--b"
+        plt.errorbar(x,a,yerr=s,fmt=fmt)
+        count += 1
+    plt.show()
 
 if __name__ == "__main__":
+    # plot_DAPT_data()
+    # plot_rho_inhibition_roundness()
+
     # fit_circular_ablation_results(ellipse_folder, 60)
     # combine_frame_compare_results()
     # combine_single_cell_results(folder, 1000, 2800, 1900)
@@ -713,15 +901,17 @@ if __name__ == "__main__":
     # plot_P0_contact_length_by_type()
     # compare_E17_P0_density_and_fraction()
     # compare_E17_P0_neighbors_by_type()
+    compare_E17_P0_neighbors_by_type_for_differentiation()
+    # compare_P0_neighbors_by_type_for_differentiation_and_transdiff()
     # compare_E17_P0_number_of_neighbors()
     # compare_E17_P0_area_and_roundness()
     # compare_E17_P0_contact_length()
 
     # compare_distance_from_ablation()
-    # compare_normal_and_promoted_differentiation()
+    # compare_normal_and_promoted_differentiation_HC_neighbors()
     # plot_number_of_events()
     # compare_deformability()
     # plot_E17_second_neighbors_by_type()
     # plot_P0_second_neighbors_by_type()
     # plot_E17_rho_inhibition_neighbors_by_type()
-    compare_E17_P0_rho_inhibition_neighbors_by_type()
+    # compare_E17_P0_rho_inhibition_neighbors_by_type()
