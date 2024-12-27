@@ -60,13 +60,27 @@ class CustomNavigationToolbar(NavigationToolbar):
             file_path = QtWidgets.QFileDialog.getSaveFileName(self, 'Choose a file name to save data',
                                                     directory=matplotlib.rcParams['savefig.directory'])[0]
             if file_path:
-                if isinstance(self.data, pd.DataFrame):
-                    self.data.to_pickle(file_path)
-                elif isinstance(self.data, np.ndarray):
-                    np.save(file_path, self.data)
-                elif isinstance(self.data, dict):
-                    with open(file_path, 'wb') as f:
-                        pickle.dump(self.data, f)
+                if file_path.endswith(".csv"):
+                    if isinstance(self.data, pd.DataFrame):
+                        self.data.to_csv(file_path)
+                    elif isinstance(self.data, np.ndarray):
+                        df = pd.DataFrame(self.data)
+                        df.to_csv(file_path)
+                    elif isinstance(self.data, dict):
+                        with open(file_path, 'wb') as f:
+                            import csv
+                            with open(file_path, 'w') as output:
+                                writer = csv.writer(output)
+                                for key, value in self.data.items():
+                                    writer.writerow([key, value])
+                else:
+                    if isinstance(self.data, pd.DataFrame):
+                        self.data.to_pickle(file_path)
+                    elif isinstance(self.data, np.ndarray):
+                        np.save(file_path, self.data)
+                    elif isinstance(self.data, dict):
+                        with open(file_path, 'wb') as f:
+                            pickle.dump(self.data, f)
 
 class PlotDataWindow(QtWidgets.QMainWindow):
     def __init__(self, parent=None, working_dir=None):
@@ -392,7 +406,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                     disp_img = self.img[frame_number - 1, zo_channel, 0, :, :].T
                 else:
                     disp_img = self.img[frame_number - 1, zo_channel, 0, :, :].compute().T
-                disp_img = disp_img * self.zo_level_scroll_bar.value() * (10  / np.average(disp_img))
+                disp_img = disp_img * self.zo_level_scroll_bar.value() * (10 / max(np.average(disp_img),1))
                 np.putmask(disp_img, disp_img > 255, 255)
                 self.current_frame[1, :, :] = disp_img
             else:
@@ -405,7 +419,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                    disp_img = self.img[frame_number - 1, atoh_channel, 0, :, :].T
                 else:
                    disp_img = self.img[frame_number - 1, atoh_channel, 0, :, :].compute().T
-                disp_img = self.atoh_level_scroll_bar.value() * disp_img * (10 / np.average(disp_img))
+                disp_img = self.atoh_level_scroll_bar.value() * disp_img * (10 / max(np.average(disp_img),1))
                 np.putmask(disp_img, disp_img > 255, 255)
                 self.current_frame[2, :, :] = disp_img
             else:
@@ -689,10 +703,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                         hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].T
                     else:
                         hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].compute().T
-                    self.tissue_info.remove_segmentation_line(frame, (pos.x(), pos.y()),
-                                                              hc_marker_image=hc_marker_img,
-                                                              hc_threshold=self.hc_threshold_spin_box.value()/100,
-                                                              percentage_above_threshold=self.hc_threshold_percentage_spin_box.value())
+                    self.tissue_info.remove_segmentation_line(frame, (pos.x(), pos.y()))
                 self.segmentation_changed = True
                 self.current_segmentation = self.tissue_info.get_segmentation(frame)
                 self.display_frame()
@@ -1200,6 +1211,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.segment_all_frames_button.setEnabled(True)
             self.cancel_segmentation_button.hide()
             self.segment_all_frames_progress_bar.hide()
+            if self.epyseg_dir is not None:
+                shutil.rmtree(self.epyseg_dir)
+                self.epyseg_dir = None
 
     def segment_frames(self, frame_numbers):
         self.segment_all_frames_progress_bar.reset()
