@@ -9,6 +9,7 @@ Methods to analyze cells
 import os.path
 from shutil import rmtree
 import numpy as np
+import pandas
 import pandas as pd
 import copy
 from matplotlib import pyplot as plt
@@ -143,16 +144,36 @@ def find_local_maxima(arr, window_size=7):
     return np.abs(blurred - maxima) < 1e-6
 
 def is_positive_for_type(type, type_index):
-    binary_location = (1 << type_index)
-    type = np.array(type).astype(np.uint8)
-    binary_location = np.ones_like(type).astype(np.uint8)*binary_location
-    res = np.bitwise_and(type, binary_location) == binary_location
-    # remove invalid cells (which don't belong to any type)
-    if hasattr(res, "__len__"):
-        res[type == INVALID_TYPE_INDEX] = False
-    elif res == INVALID_TYPE_INDEX:
+    if isinstance(type_index, tuple):
+        pos_types, neg_types = type_index
+        if hasattr(type, "__len__"):
+            res = np.ones_like(type)
+            for t in pos_types:
+                res[~is_positive_for_type(type, t)] = 0
+            for t in neg_types:
+                res[is_positive_for_type(type, t)] = 0
+            return res.astype(np.bool)
+        else:
+            for t in pos_types:
+                if not is_positive_for_type(type, t):
+                    return False
+            for t in neg_types:
+                if is_positive_for_type(type, t):
+                    return False
+        return True
+    elif type_index < 0:
         return False
-    return res
+    else:
+        binary_location = (1 << type_index)
+        type = np.array(type).astype(np.uint8)
+        binary_location = np.ones_like(type).astype(np.uint8)*binary_location
+        res = np.bitwise_and(type, binary_location) == binary_location
+        # remove invalid cells (which don't belong to any type)
+        if hasattr(res, "__len__"):
+            res[type == INVALID_TYPE_INDEX] = False
+        elif res == INVALID_TYPE_INDEX:
+            return False
+        return res
 
 
 def change_type(current_type, type_index, is_positive):
@@ -178,13 +199,16 @@ class Tissue(object):
                         "HC second neighbors", "SC second neighbors", "second neighbors",
                         "second neighbors from the same type", "contact length",
                         "HC contact length", "SC contact length", "Mean atoh intensity", "Distance from ablation",
+                        "neighbors by type"
                         ]
     SPATIAL_FEATURES = ["HC density", "SC density", "HC type_fraction", "SC type_fraction"]
     SPECIAL_X_ONLY_FEATURES = ["psi6"]
     SPECIAL_Y_ONLY_FEATURES = ["histogram"]
     GLOBAL_FEATURES = ["density", "type_fraction", "total_area", "number_of_cells",
                        "neighbors correlation", "neighbors correlation average",]
-    SPECIAL_EVENT_STATISTICS_FEATURES = ["timing histogram", "spatio-temporal correlation"]
+    SPECIAL_EVENT_STATISTICS_FEATURES = ["timing histogram", "spatio-temporal correlation",
+                                         "timing by number of HC neighbors",
+                                         "rates by number of HC neighbors"]
     CELL_TYPES = ["all"]
     FITTING_SHAPES = ["ellipse", "circle arc", "line", "spline"]
     EVENT_TYPES = ["ablation", "division", "delamination", "differentiation", "promoted differentiation"]
@@ -330,6 +354,8 @@ class Tissue(object):
     def type_name_to_index(self, type_name):
         if type_name in self.type_names:
             return self.type_names.index(type_name)
+        elif "pos" in type_name or "neg" in type_name:
+            return self.type_pos_neg_list_to_indices(type_name)
         else:
             return -1
 
@@ -604,7 +630,7 @@ class Tissue(object):
         valid_cells_last_frame = cells_info.query("valid == 1 and empty_cell == 0")
         id_previous_frame = valid_cells_last_frame.label
 
-        HC_id_previous_frame = valid_cells_last_frame.loc[is_positive_for_type(valid_cells_last_frame.type.as_numpy(),
+        HC_id_previous_frame = valid_cells_last_frame.loc[is_positive_for_type(valid_cells_last_frame.type.to_numpy(),
                                                                                  differentiation_type_index)].label
 
 
@@ -623,7 +649,7 @@ class Tissue(object):
             valid_cells_current_frame = cells_info.query("valid == 1 and empty_cell == 0")
             id_current_frame = valid_cells_current_frame.label
             edge_cells_id_current_frame = cells_info.label[self.detect_edge_cells(labels)]
-            HC_id_current_frame = valid_cells_current_frame.loc[is_positive_for_type(valid_cells_current_frame.type.as_numpy(),
+            HC_id_current_frame = valid_cells_current_frame.loc[is_positive_for_type(valid_cells_current_frame.type.to_numpy(),
                                                                                  differentiation_type_index)].label
             if skipped_frames < 3:
                 # Looking for delaminations
@@ -755,8 +781,6 @@ class Tissue(object):
 
     def calculate_neighbors_correlation_function(self, frame, valid_cells, set_state_by="type", method="neighbors", type_name=""):
         type_index = self.type_name_to_index(type_name)
-        if type_index < 0:
-            type_index = 0
         if set_state_by == "intensity":
             state = valid_cells.mean_intensity
         elif set_state_by == "type":
@@ -988,7 +1012,7 @@ class Tissue(object):
         return start_frame
 
     def get_frame_data(self, frame, feature, valid_cells, special_features=[], global_features=[], spatial_features=[],
-                      for_histogram=False, reference=None, intensity_img=None, window_radius=0):
+                      for_histogram=False, reference=None, intensity_img=None, window_radius=0, types=None):
         if feature in special_features:
             if feature == "psi6":
                 nearest_HCs = self.find_nearest_neighbors_using_voroni_tesselation(valid_cells)
@@ -1003,6 +1027,8 @@ class Tissue(object):
                 data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='HC', positive_for_type=True)
             elif feature == "SC neighbors":
                 data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='HC', positive_for_type=False)
+            elif feature == "neighbors by type":
+                data = self.calculate_n_neighbors_by_type(frame, valid_cells, type_list=types)
             elif feature == "HC second neighbors":
                 data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='HC',positive_for_type=True, second_neighbors=True)
             elif feature == "SC second neighbors":
@@ -1020,7 +1046,7 @@ class Tissue(object):
                 if 'HC' in feature:
                     neighbors_type = 'HC'
                 elif 'SC' in feature:
-                    neighbors_type = 'SC'
+                    neighbors_type = 'HC'
                     positive_for_type = False
                 else:
                     neighbors_type = 'all'
@@ -1086,11 +1112,13 @@ class Tissue(object):
         labels = self.get_labels(frame)
         props = regionprops_table(labels, intensity_img, properties=('label', 'intensity_mean'))
         valid_cells_labels = valid_cells.index.to_numpy() + 1
-        valid_cells_indices= np.intersect1d(props['label'], valid_cells_labels, return_indices=True)[1]
+        valid_cells_indices = np.intersect1d(props['label'], valid_cells_labels, return_indices=True)[1]
         return props['intensity_mean'][valid_cells_indices]
 
     @staticmethod
     def match_labels_different_frames(labels_reference_frame, labels_wanted_frame):
+        labels_reference_frame = labels_reference_frame.astype(np.int)
+        labels_wanted_frame = labels_wanted_frame.astype(np.int)
         max_label = max(np.max(labels_reference_frame), np.max(labels_wanted_frame))
         # Creating arrays in which element i is the location of the label i in the sorted array
         sorting_indices_reference = -1 * np.ones((max_label + 1,)).astype(int)
@@ -1205,7 +1233,8 @@ class Tissue(object):
         return cells.query("(cx - %f)**2 + (cy - %f)**2 < %f" % (center_x, center_y, radius**2))
 
 
-    def plot_single_frame_data(self, frame, x_feature, y_feature, ax, cells_type='all', positive_for_type=True, intensity_image=None):
+    def plot_single_frame_data(self, frame, x_feature, y_feature, ax, cells_type='all', positive_for_type=True,
+                               intensity_image=None, neighbor_types=None):
         cell_info = self.get_cells_info(frame)
         type_index = self.type_name_to_index(cells_type)
         y_data = None
@@ -1222,7 +1251,7 @@ class Tissue(object):
         plotted = False
         x_data, msg = self.get_frame_data(frame, x_feature, valid_cells,
                                           self.SPECIAL_FEATURES + self.SPECIAL_X_ONLY_FEATURES,
-                                          intensity_img=intensity_image)
+                                          intensity_img=intensity_image, types=neighbor_types)
         if x_data is None:
             return None, msg
         if y_feature == "histogram":
@@ -1230,7 +1259,12 @@ class Tissue(object):
             ax.set_xlabel(x_feature)
             ax.set_ylabel('frequency')
             title = "%s histogram for frame %d" % (x_feature, frame)
-            res = pd.DataFrame({"Frame":[frame]*np.size(x_data), x_feature: x_data})
+            if isinstance(x_data, pd.DataFrame):
+                ax.legend(list(x_data))
+                x_data["Frame"] = [frame]*x_data.shape[0]
+                res = x_data
+            else:
+                res = pd.DataFrame({"Frame":[frame]*np.size(x_data), x_feature: x_data})
             plotted = True
         else:
             y_data, msg = self.get_frame_data(frame, y_feature, valid_cells,
@@ -1409,6 +1443,33 @@ class Tissue(object):
             if x_feature in self.SPECIAL_EVENT_STATISTICS_FEATURES:
                 if x_feature == "timing histogram":
                     x_data = event_data.significant_frame.to_numpy().astype("float")
+                elif x_feature == "timing by number of HC neighbors":
+                    timing_by_n_neighbors, initial_abundance = self.calculate_events_timing_by_n_neighbors_from_type(event_type, 1, "HC")
+                    res_dict = {"event type": event_type}
+                    for n, times in enumerate(timing_by_n_neighbors):
+                        sorted_times = sorted(times)
+                        ax.plot(np.hstack([np.array([0] + sorted_times)/4]),
+                                np.hstack([np.zeros((1,)),100*(np.arange(len(times))+1)/initial_abundance[int(n)]]),
+                                label=("%d neighboring HCs, initially %d cells" % (n, initial_abundance[int(n)])))
+                        ax.set_xlabel("Time (hours)")
+                        ax.set_ylabel("% Differentiated cells")
+                        ax.legend()
+                        res_dict["timing for %d HC neighbors" % n] = sorted_times
+                        res_dict["initial_abundance for %d HC neighbors" % n] = initial_abundance[int(n)]
+                    return res_dict, ""
+                elif x_feature == "rates by number of HC neighbors":
+                    timing_by_n_neighbors, rates_by_n_neighbors = self.calculate_events_rate_by_n_neighbors_from_type(event_type, 1, "HC")
+                    res_dict = {"event type": event_type}
+                    for n, times in enumerate(timing_by_n_neighbors):
+                        ax.plot(np.hstack([np.zeros((1,)), times/4]),
+                                np.hstack([np.zeros((1,)), rates_by_n_neighbors[n]]),
+                                label=("%d neighboring HCs" % n))
+                        ax.set_xlabel("Time (hours)")
+                        ax.set_ylabel("Differentiation rates")
+                        ax.legend()
+                        res_dict["timing for %d HC neighbors" % n] = times/4
+                        res_dict["rates for %d HC neighbors" % n] = rates_by_n_neighbors[n]
+                    return res_dict, ""
                 elif x_feature == "spatio-temporal correlation":
                     x_data = self.calculate_events_correlation_function(y_radius, x_radius, event_type)
                     im = ax.matshow(np.flipud(x_data.T), cmap=plt.cm.RdBu,
@@ -1518,6 +1579,112 @@ class Tissue(object):
         else:
             return 0
 
+    def calculate_n_cells_with_n_neighbors(self, frame, cells, neighbor_type, positive_for_type, second_neighbors=False):
+        n_neighbors = self.calculate_n_neighbors_from_type(frame, cells, neighbor_type,
+                                                           positive_for_type,
+                                                           second_neighbors).astype(np.int)
+        max_number_of_neighbors = np.max(n_neighbors)
+        abundance = np.zeros((int(max_number_of_neighbors) + 1))
+        initial_n_neighbors, n_cells = np.unique(n_neighbors, return_counts=True)
+        for n, freq in zip(initial_n_neighbors, n_cells):
+            abundance[n] = freq
+        return n_neighbors, abundance
+
+    def calculate_events_timing_by_n_neighbors_from_type(self, event_type, reference_frame, neighbor_type,
+                                                         positive_for_type=True, second_neighbors=False):
+        cells_info = self.get_cells_info(reference_frame)
+        valid_cells = self.get_valid_non_edge_cells(1, cells_info).query("type == 0") #only SC, TODO change to more general thing
+        event_data = self.events.query("type == \"%s\"" % event_type)
+        cells_id = event_data.cell_id.to_numpy()
+        events_timing = event_data.significant_frame.to_numpy()
+        cells_indices_in_ref_frame = self.match_labels_different_frames(cells_id, valid_cells.label.to_numpy())
+        events_timing = events_timing[cells_indices_in_ref_frame >= 0]
+        cells_indices_in_ref_frame = cells_indices_in_ref_frame[cells_indices_in_ref_frame >= 0]
+        n_neighbors, initial_abundance = self.calculate_n_cells_with_n_neighbors(reference_frame, valid_cells,
+                                                                                 neighbor_type, positive_for_type,
+                                                                                 second_neighbors)
+        max_number_of_neighbors = np.max(n_neighbors)
+        n_neighbors_for_events = n_neighbors[cells_indices_in_ref_frame]
+        timing_res = [None] * (int(max_number_of_neighbors) + 1)
+        for time, n in zip(events_timing, n_neighbors_for_events):
+            if timing_res[n] is None:
+                timing_res[n] = [time]
+            else:
+                timing_res[n].append(time)
+        # filter None values
+        timing_res = [i for i in timing_res if i is not None]
+        return timing_res, initial_abundance
+
+    def calculate_events_rate_by_n_neighbors_from_type(self, event_type, reference_frame, neighbor_type,
+                                                        positive_for_type=True, second_neighbors=False):
+        """ Using Kaplan-Meier survival probability estimator.
+        In this context the event-rate(t) is the probability the a cell from a specific group will undergo
+         an event from the specify type by time t """
+        cells_info = self.get_cells_info(reference_frame)
+        valid_cells = self.get_valid_non_edge_cells(1, cells_info).query(
+            "type == 0")  # only SC, TODO change to more general thing
+        n_neighbors, initial_abundance = self.calculate_n_cells_with_n_neighbors(reference_frame, valid_cells,
+                                                                                 neighbor_type, positive_for_type,
+                                                                                 second_neighbors)
+        max_number_of_neighbors = np.max(n_neighbors)
+        event_data = self.events.query("type == \"%s\"" % event_type)
+        cells_id = event_data.cell_id.to_numpy()
+        events_timing = event_data.significant_frame.to_numpy()
+        cells_indices_in_ref_frame = self.match_labels_different_frames(cells_id, valid_cells.label.to_numpy())
+        events_timing = events_timing[cells_indices_in_ref_frame >= 0]
+        cells_indices_in_ref_frame = cells_indices_in_ref_frame[cells_indices_in_ref_frame >= 0]
+        n_neighbors_for_events = n_neighbors[cells_indices_in_ref_frame]
+        # Sorting events timing and cell ids by time
+        sorting_args = np.argsort(events_timing)
+        events_timing = events_timing[sorting_args]
+        n_neighbors_for_events = n_neighbors_for_events[sorting_args]
+        timing_res = [None] * (int(max_number_of_neighbors) + 1)
+        survival_rates = [None] * (int(max_number_of_neighbors) + 1)
+        events_in_same_frame_counter = []
+        last_event_frame = -1
+        same_frame = False
+        n_neighbors = None
+        for event_frame, n_neighbors_for_event in zip(events_timing, n_neighbors_for_events):
+            if event_frame == last_event_frame:
+                same_frame = True
+                events_in_same_frame_counter.append(n_neighbors_for_event)
+            else:
+                last_event_frame = event_frame
+                same_frame = False
+                events_in_same_frame_counter = [n_neighbors_for_event]
+            if not same_frame:
+                cells_info = self.get_cells_info(event_frame)
+                valid_cells = self.get_valid_non_edge_cells(1, cells_info).query(
+                    "type == 0")  # only SC, TODO change to more general thing
+                n_neighbors = self.calculate_n_neighbors_from_type(event_frame, valid_cells, neighbor_type, positive_for_type,
+                                                 second_neighbors).astype(np.int)
+            relevant_group_size = np.count_nonzero(n_neighbors == n_neighbors_for_event)
+            if n_neighbors_for_event > max_number_of_neighbors:
+                continue
+            elif timing_res[n_neighbors_for_event] is None:
+                timing_res[n_neighbors_for_event] = []
+                survival_rates[n_neighbors_for_event] = []
+            repeats = events_in_same_frame_counter.count(n_neighbors_for_event)
+            if same_frame and repeats > 1:
+                if relevant_group_size == 0:
+                    survival_rates[n_neighbors_for_event][-1] = 0
+                else:
+                    survival_rates[n_neighbors_for_event][-1] = 1 - repeats/relevant_group_size
+            else:
+                timing_res[n_neighbors_for_event].append(event_frame)
+                if relevant_group_size == 0:
+                    survival_rates[n_neighbors_for_event].append(0)
+                else:
+                    survival_rates[n_neighbors_for_event].append(1-1/relevant_group_size)
+        # filter None values
+        timing_res = [i for i in timing_res if i is not None]
+        survival_rates = [i for i in survival_rates if i is not None]
+        event_rates = dict()
+        for n_neighbors, rates in enumerate(survival_rates):
+            event_rates[n_neighbors] = 1 - np.cumprod(np.array(rates))
+            timing_res[n_neighbors] = np.array(timing_res[n_neighbors])
+        return timing_res, event_rates
+
     def calculate_n_neighbors_from_type(self, frame, cells, cell_type='same', positive_for_type=True, second_neighbors=False):
         cell_info = self.get_cells_info(frame)
         if cell_info is None:
@@ -1551,7 +1718,15 @@ class Tissue(object):
             else:
                 neighbors_from_type[index] = neighbors.size
             index += 1
-        return neighbors_from_type
+        return neighbors_from_type.astype(np.int)
+
+    def calculate_n_neighbors_by_type(self, frame, cells, type_list):
+        data = dict()
+        if type_list is None:
+            type_list = self.get_cell_type_names()
+        for neighbor_type in type_list:
+            data[neighbor_type] = self.calculate_n_neighbors_from_type(frame, cells, neighbor_type)
+        return pd.DataFrame(data)
 
     def plot_centroids(self, frame_number):
         """
@@ -1592,6 +1767,7 @@ class Tissue(object):
                 cells_info.at[cell_index, "neighbors"] = cells_info.neighbors[cell_index].union(neighbors_labels)
                 for neighbor_label in list(neighbors_labels):
                    self.cells_info.at[neighbor_label-1, "neighbors"].add(cell_label)
+                   self.cells_info.at[neighbor_label - 1, "n_neighbors"] = len(cells_info.neighbors[neighbor_label - 1])
         for cell_index in working_indices:
             self.cells_info.at[cell_index, "n_neighbors"] = len(cells_info.neighbors[cell_index])
         return
@@ -1610,7 +1786,7 @@ class Tissue(object):
             neighbors_from_the_right_type = (cells_info.valid[np.array(neighbor_labels) - 1] == 1).to_numpy()
         else:
             type_index = self.type_name_to_index(cell_type)
-            neighbors_from_the_right_type = is_positive_for_type(cells_info.type[np.array(neighbor_labels) - 1], type_index).to_numpy()
+            neighbors_from_the_right_type = is_positive_for_type(cells_info.type[np.array(neighbor_labels) - 1].to_numpy(), type_index)
             if not positive_for_type:
                 neighbors_from_the_right_type = ~neighbors_from_the_right_type
         neighbor_labels = neighbor_labels[neighbors_from_the_right_type]
@@ -2104,7 +2280,7 @@ class Tissue(object):
         min_area = self.min_cell_area * mean_area
         old_valid = cells_info.valid.to_numpy() == 1
         new_valid = np.logical_and(areas < max_area, areas > min_area)
-        updated_labels = cell_indices[np.logical_and(new_valid, ~old_valid)] + 1
+        updated_labels = cells_info.loc[np.logical_and(new_valid, ~old_valid) + 1, "label"].to_numpy()
         self.find_neighbors(frame_number, only_for_labels=updated_labels)
         cells_info.loc[:, "valid"] = new_valid.astype(int)
         max_brightness = np.percentile(type_marker_image, 99)
@@ -2128,16 +2304,21 @@ class Tissue(object):
         current_type = self.cells_info.loc[neg_indices, "type"].to_numpy()
         new_type = change_type(current_type, type_index, is_positive=False)
         self.cells_info.loc[neg_indices, "type"] = new_type
-        self.update_cell_types_by_cells_info()
+        self.update_cell_types_by_cells_info(frame_number)
         return 0
 
-    def update_cell_types_by_cells_info(self):
+    def update_cell_types_by_cells_info(self, frame):
+        cell_types = self.get_cell_types(frame)
+        if cell_types is None:
+            cell_types = np.ones_like(self.labels) * INVALID_TYPE_INDEX
         valid_cells_info = self.cells_info.query("valid == 1")[["label", "type"]]
         for type_index in range(np.max(valid_cells_info.type) + 1):
-            type_labels = valid_cells_info.query("type == %d" % type_index).to_numpy()
-            self.cell_types[np.isin(self.labels, type_labels)] = type_index
+            type_labels = valid_cells_info.query("type == %d" % type_index).label.to_numpy()
+            cell_types[np.isin(self.labels, type_labels)] = type_index
         invalid_cells_labels = self.cells_info.query("valid == 0").label.to_numpy()
-        self.cell_types[np.isin(self.labels, invalid_cells_labels)] = INVALID_TYPE_INDEX
+        cell_types[np.isin(self.labels, invalid_cells_labels)] = INVALID_TYPE_INDEX
+        self.set_cell_types(frame, cell_types)
+        return 0
 
     def fix_cell_types_after_tracking(self, window_size=11, consistency_threshold=0.5, min_frame_for_diff_detection=10, min_frames_to_change_type=3):
         KEEP_TYPE = -1
@@ -2188,8 +2369,8 @@ class Tissue(object):
         initial_types = result[:,0]
         final_types = result[:,-1]
         valid_frames_for_cell = np.sum((result >= 0).astype(int), axis=1)
-        cumSC = np.cumsum((result == initial_types).astype(int),axis=1)
-        cumHC = np.fliplr(np.cumsum(np.fliplr((result == final_types).astype(int)), axis=1))
+        cumSC = np.cumsum((result == np.tile(initial_types, (result.shape[1], 1)).T).astype(int), axis=1)
+        cumHC = np.fliplr(np.cumsum(np.fliplr((result == np.tile(final_types, (result.shape[1], 1)).T).astype(int)), axis=1))
         consistency_scores = np.zeros(diff_candidates.shape)
         consistency_scores[diff_candidates] = (cumSC[diff_candidates] + cumHC[diff_candidates])
 
@@ -2219,7 +2400,7 @@ class Tissue(object):
                 continue
             labels_map = self.get_labels(frame)
             cell_types = self.get_cell_types(frame)
-            if cell_types is None or labels is None:
+            if cell_types is None or labels_map is None:
                 continue
             # update cell types in cells info
             valid_cells = cells_info.query("valid == 1 and empty_cell == 0")
@@ -2232,9 +2413,9 @@ class Tissue(object):
                 before_diff_frame = np.zeros((valid_cells.shape[0],))
                 before_diff_frame[diff_type_diff_frames[labels - 1] > valid_frame_index] = 1
                 change_to_type[np.logical_and(np.logical_and(change_to_diff == 1, before_diff_frame == 1),
-                                              type_index == initial_types)] = 1
+                                              type_index == initial_types[labels - 1])] = 1
                 change_to_type[np.logical_and(np.logical_and(change_to_diff == 1, before_diff_frame == 0),
-                                              type_index == final_types)] = 1
+                                              type_index == final_types[labels - 1])] = 1
                 valid_indices = valid_cells.index.to_numpy()
                 type_indices = valid_indices[change_to_type == 1]
                 self.cells_info.loc[type_indices, "type"] = type_index
@@ -2316,8 +2497,6 @@ class Tissue(object):
 
     def draw_cell_types(self, frame_number, type_name=""):
         type_index = self.type_name_to_index(type_name)
-        if type_index < 0:
-            type_index = 0
         cell_types = self.get_cell_types(frame_number)
         positive_image = (is_positive_for_type(cell_types, type_index)) * np.array(POS_COLOR).reshape((3, 1, 1))
         negative_image = (np.logical_and(~is_positive_for_type(cell_types, type_index),
@@ -2410,8 +2589,7 @@ class Tissue(object):
         if final:
             if len(self._label_before_line_addition) > 0:
                 label_before_addition = np.bincount(self._label_before_line_addition).argmax()  # majority vote for former label
-                self.update_after_adding_segmentation_line(label_before_addition, frame, hc_marker_image,
-                                                           hc_threshold, percentile_above_threshold)
+                self.update_after_adding_segmentation_line(label_before_addition, frame)
             self._finished_last_line_addition = True
         return int(points_too_far)
 
@@ -2705,7 +2883,7 @@ class Tissue(object):
         first_pixel = line_pixels[0]
         neighborhood = labels[first_pixel[0]-1:first_pixel[0]+2, first_pixel[1]-1:first_pixel[1]+2]
         labels[labels < 0] += 1
-        self.update_after_adding_segmentation_line(np.max(neighborhood), frame, hc_marker_image)
+        self.update_after_adding_segmentation_line(np.max(neighborhood), frame)
 
     def undo_line_addition(self, frame, hc_marker_image=None):
         line_pixel = self.last_added_line.pop(-1)
@@ -3526,11 +3704,17 @@ class Tissue(object):
                         fig, ax = plt.subplots()
                         filename = "%s_%s_frame%d.png" % (feature_label, event_label, frame)
                         data_filename = "%s_%s_frame%d_data" % (feature_label, event_label, frame)
-                        cell_type = "SC" if "SC" in event_type else "HC"
+                        cell_type = "HC"
+                        is_positive_for_type = "SC" not in event_type
                         res, msg = self.plot_overall_statistics(frame, x_feature, y_feature, ax, intensity_img=None,
-                                x_cells_type=cell_type, y_cells_type=cell_type, x_radius=x_radius, y_radius=y_radius)
+                                                                x_cells_type=cell_type,
+                                                                x_positive_for_type=is_positive_for_type,
+                                                                y_cells_type=cell_type,
+                                                                y_positive_for_type=is_positive_for_type,
+                                                                x_radius=x_radius, y_radius=y_radius)
 
                         fig.savefig(os.path.join(output_dir, filename))
+                        plt.close(fig)
                         if isinstance(res, pd.DataFrame):
                             res.to_pickle(os.path.join(output_dir, data_filename))
                         elif isinstance(res, np.ndarray):
@@ -3548,6 +3732,42 @@ class Tissue(object):
                         res.to_pickle(os.path.join(output_dir, data_filename))
                     elif isinstance(res, np.ndarray):
                         np.save(os.path.join(output_dir, data_filename), res)
+
+    def save_data_for_aastha(self, output_dir):
+        types = [("atoh1-neg",), ("atoh1-pos",), ("atoh1-pos", "spp1-pos"), ("atoh1-pos", "spp1-neg"), ("atoh1-neg", "spp1-pos")]
+        features = ["area", "n_neighbors", "neighbors by type"]
+        feature_labels = ["area", "number_of_neighbors", "neighbors_by_type"]
+        for type in types:
+            res = None
+            type_name = ""
+            for t in type:
+                type_name += t + "_"
+            data_filename = "%sdata.xlsx" % (type_name)
+            for feature, feature_label in zip(features, feature_labels):
+                fig, ax = plt.subplots()
+                filename = "%s_%s.png" % (feature, type_name[:-1])
+                data, msg = self.plot_single_frame_data(1, feature, "histogram", ax, str(type),
+                                                        neighbor_types=[str(type)for type in types])
+                if res is None:
+                    res = data
+                else:
+                    cols_to_use = data.columns.difference(res.columns)
+                    res = res.merge(data[cols_to_use], left_index=True, right_index=True, how='outer')
+                fig.savefig(os.path.join(output_dir, filename))
+                plt.close(fig)
+            GROUP_LENGTH=10000
+            with pd.ExcelWriter(os.path.join(output_dir, data_filename)) as writer:
+                for i in range(0, len(res), GROUP_LENGTH):
+                    res[i: i + GROUP_LENGTH].to_excel(writer, sheet_name='Row {}'.format(i), index=False, header=True)
+            res_avg = pd.DataFrame()
+            res_avg["average"] = res.mean(axis=0)
+            res_avg["std"] = res.std(axis=0)
+            res_avg["N"] = res.count(axis=0)
+            res_avg.to_excel(os.path.join(output_dir, "%savg.xlsx" % (type_name)))
+
+
+
+
 
     def get_trackking_labels(self, frame):
         labels = self.get_labels(frame)
