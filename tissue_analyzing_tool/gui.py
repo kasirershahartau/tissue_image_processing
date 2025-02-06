@@ -180,6 +180,22 @@ class ConsoleWidget(RichJupyterWidget):
         """
         self._execute(command, False)
 
+class AddTypeDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.inputs = []
+        layout = QtWidgets.QFormLayout(self)
+        self.inputs.append(QtWidgets.QLineEdit(self))
+        layout.addRow("New type name:", self.inputs[0])
+        self.inputs.append(QtWidgets.QLineEdit(self))
+        layout.addRow("What channel do you want to display for the new type:", self.inputs[1])
+        buttonBox = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel, self)
+        layout.addWidget(buttonBox)
+        buttonBox.accepted.connect(self.accept)
+        buttonBox.rejected.connect(self.reject)
+
+    def get_inputs(self):
+        return (input.text() for input in self.inputs)
 
 class ChannelsNameInputDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, input_num=1):
@@ -230,6 +246,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.number_of_frames = 0
         self.number_of_channels = 0
         self.channels_names = []
+        self.fake_channels = []
         self.analysis_saved = True
         self.waiting_for_data_save = []
         self.fixing_segmentation_mode = FIX_SEGMENTATION_OFF
@@ -333,6 +350,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.event_type_combo_box.addItems(tissue_info.Tissue.EVENT_TYPES)
         self.event_type_combo_box.addItems(tissue_info.Tissue.ADDITIONAL_EVENT_STATISTICS_OPTIONS)
         self.plot_event_statistics_botton.clicked.connect(self.plot_event_statistics)
+        self.add_type_button.clicked.connect(self.add_type)
 
     def open_file(self):
         global img
@@ -402,6 +420,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         if self.zo_changed:
             if self.zo_check_box.isChecked():
                 zo_channel = self.zo_spin_box.value()
+                if zo_channel >= self.number_of_channels:
+                    zo_channel = self.fake_channels[zo_channel - self.number_of_channels]
                 if self.img_in_memory:
                     disp_img = self.img[frame_number - 1, zo_channel, 0, :, :].T
                 else:
@@ -415,6 +435,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         if self.atoh_changed:
             if self.atoh_check_box.isChecked():
                 atoh_channel = self.atoh_spin_box.value()
+                if atoh_channel >= self.number_of_channels:
+                    atoh_channel = self.fake_channels[atoh_channel - self.number_of_channels]
                 if self.img_in_memory:
                    disp_img = self.img[frame_number - 1, atoh_channel, 0, :, :].T
                 else:
@@ -639,6 +661,16 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.analysis_changed = True
             self.display_frame()
         return 0
+
+    def add_type(self):
+        dialog = AddTypeDialog(self)
+        if dialog.exec():
+            type_name, type_channel = dialog.get_inputs()
+            self.fake_channels.append(int(type_channel))
+            self.channels_names.append(type_name)
+            self.tissue_info.add_fake_type(type_name)
+            self.atoh_spin_box.setMaximum(len(self.channels_names))
+            self.zo_spin_box.setMaximum(len(self.channels_names))
 
     def abort_event_marking(self):
         self.mark_event_stage = 0
@@ -1159,7 +1191,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             y_radius = self.event_statistics_window_radius_y_data_label_spin_box.value()
         plot_window = PlotDataWindow(self, working_dir=self.working_directory)
         if "reference" in event_type:
-            cells_type = "HC" if "HC" in event_type else "SC" if "SC" in event_type else "all"
+            cells_type, positive_for_type = ("HC", True) if "HC" in event_type else ("HC", False) if "SC" in event_type else ("all", True)
             reference_frame = self.choose_reference_frame_spin_box.value()
             if "intensity" in x_feature or (y_feature is not None and "intensity" in y_feature):
                 intensity_image = self.img[reference_frame - 1, self.atoh_spin_box.value(), 0, :, :]

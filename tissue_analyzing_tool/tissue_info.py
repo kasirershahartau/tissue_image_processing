@@ -287,10 +287,19 @@ class Tissue(object):
             self.cells_type_list = [None] * self.number_of_frames
         return 0
 
-    def reset_frame_data(self):
+    def reset_frame_data(self, frame):
+        if self.cells_info_frame != frame:
+            self.save_cells_info()
+            self.cells_info_frame = frame
         self.cells_info = None
-        self.labels = None
+        if self.cell_types_frame != frame:
+                self.save_cell_types()
+                self.cell_types_frame = frame
         self.cell_types = None
+        if self.labels_frame != frame:
+            self.save_labels()
+            self.labels_frame = frame
+        self.labels = None
         self.remove_labels()
         self.remove_cell_types()
         self.remove_cells_info()
@@ -300,7 +309,7 @@ class Tissue(object):
             self.save_labels()
             self.labels_frame = frame_number
         if reset_data:
-            self.reset_frame_data()
+            self.reset_frame_data(frame_number)
         self.labels = labels
 
     def set_cells_info(self, frame_number, cells_info):
@@ -592,7 +601,7 @@ class Tissue(object):
 
     @staticmethod
     def detect_non_sensory_region_cells(cells_info):
-        hair_cells = cells_info.query("type == 1 and empty_cell == 0")
+        hair_cells = cells_info.query("type == 1 and empty_cell == 0 and valid == 1")
         hull = Delaunay(hair_cells.loc[:,["cx","cy"]].to_numpy())
         indices = cells_info.index.array.to_numpy()
         cells_outside_region = hull.find_simplex(cells_info.loc[:,["cx","cy"]].to_numpy()) < 0
@@ -884,7 +893,7 @@ class Tissue(object):
         min_area = self.min_cell_area * mean_area
         cells_info.loc[:, "valid"] = np.logical_and(areas < max_area, areas > min_area).astype(int)
         self.set_cells_info(frame_number, cells_info)
-        self.find_neighbors(frame_number, only_for_labels=cells_info.query("valid == 1").label.to_numpy())
+        self.find_neighbors(frame_number, only_for_labels=cells_info.query("valid == 1").index.to_numpy() + 1)
         return 0
 
     def get_cell_data_by_label(self, cell_id, frame):
@@ -1056,8 +1065,12 @@ class Tissue(object):
                     data = np.empty((valid_cells.shape[0],))
                     i = 0
                 labels = self.get_labels(frame)
-                max_filtered_label = maximum_filter(labels, (2,2), mode='constant')
-                min_filtered_label = minimum_filter(max_filtered_label, (2,2), mode='constant')
+                max_filtered_label = maximum_filter(labels, footprint=np.array([[0,1,0], [1,0,1], [0,1,0]]),
+                                                    mode='constant')
+                labels_copy = labels.copy()
+                labels_copy[labels_copy == 0] = np.max(labels_copy) + 1
+                min_filtered_label = minimum_filter(labels_copy, footprint=np.array([[0,1,0], [1,0,1], [0,1,0]]),
+                                                    mode='constant')
 
                 for index, cell in valid_cells.iterrows():
                     _, contact_lengths = self.calculate_contact_length(frame, cell, max_filtered_label,
@@ -1754,7 +1767,7 @@ class Tissue(object):
         # one pixel labeled as i in the dilated image
         dilated_image = maximum_filter(labels, (3,3), mode='constant')
         if only_for_labels is None:
-            working_indices = np.arange(cells_info.shape[0])
+            working_indices = cells_info.query("empty_cell == 0").index.to_numpy()
         else:
             working_indices = np.array(only_for_labels) - 1
         for cell_index in working_indices:
@@ -1774,7 +1787,7 @@ class Tissue(object):
 
     def calculate_contact_length(self, frame, cell_info, max_filtered_labels, min_filtered_labels, cell_type='all', positive_for_type=True):
         cells_info = self.get_cells_info(frame)
-        cell_label = cells_info.query("label == %d and valid == 1 and empty_cell == 0" % cell_info.label).index.to_numpy() + 1
+        cell_label = cells_info.query("label == %d and empty_cell == 0" % cell_info.label).index.to_numpy() + 1
         region_first_row = int(max(0, cell_info.bounding_box_min_row - 2))
         region_last_row = int(cell_info.bounding_box_max_row + 2)
         region_first_col = int(max(0, cell_info.bounding_box_min_col - 2))
@@ -2250,10 +2263,15 @@ class Tissue(object):
                 self.events.at[event_idx, "daughter_pos_y"] = daughter_pos_y
         return 0
 
+    def add_fake_type(self, type_name):
+        self.type_names.append(type_name)
+
     def calc_cell_types(self, type_marker_image, frame_number, type_name, threshold=0.1,
                         percentage_above_threshold=90, peak_window_size=0):
         cells_info = self.get_cells_info(frame_number)
         labels = self.get_labels(frame_number)
+        if cells_info is None or labels is None:
+            return 0
         cell_types = self.get_cell_types(frame_number)
         if cell_types is None:
             cell_types = INVALID_TYPE_INDEX * np.ones_like(labels).astype(np.uint8)
@@ -2280,7 +2298,7 @@ class Tissue(object):
         min_area = self.min_cell_area * mean_area
         old_valid = cells_info.valid.to_numpy() == 1
         new_valid = np.logical_and(areas < max_area, areas > min_area)
-        updated_labels = cells_info.loc[np.logical_and(new_valid, ~old_valid) + 1, "label"].to_numpy()
+        updated_labels = cells_info.iloc[np.logical_and(new_valid, ~old_valid), "index"].to_numpy() + 1
         self.find_neighbors(frame_number, only_for_labels=updated_labels)
         cells_info.loc[:, "valid"] = new_valid.astype(int)
         max_brightness = np.percentile(type_marker_image, 99)
@@ -2498,6 +2516,8 @@ class Tissue(object):
     def draw_cell_types(self, frame_number, type_name=""):
         type_index = self.type_name_to_index(type_name)
         cell_types = self.get_cell_types(frame_number)
+        if type_index < 0 or cell_types is None:
+            return 0
         positive_image = (is_positive_for_type(cell_types, type_index)) * np.array(POS_COLOR).reshape((3, 1, 1))
         negative_image = (np.logical_and(~is_positive_for_type(cell_types, type_index),
                                          ~(cell_types == INVALID_TYPE_INDEX))) * np.array(NEG_COLOR).reshape((3, 1, 1))
@@ -2911,11 +2931,11 @@ class Tissue(object):
         if distance_limit > 0:
             return None, None
         else:
-            edges = [0, labels.shape[0], 0, labels.shape[1]]
+            edges = [0, labels.shape[1], 0, labels.shape[0]]
             if nearest_edge < 2:
-                return edges[nearest_edge], y
+                return edges[nearest_edge] - 1, y
             else:
-                return x, edges[nearest_edge]
+                return x, edges[nearest_edge] - 1
 
     def get_shape_fitting_results(self, frame):
         return self.shape_fitting_results[frame - 1]
@@ -3817,6 +3837,36 @@ class Tissue(object):
         out = np.array(out).astype("uint16")
         np.save(os.path.join(outfolder, filename + '.tif'), out)
         return 0
+
+    def calc_neighbors_contact_matrix(self, frame):
+        labels = self.get_labels(frame)
+        cells_info = self.get_cells_info(frame)
+
+        if labels is None or cells_info is None:
+            return 0
+        max_filtered_label = maximum_filter(labels, footprint=np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]]),
+                                            mode='constant')
+        labels_copy = labels.copy()
+        labels_copy[labels_copy == 0] = np.max(labels_copy) + 1
+        min_filtered_label = minimum_filter(labels_copy, footprint=np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]]),
+                                            mode='constant')
+        max_index = cells_info.index.max()
+        output = np.zeros((max_index, max_index))
+        for index, cell in cells_info.iterrows():
+            neighbor_labels, contact_lengths = self.calculate_contact_length(frame, cell, max_filtered_label,
+                                                                             min_filtered_label)
+            for (neighbor_label, contact_length) in zip(neighbor_labels, contact_lengths):
+                output[index, neighbor_label - 1] = contact_length
+                output[neighbor_label - 1, index] = contact_length
+
+            if index > (max_index//2 + 1):
+                break
+        return output
+
+    def save_neighbors_contact_matrix(self, frame):
+        contact_matrix = self.calc_neighbors_contact_matrix(frame)
+        np.save(os.path.join(self.data_path, "contact_matrix_frame_%d" % frame), contact_matrix)
+
 
     def save_cell_type_names(self):
         if self.type_names is not None:
