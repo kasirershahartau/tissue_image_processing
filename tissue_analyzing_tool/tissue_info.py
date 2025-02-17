@@ -2605,7 +2605,7 @@ class Tissue(object):
         rr, cc = line(y1, x1, y2, x2)
         self.labels[rr, cc] = 0
         if self.get_cell_types(frame) is not None:
-            self.cell_types[rr, cc] = 0
+            self.cell_types[rr, cc] = INVALID_TYPE_INDEX
         if final:
             if len(self._label_before_line_addition) > 0:
                 label_before_addition = np.bincount(self._label_before_line_addition).argmax()  # majority vote for former label
@@ -2823,6 +2823,9 @@ class Tissue(object):
             new_region_labels = label_image_regions((cell_region != 0).astype(int), connectivity=1, background=0)
             cell1_label = np.min(new_region_labels[cell_region == cell_label])
             cell2_label = np.max(new_region_labels[cell_region == cell_label])
+            if cell1_label == cell2_label:
+                print("New line did not split the cell")
+                return 0
             cell_region[new_region_labels == cell1_label] = cell_label
             cell_region[new_region_labels == cell2_label] = new_label
             labels[region_first_row:region_last_row, region_first_col:region_last_col] = cell_region
@@ -2883,6 +2886,7 @@ class Tissue(object):
         self.last_action = []
         self._neighbors_labels = (0,0)
         self.last_added_line = []
+        self.update_cell_types_by_cells_info(frame)
         return 0
 
     def undo_last_action(self, frame):

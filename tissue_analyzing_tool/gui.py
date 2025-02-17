@@ -10,7 +10,7 @@ matplotlib.use('Qt5Agg')
 import os.path, shutil, sys
 import re
 from basic_image_manipulations import *
-from tissue_info import Tissue
+from tissue_info import Tissue, INVALID_TYPE_INDEX
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
@@ -25,7 +25,7 @@ from IPython.lib import guisupport
 COLORTABLE=[]
 WORKING_DIR = "D:\\Kasirer\\experimental_results\\"
 BASEDIR = os.path.dirname(__file__)
-
+from tissue_info import INVALID_TYPE_INDEX
 sys.path.insert(1, '..\\Segmentation')
 from prediction_local import SegmentationPredictor
 UNET_WEIGHTS_PATH = os.path.join('C:\\Users\\Kasirer\\Phd\\mouse_ear_project\\tissue_image_processing\\Segmentation',
@@ -450,6 +450,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         if self.segmentation_changed:
             if self.show_segmentation_check_box.isChecked() and self.current_segmentation is not None:
                 self.current_frame[0, :, :] = 255*self.current_segmentation
+                self.current_frame[1][self.current_segmentation > 0] = 0
+                self.current_frame[2][self.current_segmentation > 0] = 0
             else:
                 self.current_frame[0, :, :] = 0
             self.segmentation_changed = False
