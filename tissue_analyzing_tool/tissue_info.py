@@ -149,7 +149,7 @@ def is_positive_for_type(type, type_index):
         if hasattr(type, "__len__"):
             res = np.ones_like(type)
             for t in pos_types:
-                res[~is_positive_for_type(type, t)] = 0
+                res[not is_positive_for_type(type, t)] = 0 # original ~, instead of "not"
             for t in neg_types:
                 res[is_positive_for_type(type, t)] = 0
             return res.astype(np.bool)
