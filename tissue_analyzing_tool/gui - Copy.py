@@ -10,7 +10,7 @@ matplotlib.use('Qt5Agg')
 import os.path, shutil, sys
 import re
 from basic_image_manipulations import *
-from tissue_info import Tissue, INVALID_TYPE_INDEX
+from tissue_info import Tissue
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
@@ -23,12 +23,16 @@ from qtconsole.inprocess import QtInProcessKernelManager
 from IPython.lib import guisupport
 
 COLORTABLE=[]
-WORKING_DIR = "D:\\Kasirer\\experimental_results\\"
+# WORKING_DIR = "D:\\Kasirer\\experimental_results\\"
+WORKING_DIR = "D:\\Users\\TelAvivU-Analysis2\\Desktop\\Tomer\\Movies"
 BASEDIR = os.path.dirname(__file__)
-from tissue_info import INVALID_TYPE_INDEX
-sys.path.insert(1, '..\\Segmentation')
+
+# sys.path.insert(1, '..\\Segmentation')
+sys.path.insert(1, os.path.join(BASEDIR, '..\\Segmentation'))
 from prediction_local import SegmentationPredictor
-UNET_WEIGHTS_PATH = os.path.join('C:\\Users\\Kasirer\\Phd\\mouse_ear_project\\tissue_image_processing\\Segmentation',
+# UNET_WEIGHTS_PATH = os.path.join('C:\\Users\\Kasirer\\Phd\\mouse_ear_project\\tissue_image_processing\\Segmentation',
+#                                    'model_image_segmentation_run_after_load_weights_large_dataset_3_ADAM.h5')
+UNET_WEIGHTS_PATH = os.path.join('D:\\Users\\TelAvivU-Analysis2\\Desktop\\Tomer\\tissue_image_processing\\Segmentation',
                                    'model_image_segmentation_run_after_load_weights_large_dataset_3_ADAM.h5')
 from numexpr import utils
 
@@ -218,7 +222,7 @@ class ChannelsNameInputDialog(QtWidgets.QDialog):
 class FormImageProcessing(QtWidgets.QMainWindow):
     def __init__(self, parent=None):
         super(FormImageProcessing, self).__init__(parent)
-        uic.loadUi(os.path.join(BASEDIR, "movie_display.ui"), self)
+        uic.loadUi(os.path.join(BASEDIR, "movie_display - Copy.ui"), self)
         self.setWindowTitle("Movie Segmentation")
         self.setState()
         self.saveFile = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+S"), self)
@@ -245,7 +249,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.segmentation_saved = True
         self.number_of_frames = 0
         self.number_of_channels = 0
-        self.channel_names = []
+        self.channels_names = []
         self.fake_channels = []
         self.analysis_saved = True
         self.waiting_for_data_save = []
@@ -315,7 +319,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.previous.activated.connect(self.previous_frame)
         self.toggle_valid.activated.connect(self.toggle_valid_frame)
         self.save_segmentation_button.clicked.connect(self.save_data)
+
         self.export_to_tiff_button.clicked.connect(self.export_segmentation_to_tiff)
+
         self.load_segmentation_button.clicked.connect(self.load_data)
         self.analyze_segmentation_button.clicked.connect(self.analyze_segmentation)
         self.track_cells_button.clicked.connect(self.track_cells)
@@ -381,14 +387,15 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.number_of_channels = self.img_dimensions.C
         dialog = ChannelsNameInputDialog(self, self.number_of_channels)
         if dialog.exec():
-            self.channel_names = dialog.get_inputs()
+            self.channels_names = dialog.get_inputs()
         else:
-            self.channel_names = [str(i + 1) for i in range(self.number_of_channels)]
-        zo_channel_name = self.channel_names[self.zo_spin_box.value()]
+            self.channels_names = [str(i + 1) for i in range(self.number_of_channels)]
+        
+        zo_channel_name = self.channels_names[self.zo_spin_box.value()]
         self.zo_check_box.setText("Seg channel: %s" % zo_channel_name)
         self.zo_level_label.setText("%s level" % zo_channel_name)
         self.zo_changed = True
-        atoh_channel_name = self.channel_names[self.atoh_spin_box.value()]
+        atoh_channel_name = self.channels_names[self.atoh_spin_box.value()]
         self.atoh_check_box.setText("Type channel: %s" % atoh_channel_name)
         self.atoh_level_label.setText("%s level" % atoh_channel_name)
         self.atoh_changed = True
@@ -401,7 +408,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         min_cell_area = self.cell_size_spin_box_min.value() / 100
         if self.tissue_info is not None:
             self.tissue_info.clean_up()
-        self.tissue_info = Tissue(self.number_of_frames, fname, self.channel_names, max_cell_area=max_cell_area,
+        self.tissue_info = Tissue(self.number_of_frames, fname, max_cell_area=max_cell_area,
                                   min_cell_area=min_cell_area, load_to_memory=self.img_in_memory)
         self.frame_line_edit.setText("%d/%d" % (self.frame_slider.value(), self.number_of_frames))
         self.setWindowTitle(fname)
@@ -427,7 +434,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                     disp_img = self.img[frame_number - 1, zo_channel, 0, :, :].T
                 else:
                     disp_img = self.img[frame_number - 1, zo_channel, 0, :, :].compute().T
-                disp_img = disp_img * self.zo_level_scroll_bar.value() * (10 / max(np.average(disp_img),1))
+                disp_img = disp_img * self.zo_level_scroll_bar.value() * (5 / max(np.average(disp_img),1)) # 5 was formerly 10
                 np.putmask(disp_img, disp_img > 255, 255)
                 self.current_frame[1, :, :] = disp_img
             else:
@@ -442,7 +449,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                    disp_img = self.img[frame_number - 1, atoh_channel, 0, :, :].T
                 else:
                    disp_img = self.img[frame_number - 1, atoh_channel, 0, :, :].compute().T
-                disp_img = self.atoh_level_scroll_bar.value() * disp_img * (10 / max(np.average(disp_img),1))
+                disp_img = self.atoh_level_scroll_bar.value() * disp_img * (5 / max(np.average(disp_img),1)) # 5 was formerly 10
                 np.putmask(disp_img, disp_img > 255, 255)
                 self.current_frame[2, :, :] = disp_img
             else:
@@ -667,11 +674,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         dialog = AddTypeDialog(self)
         if dialog.exec():
             type_name, type_channel = dialog.get_inputs()
-            self.fake_channels.append(int(type_channel) - 1)
-            self.channel_names.append(type_name)
-            self.tissue_info.add_fake_type(type_name, int(type_channel) - 1)
-            self.atoh_spin_box.setMaximum(len(self.channel_names))
-            self.zo_spin_box.setMaximum(len(self.channel_names))
+            self.fake_channels.append(int(type_channel))
+            self.channels_names.append(type_name)
+            self.tissue_info.add_fake_type(type_name)
+            self.atoh_spin_box.setMaximum(len(self.channels_names))
+            self.zo_spin_box.setMaximum(len(self.channels_names))
 
     def abort_event_marking(self):
         self.mark_event_stage = 0
@@ -743,7 +750,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             elif self.fix_cell_types_on:
                 frame = self.frame_slider.value()
                 if button == QtCore.Qt.LeftButton:
-                    self.tissue_info.change_cell_type(frame, (pos.x(), pos.y()), type_name=self.channel_names[self.atoh_spin_box.value()])
+                    self.tissue_info.change_cell_type(frame, (pos.x(), pos.y()), type_name=self.channels_names[self.atoh_spin_box.value()])
                 elif button == QtCore.Qt.MiddleButton:
                     self.tissue_info.make_invalid_cell(frame, (pos.x(), pos.y()))
                 self.analysis_changed = True
@@ -793,14 +800,14 @@ class FormImageProcessing(QtWidgets.QMainWindow):
 
     def zo_related_widget_changed(self):
         self.zo_changed = True
-        channel_name = self.channel_names[self.zo_spin_box.value()]
+        channel_name = self.channels_names[self.zo_spin_box.value()]
         self.zo_check_box.setText("Seg channel: %s" % channel_name)
         self.zo_level_label.setText("%s level" % channel_name)
         self.display_frame()
 
     def atoh_related_widget_changed(self):
         self.atoh_changed = True
-        channel_name = self.channel_names[self.atoh_spin_box.value()]
+        channel_name = self.channels_names[self.atoh_spin_box.value()]
         self.atoh_check_box.setText("Type channel: %s" % channel_name)
         self.atoh_level_label.setText("%s level" % channel_name)
         self.display_frame()
@@ -937,7 +944,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         if segmentation:
             self.show_segmentation_check_box.setEnabled(True)
             self.save_segmentation_button.setEnabled(True)
+
             self.export_to_tiff_button.setEnabled(True)
+
             self.analyze_segmentation_button.setEnabled(True)
             self.analyze_frame_button.setEnabled(True)
             self.fix_segmentation_button.setEnabled(True)
@@ -1396,7 +1405,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             peak_window_radius = self.hc_threshold_window_spin_box.value()
         else:
             peak_window_radius = 0
-        type_name = self.channel_names[self.atoh_spin_box.value()]
+        type_name = self.channels_names[self.atoh_spin_box.value()]
         self.analysis_thread = CellTypesThread(self.img, self.tissue_info, frame_numbers, atoh_channel, hc_threshold,
                                               hc_threshold_percentage, peak_window_radius,
                                               type_name, self.img_in_memory)
@@ -1429,7 +1438,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         if types or neighbors or track or events or marking_points:
             img = np.zeros(self.current_frame.shape)
             if types:
-                img += self.tissue_info.draw_cell_types(frame_number, type_name=self.channel_names[self.atoh_spin_box.value()])
+                img += self.tissue_info.draw_cell_types(frame_number, type_name=self.channels_names[self.atoh_spin_box.value()])
             if neighbors:
                 img += self.tissue_info.draw_neighbors_connections(frame_number)
             if track:
@@ -1552,11 +1561,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                                                    percentile_above_threshold=self.hc_threshold_percentage_spin_box.value())
             self.fix_segmentation_last_position = None
         self.tissue_info.update_labels(self.frame_slider.value())
+        # self.track_cells(initial_frame=frame - 1, final_frame=self.number_of_frames)
         self.segmentation_changed = True
         self.current_segmentation = self.tissue_info.get_segmentation(self.frame_slider.value())
         self.display_frame()
         self.fixing_segmentation_mode = FIX_SEGMENTATION_OFF
-        self.cells_number_changed()
         self.fix_segmentation_button.setEnabled(True)
         self.fix_segmentation_button.show()
         self.fix_segmentation_label.setEnabled(False)
@@ -1650,13 +1659,13 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.save_thread._signal.connect(self.frame_saving_done)
             self.save_thread.start()
         return 0
-
+    
     def export_segmentation_to_tiff(self):
         f_name = QtWidgets.QFileDialog.getSaveFileName(self, 'Save File', directory=self.working_directory)[0]
         if f_name:
             filename = os.path.basename(f_name)
             outfolder = os.path.dirname(f_name)
-            self.tissue_info.export_segmentation_to_tiff(outfolder, filename, arr_shape=(self.img_dimensions.Y, self.img_dimensions.X))
+            self.tissue_info.export_segmentation_to_tiff(outfolder, filename, arr_shape=(self.img_dimensions.Y, self.img_dimensions.X))    
 
     def frame_saving_done(self, msg):
         percentage_done = msg
@@ -1692,7 +1701,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         if name:
             self.load_data_progress_bar.reset()
             self.load_data_progress_bar.show()
-            self.load_thread = LoadDataThread(self.tissue_info, name, self.channel_names[self.atoh_spin_box.value()])
+            self.load_thread = LoadDataThread(self.tissue_info, name, self.channels_names[self.atoh_spin_box.value()])
             self.load_thread._signal.connect(self.frame_loading_done)
             try:
                 self.load_thread.start()
@@ -1710,15 +1719,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.display_frame()
             self.load_data_progress_bar.hide()
             self.setState(image=True, segmentation=self.tissue_info.is_any_segmented(),
-                          analysis=self.tissue_info.is_any_analyzed(type_name=self.channel_names[self.atoh_spin_box.value()]))
-            channel_names = self.tissue_info.get_channel_names()
-            if channel_names:
-                self.channel_names = channel_names
-            fake_channels = self.tissue_info.get_fake_channels()
-            if fake_channels:
-                self.fake_channels = fake_channels
-            self.atoh_spin_box.setMaximum(len(self.channel_names))
-            self.zo_spin_box.setMaximum(len(self.channel_names))
+                          analysis=self.tissue_info.is_any_analyzed(type_name=self.channels_names[self.atoh_spin_box.value()]))
             self.cells_number_changed()
             self.update_single_cell_features()
             self.update_single_frame_features()
