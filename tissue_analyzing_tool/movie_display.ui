@@ -625,7 +625,7 @@ in all frames</string>
    <widget class="QLabel" name="fix_segmentation_label">
     <property name="geometry">
      <rect>
-      <x>1290</x>
+      <x>1250</x>
       <y>370</y>
       <width>171</width>
       <height>61</height>
@@ -641,8 +641,8 @@ Middle mouse button -  delete line
    <widget class="QPushButton" name="finish_fixing_segmentation_button">
     <property name="geometry">
      <rect>
-      <x>1330</x>
-      <y>390</y>
+      <x>1310</x>
+      <y>350</y>
       <width>75</width>
       <height>23</height>
      </rect>
@@ -1746,6 +1746,19 @@ memory</string>
  size</string>
     </property>
    </widget>
+   <widget class="QPushButton" name="add_type_button">
+    <property name="geometry">
+     <rect>
+      <x>1510</x>
+      <y>80</y>
+      <width>75</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>add type</string>
+    </property>
+   </widget>
    <zorder>track_cells_button</zorder>
    <zorder>open_file_pb</zorder>
    <zorder>zo_check_box</zorder>
@@ -1872,6 +1885,7 @@ memory</string>
    <zorder>choose_reference_frame_spin_box</zorder>
    <zorder>hc_threshold_window_spin_box</zorder>
    <zorder>peak_window_size_label</zorder>
+   <zorder>add_type_button</zorder>
   </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">

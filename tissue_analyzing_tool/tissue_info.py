@@ -215,7 +215,7 @@ class Tissue(object):
     ADDITIONAL_EVENT_MARKING_OPTION = ["delete event"]
     ADDITIONAL_EVENT_STATISTICS_OPTIONS = ["overall reference", "overall reference HC", "overall reference SC"]
 
-    def __init__(self, number_of_frames, data_path, max_cell_area=10, min_cell_area=0.1, load_to_memory=False):
+    def __init__(self, number_of_frames, data_path, channel_names, max_cell_area=10, min_cell_area=0.1, load_to_memory=False):
         self.number_of_frames = number_of_frames
         self.cells_info = None
         self.labels = None
@@ -244,6 +244,8 @@ class Tissue(object):
         self.height_maps = self.load_height_map()
         self.data_in_memory = load_to_memory
         self.type_names = []
+        self.channel_names = channel_names
+        self.fake_channels = []
         if load_to_memory:
             self.cell_info_list = [None]*self.number_of_frames
             self.labels_list = [None]*self.number_of_frames
@@ -269,7 +271,7 @@ class Tissue(object):
     def get_number_of_valid_frames(self):
         return np.sum(self.valid_frames)
 
-    def reset_all_data(self):
+    def reset_all_data(self, channel_names):
         self.cells_info = None
         self.labels = None
         self.cell_types = None
@@ -277,6 +279,7 @@ class Tissue(object):
         self.labels_frame = 0
         self.cell_types_frame = 0
         self.type_names = []
+        self.channel_names = channel_names
         if not self.data_in_memory:
             old_working_dir = self.working_dir
             self.working_dir = self.initialize_working_space()
@@ -373,6 +376,15 @@ class Tissue(object):
             return self.type_names[type_index]
         else:
             return ""
+
+    def get_channel_names(self):
+        return self.channel_names
+
+    def get_type_names(self):
+        return self.type_names
+
+    def get_fake_channels(self):
+        return self.fake_channels
 
     def get_cell_type_names(self):
         pos_neg_list = ["%s-pos" % t for t in self.type_names] + ["%s-neg" % t for t in self.type_names]
@@ -2060,7 +2072,7 @@ class Tissue(object):
         if next_frame < 0:
             return 0
         if shift_x != 0 or shift_y != 0:
-            shift = (shift_y, shift_x)
+            shift = (-shift_x, -shift_y)
         elif self.stage_locations is not None:
             shift = (self.stage_locations.loc[next_frame - 1, ["z", "y", "x"]].to_numpy() -
                      self.stage_locations.loc[start_frame - 1, ["z", "y", "x"]].to_numpy()) / \
@@ -2263,8 +2275,9 @@ class Tissue(object):
                 self.events.at[event_idx, "daughter_pos_y"] = daughter_pos_y
         return 0
 
-    def add_fake_type(self, type_name):
+    def add_fake_type(self, type_name, type_channel):
         self.type_names.append(type_name)
+        self.fake_channels.append(type_channel)
 
     def calc_cell_types(self, type_marker_image, frame_number, type_name, threshold=0.1,
                         percentage_above_threshold=90, peak_window_size=0):
@@ -2298,7 +2311,7 @@ class Tissue(object):
         min_area = self.min_cell_area * mean_area
         old_valid = cells_info.valid.to_numpy() == 1
         new_valid = np.logical_and(areas < max_area, areas > min_area)
-        updated_labels = cells_info.iloc[np.logical_and(new_valid, ~old_valid), "index"].to_numpy() + 1
+        updated_labels = cells_info.iloc[np.logical_and(new_valid, ~old_valid)].index.to_numpy() + 1
         self.find_neighbors(frame_number, only_for_labels=updated_labels)
         cells_info.loc[:, "valid"] = new_valid.astype(int)
         max_brightness = np.percentile(type_marker_image, 99)
@@ -2748,12 +2761,28 @@ class Tissue(object):
                         area2 = cell2_info.area
                         type1 = cell1_info.type
                         type2 = cell2_info.type
+                        bounding_box_min_row1 = cell1_info.bounding_box_min_row
+                        bounding_box_min_row2 = cell2_info.bounding_box_min_row
+                        bounding_box_min_col1 = cell1_info.bounding_box_min_col
+                        bounding_box_min_col2 = cell2_info.bounding_box_min_col
+                        bounding_box_max_row1 = cell1_info.bounding_box_max_row
+                        bounding_box_max_row2 = cell2_info.bounding_box_max_row
+                        bounding_box_max_col1 = cell1_info.bounding_box_max_col
+                        bounding_box_max_col2 = cell2_info.bounding_box_max_col
                         cell_info.at[new_label - 1, "area"] = area1 + area2
                         cell_info.at[new_label - 1, "perimeter"] = cell1_info.perimeter + cell2_info.perimeter - removed_line_length
                         cell_info.at[new_label - 1, "cx"] = (cell1_info.cx*area1 + cell2_info.cx*area2)/\
                                                             (area1 + area2)
                         cell_info.at[new_label - 1, "cy"] = (cell1_info.cy*area1 + cell2_info.cy*area2)/\
                                                             (area1 + area2)
+                        cell_info.at[new_label - 1, "bounding_box_min_row"] = min(bounding_box_min_row1,
+                                                                                  bounding_box_min_row2)
+                        cell_info.at[new_label - 1, "bounding_box_min_col"] = min(bounding_box_min_col1,
+                                                                                  bounding_box_min_col2)
+                        cell_info.at[new_label - 1, "bounding_box_max_row"] = max(bounding_box_max_row1,
+                                                                                  bounding_box_max_row2)
+                        cell_info.at[new_label - 1, "bounding_box_max_col"] = max(bounding_box_max_col1,
+                                                                                  bounding_box_max_col2)
                         mean_area = np.mean(cell_info.area.to_numpy())
                         max_area = self.max_cell_area * mean_area
                         min_area = self.min_cell_area * mean_area
@@ -2792,24 +2821,37 @@ class Tissue(object):
 
         return 0
 
+    def get_new_labels(self, frame, n_new_labels):
+        labels = self.get_labels(frame)
+        cell_info = self.get_cells_info(frame)
+        if labels is not None:
+            if cell_info is None:
+                new_labels = np.max(labels) + np.arange(1, n_new_labels + 1)
+            else:
+                empty_indices = np.argwhere(cell_info.empty_cell.to_numpy() == 1)
+                if len(empty_indices) > 0:
+                    new_labels = empty_indices + 1
+                    if new_labels.size > n_new_labels:
+                        new_labels = new_labels[:n_new_labels]
+                    else:
+                        new_labels = np.hstack((new_labels, cell_info.shape[0] + np.arange(1, n_new_labels - new_labels.size + 1)))
+                else:
+                    new_labels = cell_info.shape[0] + np.arange(1, n_new_labels + 1)
+            return new_labels
+        return 0
+
     def update_after_adding_segmentation_line(self, cell_label, frame):
         labels = self.get_labels(frame)
         cell_info = self.get_cells_info(frame)
         cell_types = self.get_cell_types(frame)
         if labels is not None:
             if cell_info is None:
-                new_label = np.max(labels) + 1
                 cell_indices = np.argwhere(labels == cell_label)
                 bounding_box_min_row = np.min(cell_indices[:, 0]).astype(int)
                 bounding_box_min_col = np.min(cell_indices[:, 1]).astype(int)
                 bounding_box_max_row = np.max(cell_indices[:, 0]).astype(int) + 1
                 bounding_box_max_col = np.max(cell_indices[:, 1]).astype(int) + 1
             else:
-                empty_indices = np.argwhere(cell_info.empty_cell.to_numpy() == 1)
-                if len(empty_indices) > 0:
-                    new_label = empty_indices[0,0] + 1
-                else:
-                    new_label = cell_info.shape[0] + 1
                 cell = cell_info.iloc[cell_label - 1]
                 bounding_box_min_row = int(cell.bounding_box_min_row)
                 bounding_box_min_col = int(cell.bounding_box_min_col)
@@ -2821,13 +2863,13 @@ class Tissue(object):
             region_last_col = bounding_box_max_col+2
             cell_region = labels[region_first_row:region_last_row, region_first_col:region_last_col]
             new_region_labels = label_image_regions((cell_region != 0).astype(int), connectivity=1, background=0)
-            cell1_label = np.min(new_region_labels[cell_region == cell_label])
-            cell2_label = np.max(new_region_labels[cell_region == cell_label])
-            if cell1_label == cell2_label:
+            new_cells_regional_labels = np.unique(new_region_labels[cell_region == cell_label])
+            if new_cells_regional_labels.size == 1:
                 print("New line did not split the cell")
                 return 0
-            cell_region[new_region_labels == cell1_label] = cell_label
-            cell_region[new_region_labels == cell2_label] = new_label
+            new_labels = np.hstack((np.array([cell_label]), self.get_new_labels(frame, new_cells_regional_labels.size - 1)))
+            for regional_label, label in zip(new_cells_regional_labels, new_labels):
+                cell_region[new_region_labels == regional_label] = label
             labels[region_first_row:region_last_row, region_first_col:region_last_col] = cell_region
             if cell_info is not None:
                 try:
@@ -2837,22 +2879,13 @@ class Tissue(object):
                     mean_area = np.mean(cell_info.area.to_numpy())
                     max_area = self.max_cell_area * mean_area
                     min_area = self.min_cell_area * mean_area
+                    old_cell_neighbors = list(cell_info.neighbors[cell_label - 1].copy())
+                    old_cell_type = cell_info.type[cell_label - 1]
                     for region_index, region_label in enumerate(properties["label"]):
-                        if region_label == cell_label:
-                            cell_info.at[cell_label - 1, "area"] = properties["area"][region_index]
-                            cell_info.at[cell_label - 1, "perimeter"] = properties["perimeter"][region_index]
-                            cell_info.at[cell_label - 1, "cx"] = properties["centroid-1"][region_index] + region_first_col
-                            cell_info.at[cell_label - 1, "cy"] = properties["centroid-0"][region_index] + region_first_row
-                            cell_info.at[cell_label - 1, "bounding_box_min_row"] = properties["bbox-0"][region_index] + region_first_row
-                            cell_info.at[cell_label - 1, "bounding_box_min_col"] = properties["bbox-1"][region_index] + region_first_col
-                            cell_info.at[cell_label - 1, "bounding_box_max_row"] = properties["bbox-2"][region_index] + region_first_row
-                            cell_info.at[cell_label - 1, "bounding_box_max_col"] = properties["bbox-3"][region_index] + region_first_col
-                            cell_valid = min_area < properties["area"][region_index] < max_area
-                            cell_info.at[cell_label - 1, "valid"] = int(cell_valid)
-                        elif region_label == new_label:
+                        if region_label in new_labels:
                             new_cell_valid = min_area < properties["area"][region_index] < max_area
                             new_cell_info = {"area": properties["area"][region_index],
-                                             "label": new_label,
+                                             "label": region_label,
                                              "perimeter": properties["perimeter"][region_index],
                                              "cx": properties["centroid-1"][region_index] + region_first_col,
                                              "cy": properties["centroid-0"][region_index] + region_first_row,
@@ -2864,17 +2897,15 @@ class Tissue(object):
                                              "empty_cell": 0,
                                              "neighbors": set(),
                                              "n_neighbors": 0,
-                                             "type": int(cell.type)}
-                            cell_info.loc[new_label - 1] = pd.Series(new_cell_info)
-                    old_cell_neighbors = list(cell_info.neighbors[cell_label - 1].copy())
+                                             "type": int(old_cell_type)}
+                            cell_info.loc[region_label - 1] = pd.Series(new_cell_info)
                     for neighbor_label in old_cell_neighbors:
                         cell_info.at[neighbor_label - 1, "neighbors"].remove(cell_label)
-                    cell_info.at[cell_label - 1, "neighbors"] = set()
-                    need_to_update_neighbors = list(cell_info.neighbors[cell_label]) + [cell_label, new_label]
+                    need_to_update_neighbors = old_cell_neighbors + list(new_labels)
                     self.find_neighbors(frame, labels_region=cell_region, only_for_labels=need_to_update_neighbors)
                     if cell_types is not None:
-                        cell_types[labels == cell_label] = cell.type if cell_valid else INVALID_TYPE_INDEX
-                        cell_types[labels == new_label] = cell.type if new_cell_valid else INVALID_TYPE_INDEX
+                        for new_cell_label in new_labels:
+                            cell_types[labels == new_cell_label] = old_cell_type if cell_info.valid[new_cell_label - 1] else INVALID_TYPE_INDEX
                     return 0
                 except IndexError:
                     return 0
@@ -3537,6 +3568,8 @@ class Tissue(object):
         self.save_valid_frames()
         self.save_shape_fitting()
         self.save_cell_type_names()
+        self.save_channel_names()
+        self.save_fake_channels()
         if self.data_in_memory:
             self.save_data_from_memory()
         for percent_done in pack_archive_with_progress(self.working_dir, path.replace(".seg", "") + ".seg"):
@@ -3566,6 +3599,8 @@ class Tissue(object):
         self.load_valid_frames()
         self.load_shape_fitting()
         self.load_cell_type_names()
+        self.load_channel_names()
+        self.load_fake_channels()
         return 0
 
     def save_data_from_memory(self):
@@ -3886,12 +3921,54 @@ class Tissue(object):
                 self.save_cell_type_names()
         return 0
 
+    def save_channel_names(self):
+        if self.channel_names is not None:
+            file_path = os.path.join(self.working_dir, "channel_names.pkl")
+            try:
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+                with open(file_path, 'wb') as fp:
+                    pickle.dump(self.channel_names, fp)
+            except OSError as e:
+                print(str(e))
+                sleep(1)
+                self.save_channel_names()
+        return 0
+
+    def save_fake_channels(self):
+       if self.fake_channels is not None:
+            file_path = os.path.join(self.working_dir, "fake_channels.pkl")
+            try:
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+                with open(file_path, 'wb') as fp:
+                    pickle.dump(self.fake_channels, fp)
+            except OSError as e:
+                print(str(e))
+                sleep(1)
+                self.save_fake_channels()
+       return 0
+
+    def load_channel_names(self):
+        file_path = os.path.join(self.working_dir, "channel_names.pkl")
+        if os.path.isfile(file_path):
+            with open(file_path, 'rb') as fp:
+                self.channel_names = pickle.load(fp)
+        return self.channel_names
+
     def load_cell_type_names(self):
         file_path = os.path.join(self.working_dir, "cell_type_names.pkl")
         if os.path.isfile(file_path):
             with open(file_path, 'rb') as fp:
                 self.type_names = pickle.load(fp)
         return self.type_names
+
+    def load_fake_channels(self):
+        file_path = os.path.join(self.working_dir, "fake_channels.pkl")
+        if os.path.isfile(file_path):
+            with open(file_path, 'rb') as fp:
+                self.fake_channels = pickle.load(fp)
+        return self.fake_channels
 
     def is_cell_info_from_old_version(self):
         if self.cells_info is None:
@@ -3911,3 +3988,16 @@ class Tissue(object):
         self.cell_types[self.cell_types == 0] = INVALID_TYPE_INDEX
         self.cell_types[self.cell_types == 2] = 0
         return 0
+
+    def update_bounding_box_for_all_cells(self):
+        for frame in range(1, self.number_of_frames + 1):
+            labels = self.get_labels(frame)
+            cells_info = self.get_cells_info(frame)
+            if cells_info is not None and labels is not None:
+                properties = regionprops_table(labels, properties=("label", "bbox"))
+                self.cells_info.loc[properties.label.to_numpy() - 1, "bounding_box_min_row"] = properties["bbox-0"]
+                self.cells_info.at[properties.label.to_numpy() - 1, "bounding_box_min_col"] = properties["bbox-1"]
+                self.cells_info.at[properties.label.to_numpy() - 1, "bounding_box_max_row"] = properties["bbox-2"]
+                self.cells_info.at[properties.label.to_numpy() - 1, "bounding_box_max_col"] = properties["bbox-3"]
+                self.save_cells_info()
+            return 0
