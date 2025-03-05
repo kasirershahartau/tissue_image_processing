@@ -19,6 +19,47 @@ P0_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-07-31_P0
 Rho_inhibition_E17_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-12-01_E17.5_utricle_rho_inhibition\\position2_event_statistics\\"]
 Rho_inhibition_P0_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2023-06-25_P0_atoh_zo_rock_inhibitor\\position3_event_statistics\\"]
 
+class DataCollector:
+    def __init__(self, name, folders, file_names, data_labels, normalization=1):
+        self.name = name
+        self.files = [os.path.join(folder, file_name) for folder, file_name in zip(folders, file_names)]
+        self.labels = data_labels
+        self.normalization = normalization
+        self.sample = self.collect()
+
+
+    def collect(self):
+        s = np.empty(0)
+        for f, l in zip(self.files, self.labels):
+            all_data = pd.read_pickle(f)
+            relevant_data = all_data[l]
+            s = np.hstack((s, relevant_data.to_numpy() / self.normalization))
+        return s[~np.isnan(s)]
+
+    def get_sample(self):
+        return self.sample
+
+    def get_number_of_data_points(self):
+        return self.sample.size
+
+    def get_average(self):
+        return np.average(self.sample)
+
+    def get_number_of_biological_repeates(self):
+        return len(self.files)
+
+    def get_std(self):
+        return np.std(self.sample)
+
+    def get_se(self):
+        return self.get_std() / np.sqrt(self.get_number_of_data_points())
+
+    def get_max(self):
+        return np.max(self.sample)
+
+    def get_min(self):
+        return np.min(self.sample)
+
 def combine_frame_compare_results():
     # Contact length with SC
     # HC_file = "SC_HC_contact_length_compare_data"
@@ -185,6 +226,7 @@ def plot_animation(x, y, graphs, fig, out_path):
         ["C:\Program Files\ImageMagick-7.1.0-Q16-HDRI\convert", (movies_dir / "movie_*.png").as_posix(), out_path]
     )
     shutil.rmtree(movies_dir)
+
 def load_data(folder_list, data_files_list, reference_files_list, data_labels, normalization_list):
     if isinstance(folder_list, tuple):
         folder = folder_list[0]
@@ -193,7 +235,6 @@ def load_data(folder_list, data_files_list, reference_files_list, data_labels, n
         folder = folder_list
         ref_folder = folder
 
-    from statistical_analysis import compare_and_plot_samples
     for data_label, normalization in zip(data_labels, normalization_list):
         if isinstance(folder, list):
             samples = [np.empty(0) for i in range(np.max([len(data_files_list[j]) for j in range(len(data_files_list))]) +
@@ -233,7 +274,7 @@ def compare_event_statistics(folder_list, data_files_list, reference_files_list,
                                           reference_files_list, data_labels, normalization_list),
                                 y_labels):
 
-        style = "violin" if continues else "box"
+        style = "violin" if continues else "bar"
         fig, ax, res = compare_and_plot_samples(samples, x_labels, pairs_to_compare, continues=continues,
                                                 plot_style=style, color=color, edge_color=edge_color,
                                                 show_statistics=show_statistics, show_N=show_N)
@@ -472,6 +513,64 @@ def compare_E17_P0_neighbors_by_type():
     edge_color=edge_color, fig=fig, ax=ax, show_statistics=False, show_N=False)
     plt.show()
 
+def compare_E17_P0_HC_neighbors_for_differentiation_and_trans_differentiation():
+    E17_diff = DataCollector("E17.5 differentiating cells", E17_folders,
+                             ["neighbors_by_type_differentiation_data"]*3,
+                             ["HC neighbors"]*3)
+    E17_diff.sample = E17_diff.sample[E17_diff.sample < 4]
+    E17_trans_diff = DataCollector("E17.5 trans-differentiating cells",
+    ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-01-20-E17.5_ablation\\position3-analysis\\"],
+                             ["promoted_differentiation_neighbors_by_type_data"],
+                             ["HC neighbors"])
+    E17_ref_SC = DataCollector("E17.5 reference SC +24h", E17_folders,
+                               ["neighbors_by_type_reference_SC_frame96_data",
+                                 "neighbors_by_type_reference_SC_frame97_data",
+                                "neighbors_by_type_reference_SC_frame96_data"],
+                             ["HC neighbors"] * 3)
+    P0_diff = DataCollector("P0 differentiating cells", P0_folders,
+                             ["neighbors_by_type_differentiation_data"] * 2,
+                             ["HC neighbors"] * 2)
+    P0_trans_diff = DataCollector("P0 trans-differentiating cells",
+    ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-06-05_P0_utricle_ablation\\position2-analysis\\Event statistics"],
+                             ["neighbors_by_type_promoted_differentiation_data"],
+                             ["HC neighbors"])
+    P0_ref_SC = DataCollector("P0 reference SC +24h", P0_folders,
+                              ["neighbors_by_type_reference_SC_frame96_data",
+                              "neighbors_by_type_reference_SC_frame96_data"],
+                             ["HC neighbors"] * 2)
+    samples_list = [E17_diff, E17_trans_diff, E17_ref_SC, P0_diff, P0_trans_diff, P0_ref_SC]
+    pairs_to_compare = [(0,1), (0,2), (0,3), (3,4), (3,5)]
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                            plot_style="bar", color=["white"]*6, edge_color=["blue"]*3 + ["red"]*3,
+                                            show_statistics=True, show_N=True)
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="bar", color=["white"] * 6,
+                                                      edge_color=["blue"] * 3 + ["red"] * 3,
+                                                      show_statistics=False, show_N=False)
+    no_SC_samples_list = [E17_diff, E17_trans_diff, P0_diff, P0_trans_diff]
+    no_SC_pairs_to_compare = [(0, 1), (0, 2), (2, 3)]
+    no_SC_fig, no_SC_ax, res = compare_and_plot_samples(no_SC_samples_list, no_SC_pairs_to_compare, continues=False,
+                                                      plot_style="bar", color=["white"] * 4,
+                                                      edge_color=["blue"] * 2 + ["red"] * 2,
+                                                      show_statistics=True, show_N=True)
+    empty_no_SC_fig, empty_no_SC_ax, res = compare_and_plot_samples(no_SC_samples_list, no_SC_pairs_to_compare, continues=False,
+                                                        plot_style="bar", color=["white"] * 4,
+                                                        edge_color=["blue"] * 2 + ["red"] * 2,
+                                                        show_statistics=False, show_N=False)
+
+    no_transdiff_samples_list = [E17_diff, E17_ref_SC, P0_diff, P0_ref_SC]
+    no_transdiff_pairs_to_compare = [(0, 1), (0, 2), (2, 3)]
+    no_transdiff_fig, no_transdiff_ax, res = compare_and_plot_samples(no_transdiff_samples_list, no_transdiff_pairs_to_compare, continues=False,
+                                                        plot_style="bar", color=["white"] * 4,
+                                                        edge_color=["blue"] * 2 + ["red"] * 2,
+                                                        show_statistics=True, show_N=True)
+    empty_no_transdiff_fig, empty_no_transdiff_ax, res = compare_and_plot_samples(no_transdiff_samples_list, no_transdiff_pairs_to_compare,
+                                                                    continues=False,
+                                                                    plot_style="bar", color=["white"] * 4,
+                                                                    edge_color=["blue"] * 2 + ["red"] * 2,
+                                                                    show_statistics=False, show_N=False)
+    plt.show()
+
 def compare_E17_P0_neighbors_by_type_for_differentiation():
     E17_folder = E17_folders
     P0_folder = P0_folders
@@ -479,13 +578,14 @@ def compare_E17_P0_neighbors_by_type_for_differentiation():
     #             "All\nSCs"]
     x_labels = [""]*4
     E17_data_files_list = [["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame96_data"],
-                           ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame97_data"],
-                           ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame96_data"]]
+                           ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame97_data"]]
+                           # ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame96_data"]]
     P0_reference_files_list = [["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame96_data"],
                                ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame96_data"]]
+                               # ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame96_data"]]
 
     normalization_list = [1, 1]
-    pairs_to_compare = [(0, 1), (2,3), (0,2)]
+    pairs_to_compare = [(0, 1), (1,2), (0,2)]
     y_labels = ["# SC neighbors", "# HC neighbors"]
     data_labels = ["SC neighbors", "HC neighbors"]
     # color = ["blue", "white", "red", "white"]
@@ -496,7 +596,7 @@ def compare_E17_P0_neighbors_by_type_for_differentiation():
                              x_labels, pairs_to_compare,
                              normalization_list,
                              data_labels, y_labels, continues=False, color=color, edge_color=edge_color,
-                             show_statistics=True, show_N=True)
+                             show_statistics=True, show_N=False)
 
 def compare_P0_neighbors_by_type_for_differentiation_and_transdiff():
     P0_folder = P0_folders
@@ -509,69 +609,144 @@ def compare_P0_neighbors_by_type_for_differentiation_and_transdiff():
     trans_diffreference_files_list = [["neighbors_by_type_promoted_differentiation_data", "neighbors_by_type_reference_SC_frame96_data"]]
 
     normalization_list = [1, 1]
-    pairs_to_compare = [(0, 1), (2,3), (0,2)]
+    pairs_to_compare = [(0, 1), (0,2), (1,2)]
     y_labels = ["# SC neighbors", "# HC neighbors"]
     data_labels = ["SC neighbors", "HC neighbors"]
-    # color = ["blue", "white", "red", "white"]
     color = ["white"]*4
-    edge_color = ["blue", "blue", "red", "red"]
+    edge_color = ["red"]*4
 
     compare_event_statistics((P0_folder, transdiff_folders), P0_reference_files_list, trans_diffreference_files_list,
                              x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continues=False, color=color, edge_color=edge_color)
+                             data_labels, y_labels, continues=False, color=color, edge_color=edge_color,
+                             show_statistics=False, show_N=False)
 
-def compare_E17_P0_rho_inhibition_neighbors_by_type():
-    E17_folder = Rho_inhibition_E17_folders
-    P0_folder = Rho_inhibition_P0_folders
-    # x_labels = ["Differentiating\ncells",  "All\nSCs", "Differentiating\ncells",
+def compare_E17_neighbors_by_type_for_differentiation_and_transdiff():
+    E17_folder = E17_folders
+    transdiff_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-01-20-E17.5_ablation\\position3-analysis\\"]
+    # x_labels = ["Differentiating\ncells",  "All\nSCs", "Trans-Differentiating\ncells",
     #             "All\nSCs"]
-    x_labels = [""] * 4
-    E17_data_files_list = [
-        ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame91_data"]]
-    P0_reference_files_list = [
-        ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame93_data"]]
+    x_labels = [""]*4
+    E17_reference_files_list = [["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame96_data"],
+                               ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame97_data"],
+                               ["neighbors_by_type_differentiation_data", "neighbors_by_type_reference_SC_frame96_data"]]
+    trans_diffreference_files_list = [["promoted_differentiation_neighbors_by_type_data", "reference_SC_frame_96_data"]]
+
     normalization_list = [1, 1]
-    pairs_to_compare = [(0, 1), (2, 3), (0, 2)]
+    pairs_to_compare = [(0, 1), (1,2), (0,2)]
     y_labels = ["# SC neighbors", "# HC neighbors"]
     data_labels = ["SC neighbors", "HC neighbors"]
+    # color = ["blue", "white", "blue", "white"]
+    color = ["white"]*4
+    edge_color = ["blue", "blue", "blue", "blue"]
+
+    compare_event_statistics((E17_folder, transdiff_folders), E17_reference_files_list, trans_diffreference_files_list,
+                             x_labels, pairs_to_compare,
+                             normalization_list,
+                             data_labels, y_labels, continues=False, color=color, edge_color=edge_color, show_N=False,
+                             show_statistics=False)
+
+
+def compare_E17_P0_rho_inhibition_neighbors_by_type():
+    E17_diff = DataCollector("E17.5 differentiating cells", Rho_inhibition_E17_folders,
+                             ["neighbors_by_type_differentiation_data"],
+                             ["HC neighbors"])
+    E17_ref_SC = DataCollector("E17.5 reference SC +24h", Rho_inhibition_E17_folders,
+                             ["neighbors_by_type_reference_SC_frame91_data"],
+                             ["HC neighbors"])
+    P0_diff = DataCollector("P0 differentiating cells",
+                            Rho_inhibition_P0_folders,
+                            ["neighbors_by_type_differentiation_data"],
+                            ["HC neighbors"])
+    P0_ref_SC = DataCollector("P0 differentiating cells",
+                            Rho_inhibition_P0_folders,
+                            ["neighbors_by_type_reference_SC_frame93_data"],
+                            ["HC neighbors"])
+    samples_list = [E17_diff, E17_ref_SC, P0_diff, P0_ref_SC]
+    pairs_to_compare = [(0, 1), (2, 3), (0, 2)]
     color = ["white"] * 4
     edge_color = ["blue", "blue", "red", "red"]
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="bar", color=color,
+                                                      edge_color=edge_color,
+                                                      show_statistics=True, show_N=True)
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="bar", color=color,
+                                                      edge_color=edge_color,
+                                                      show_statistics=False, show_N=False)
+    no_SC_samples_list = [E17_diff, P0_diff]
+    pairs_to_compare = [(0, 1)]
+    color = ["white"] * 2
+    edge_color = ["blue", "red"]
+    no_SC_full_fig, no_SC_full_ax, res = compare_and_plot_samples(no_SC_samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="bar", color=color,
+                                                      edge_color=edge_color,
+                                                      show_statistics=True, show_N=True)
+    no_SC_empty_fig, no_SC_empty_ax, _ = compare_and_plot_samples(no_SC_samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="bar", color=color,
+                                                      edge_color=edge_color,
+                                                      show_statistics=False, show_N=False)
+    plt.show()
 
-    compare_event_statistics((E17_folder, P0_folder), E17_data_files_list, P0_reference_files_list, x_labels,
-                             pairs_to_compare,
-                             normalization_list,
-                             data_labels, y_labels, continues=False, color=color, edge_color=edge_color)
 
-def compare_E17_P0_density_and_fraction():
-    E17_folder = E17_folders
-    P0_folder = P0_folders
-    E17_data_files_list = [["HC_density_and_fraction_reference_SC_frame1_data",
-                            "HC_density_and_fraction_reference_SC_frame96_data",
-                            "HC_density_and_fraction_reference_SC_frame191_data"],
-                           ["HC_density_and_fraction_reference_SC_frame1_data",
-                            "HC_density_and_fraction_reference_SC_frame97_data",
-                            "HC_density_and_fraction_reference_SC_frame199_data"],
-                           ["HC_density_and_fraction_reference_SC_frame1_data",
-                            "HC_density_and_fraction_reference_SC_frame96_data"]
-                           ]
-    P0_reference_files_list = [["HC_density_and_fraction_reference_SC_frame1_data",
-                                "HC_density_and_fraction_reference_SC_frame96_data",
-                                "HC_density_and_fraction_reference_SC_frame165_data"],
+def compare_E17_P0_density():
+    normalization = 0.01
+    E17_diff = DataCollector("E17.5 differentiating cells", E17_folders,
+                             ["HC_density_and_fraction_differentiation_data"]*3,
+                             ["HC density"] * 3, normalization)
+    E17_initial = DataCollector("E17.5 initial", E17_folders,
+                                ["HC_density_and_fraction_reference_SC_frame1_data",
+                                 "HC_density_and_fraction_reference_SC_frame1_data",
+                                 "HC_density_and_fraction_reference_SC_frame1_data"],
+                                ["HC density"]*3, normalization)
+    E17_24h = DataCollector("E17.5 +24h", E17_folders,
+                                ["HC_density_and_fraction_reference_SC_frame96_data",
+                                 "HC_density_and_fraction_reference_SC_frame97_data",
+                                 "HC_density_and_fraction_reference_SC_frame96_data"],
+                                ["HC density"]*3, normalization)
+    E17_48h = DataCollector("E17.5 +48h", E17_folders[:-1],
+                                ["HC_density_and_fraction_reference_SC_frame191_data",
+                                 "HC_density_and_fraction_reference_SC_frame199_data"],
+                                ["HC density"]*2, normalization)
+    P0_diff = DataCollector("P0 differentiating cells", P0_folders,
+                            ["HC_density_and_fraction_differentiation_data"]*2,
+                               ["HC density"] * 2, normalization)
+    P0_initial = DataCollector("P0 initial", P0_folders,
                                ["HC_density_and_fraction_reference_SC_frame1_data",
-                                "HC_density_and_fraction_reference_SC_frame96_data"]]
-    x_labels = ["E17.5", "+24h", "+48h",# "Diff.\ncells",
-                 "P0", "+24h", "+48h"] #"Diff.\ncells"]
-    normalization_list = [0.01/(20**2), 1]
+                                          "HC_density_and_fraction_reference_SC_frame1_data"],
+                               ["HC density"] * 2, normalization)
+    P0_24h = DataCollector("P0 +24h", P0_folders,
+                               ["HC_density_and_fraction_reference_SC_frame96_data",
+                                "HC_density_and_fraction_reference_SC_frame96_data"],
+                               ["HC density"] * 2, normalization)
+    P0_48h = DataCollector("P0 +48h", P0_folders[:-1],
+                               ["HC_density_and_fraction_reference_SC_frame165_data"],
+                               ["HC density"], normalization)
+    samples_list = [E17_initial, E17_24h, E17_48h, P0_initial, P0_24h, P0_48h]
     pairs_to_compare = [(0, 1), (1,2), (2,3), (3,4), (4,5)]
-    y_labels = ["", "HC type fraction"]
-    data_labels = ["HC density", "HC type_fraction"]
     color = ["blue", "blue", "blue", "red", "red", "red"]
     edge_color = ["blue", "blue", "blue", "red", "red", "red"]
-    compare_event_statistics((E17_folder, P0_folder), E17_data_files_list, P0_reference_files_list, x_labels,
-                             pairs_to_compare,
-                             normalization_list,
-                             data_labels, y_labels, continues=True,  color=color, edge_color=edge_color)
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="violin", color=color,
+                                                      edge_color=edge_color,
+                                                      show_statistics=True, show_N=True)
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="violin", color=color,
+                                                      edge_color=edge_color,
+                                                      show_statistics=False, show_N=False)
+    samples_list = [E17_initial, E17_24h, E17_48h, E17_diff, P0_initial, P0_24h, P0_48h, P0_diff]
+    pairs_to_compare = [(0, 3), (1, 3), (2, 3), (4, 7), (5, 7), (6, 7)]
+    color = ["blue", "blue", "blue", "cyan", "red", "red", "red", "pink"]
+    edge_color = ["blue", "blue", "blue", "cyan", "red", "red", "red", "pink"]
+    full_fig_with_diff, full_ax_with_diff, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="violin", color=color,
+                                                      edge_color=edge_color,
+                                                      show_statistics=True, show_N=True)
+    empty_fig_with_diff, empty_ax_with_diff, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="violin", color=color,
+                                                      edge_color=edge_color,
+                                                      show_statistics=False, show_N=False)
+    plt.show()
 
 def compare_E17_P0_number_of_neighbors():
     E17_folder = E17_folders
@@ -737,18 +912,25 @@ def plot_P0_second_neighbors_by_type():
                              data_labels, y_labels, continues=False)
 
 def compare_distance_from_ablation():
-    folder = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-06-05_P0_utricle_ablation\\position2-analysis\\Event statistics\\"
-    data_files_list = ["distance_from_ablation_differentiation_data"]
-    reference_files_list = ["distance_from_ablation_reference_SC_frame1_data"]
-    x_labels = ["Differentiating SCs", "All SCs"]
-    normalization_list = [10]
-    pairs_to_compare = [(0, 1)]
+    folders = (["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-01-20-E17.5_ablation\\position3-analysis\\"],
+               ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-06-05_P0_utricle_ablation\\position2-analysis\\Event statistics\\"]
+               )
+    E17_data_files_list = [["differentiation_distance_from_ablation_data",
+                       "reference_SC_distance_from_ablation_data"]]
+    P0_data_files_list = [["distance_from_ablation_differentiation_data",
+                           "distance_from_ablation_reference_SC_frame1_data",
+                          ]]
+    # x_labels = ["Differentiating SCs E17.5", "All SCs E17.5", "Differentiating SCs P0", "All SCs P0"]
+    x_labels = [""]*4
+    normalization_list = [10, 10]
+    pairs_to_compare = [(0, 1), (2,3)]
     y_labels = ["Distance from nearest\n ablation (microns)"]
     data_labels = ["Distance from ablation"]
-    compare_event_statistics(folder, data_files_list, reference_files_list, x_labels,
+    compare_event_statistics(folders, E17_data_files_list, P0_data_files_list, x_labels,
                              pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continues=True, color="blue", edge_color="blue")
+                             data_labels, y_labels, continues=True, color=["blue", "blue", "red", "red"],
+                             edge_color=["blue", "blue", "red", "red"], show_statistics=False, show_N=False)
 
 def compare_normal_and_promoted_differentiation_HC_density_and_fraction():
     folder = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-06-05_P0_utricle_ablation\\position2-analysis\\Event statistics\\"
@@ -882,6 +1064,66 @@ def plot_rho_inhibition_roundness():
         count += 1
     plt.show()
 
+def plot_differentiation_timing_by_n_HC_neighbors():
+    E17dapt_timing = pd.read_pickle(
+        "C:\\Users\\Kasirer\\Phd\\mouse_ear_project\\Results\\E17.5 DAPT\\differentiation_timing_by_n_hc_neigh_data")
+    E17dapt_rate = pd.read_pickle(
+        "C:\\Users\\Kasirer\\Phd\\mouse_ear_project\\Results\\E17.5 DAPT\\differentiation_rates_by_n_hc_neigh_data")
+    E17_timing = pd.read_pickle(
+        "C:\\Users\\Kasirer\\Phd\\mouse_ear_project\\Results\\E17.5 control\\differentiation_timing_by_n_HC_neigh_data")
+    E17_rate = pd.read_pickle(
+        "C:\\Users\\Kasirer\\Phd\\mouse_ear_project\\Results\\E17.5 control\\differentiation_rates_by_n_HC_neigh_data")
+    P0dapt_timing = pd.read_pickle(
+        "C:\\Users\\Kasirer\\Phd\\mouse_ear_project\\Results\\P0 DAPT\\diffrentiation_timing_by_HC_neigh_data")
+    P0dapt_rate = pd.read_pickle(
+        "C:\\Users\\Kasirer\\Phd\\mouse_ear_project\\Results\\P0 DAPT\\diffrentiation_rate_by_HC_neigh_data")
+    P0_timing = pd.read_pickle(
+        "C:\\Users\\Kasirer\\Phd\\mouse_ear_project\\Results\\P0 control\\differentiation_timing_by_n_HC_neigh_data")
+    P0_rate = pd.read_pickle(
+        "C:\\Users\\Kasirer\\Phd\\mouse_ear_project\\Results\\P0 control\\differentiation_rates_by_n_HC_neigh_data")
+    fig, ax = plt.subplots()
+    colors = ["orange", "red", "blue", "green"]
+    for i in range(4):
+        ax.plot(np.array([0] + E17dapt_timing['timing for %d HC neighbors' % i])/4,
+                100*np.arange(len(E17dapt_timing['timing for %d HC neighbors' % i]) + 1)/E17dapt_timing['initial_abundance for %d HC neighbors' % i], label="%d HC neighbors - DAPT (N=%d)" % (i, E17dapt_timing['initial_abundance for %d HC neighbors' % i]), color=colors[i], linestyle='solid')
+    for i in range(4):
+        ax.plot(np.array([0] + E17_timing['timing for %d HC neighbors' % i])/4,
+                 100*np.arange(len(E17_timing['timing for %d HC neighbors' % i]) + 1)/E17_timing['initial_abundance for %d HC neighbors' % i], label="%d HC neighbors - Control (N=%d)" % (i, E17_timing['initial_abundance for %d HC neighbors' % i]), color=colors[i], linestyle='dashed')
+    plt.legend()
+    plt.xlabel("Time (hours)")
+    plt.ylabel("Differentiated %")
+    fig, ax = plt.subplots()
+    for i in range(4):
+        ax.plot(np.array([0] + P0dapt_timing['timing for %d HC neighbors' % i])/4,
+                100*np.arange(len(P0dapt_timing['timing for %d HC neighbors' % i]) + 1)/P0dapt_timing['initial_abundance for %d HC neighbors' % i], label="%d HC neighbors - DAPT (N=%d)" % (i, P0dapt_timing['initial_abundance for %d HC neighbors' % i]), color=colors[i], linestyle='solid')
+    for i in range(3):
+        ax.plot(np.array([0] + P0_timing['timing for %d HC neighbors' % i])/4,
+                 100*np.arange(len(P0_timing['timing for %d HC neighbors' % i]) + 1)/P0_timing['initial_abundance for %d HC neighbors' % i], label="%d HC neighbors - Control (N=%d)" % (i, P0_timing['initial_abundance for %d HC neighbors' % i]), color=colors[i], linestyle='dashed')
+    plt.legend()
+    plt.xlabel("Time (hours)")
+    plt.ylabel("Differentiated %")
+    fig, ax = plt.subplots()
+    for i in range(4):
+        ax.plot(np.array([0] + E17dapt_rate['timing for %d HC neighbors' % i])/1,
+                [0] + E17dapt_rate['rates for %d HC neighbors' % i], label="%d HC neighbors - DAPT (N=%d)" % (i, E17dapt_timing['initial_abundance for %d HC neighbors' % i]), color=colors[i], linestyle='solid')
+    for i in range(4):
+        ax.plot(np.array([0] + E17_rate['timing for %d HC neighbors' % i])/1,
+                 [0] + E17_rate['rates for %d HC neighbors' % i], label="%d HC neighbors - Control (N=%d)" % (i, E17_timing['initial_abundance for %d HC neighbors' % i]), color=colors[i], linestyle='dashed')
+    plt.legend()
+    plt.xlabel("Time (hours)")
+    plt.ylabel("Differentiation Probability")
+    fig, ax = plt.subplots()
+    for i in range(4):
+        ax.plot(np.array([0] + P0dapt_rate['timing for %d HC neighbors' % i])/1,
+                [0] + P0dapt_rate['rates for %d HC neighbors' % i], label="%d HC neighbors - DAPT (N=%d)" % (i, P0dapt_timing['initial_abundance for %d HC neighbors' % i]), color=colors[i], linestyle='solid')
+    for i in range(3):
+        ax.plot(np.array([0] + P0_rate['timing for %d HC neighbors' % i])/1,
+                 [0] + P0_rate['rates for %d HC neighbors' % i], label="%d HC neighbors - Control (N=%d)" % (i, P0_timing['initial_abundance for %d HC neighbors' % i]), color=colors[i], linestyle='dashed')
+    plt.legend()
+    plt.xlabel("Time (hours)")
+    plt.ylabel("Differentiation Probability")
+    plt.show()
+
 if __name__ == "__main__":
     # plot_DAPT_data()
     # plot_rho_inhibition_roundness()
@@ -899,10 +1141,13 @@ if __name__ == "__main__":
     # plot_P0_number_of_neighbors()
     # plot_P0_area_and_roundness()
     # plot_P0_contact_length_by_type()
-    # compare_E17_P0_density_and_fraction()
+    # compare_E17_P0_density()
     # compare_E17_P0_neighbors_by_type()
-    compare_E17_P0_neighbors_by_type_for_differentiation()
+    # compare_E17_P0_neighbors_by_type_for_differentiation()
+    compare_E17_P0_HC_neighbors_for_differentiation_and_trans_differentiation()
+    # compare_E17_P0_rho_inhibition_neighbors_by_type()
     # compare_P0_neighbors_by_type_for_differentiation_and_transdiff()
+    # compare_E17_neighbors_by_type_for_differentiation_and_transdiff()
     # compare_E17_P0_number_of_neighbors()
     # compare_E17_P0_area_and_roundness()
     # compare_E17_P0_contact_length()
@@ -914,4 +1159,6 @@ if __name__ == "__main__":
     # plot_E17_second_neighbors_by_type()
     # plot_P0_second_neighbors_by_type()
     # plot_E17_rho_inhibition_neighbors_by_type()
-    # compare_E17_P0_rho_inhibition_neighbors_by_type()
+
+
+    # plot_differentiation_timing_by_n_HC_neighbors()
