@@ -1759,6 +1759,19 @@ memory</string>
      <string>add type</string>
     </property>
    </widget>
+   <widget class="QPushButton" name="export_to_tiff_button">
+    <property name="geometry">
+     <rect>
+      <x>1370</x>
+      <y>640</y>
+      <width>75</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Export to tiff</string>
+    </property>
+   </widget>
    <zorder>track_cells_button</zorder>
    <zorder>open_file_pb</zorder>
    <zorder>zo_check_box</zorder>
@@ -1886,6 +1899,7 @@ memory</string>
    <zorder>hc_threshold_window_spin_box</zorder>
    <zorder>peak_window_size_label</zorder>
    <zorder>add_type_button</zorder>
+   <zorder>export_to_tiff_button</zorder>
   </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">
