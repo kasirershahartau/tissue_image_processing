@@ -23,14 +23,14 @@ from qtconsole.inprocess import QtInProcessKernelManager
 from IPython.lib import guisupport
 
 COLORTABLE=[]
-WORKING_DIR = "D:\\Users\\TelAvivU-Analysis2\\Desktop\\Tomer\\Movies"
+WORKING_DIR = "D:\\Kasirer\\experimental_results\\"
 BASEDIR = os.path.dirname(__file__)
 from tissue_info import INVALID_TYPE_INDEX
 
 sys.path.insert(1, os.path.join(BASEDIR, '..\\Segmentation'))   # Tomer changed to this
 
 from prediction_local import SegmentationPredictor
-UNET_WEIGHTS_PATH = os.path.join('D:\\Users\\TelAvivU-Analysis2\\Desktop\\Tomer\\tissue_image_processing\\Segmentation',
+UNET_WEIGHTS_PATH = os.path.join('C:\\Users\\Kasirer\\Phd\\mouse_ear_project\\tissue_image_processing\\Segmentation',
                                    'model_image_segmentation_run_after_load_weights_large_dataset_3_ADAM.h5')
 from numexpr import utils
 
