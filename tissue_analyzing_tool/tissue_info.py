@@ -3996,8 +3996,8 @@ class Tissue(object):
             if cells_info is not None and labels is not None:
                 properties = regionprops_table(labels, properties=("label", "bbox"))
                 self.cells_info.loc[properties["label"] - 1, "bounding_box_min_row"] = properties["bbox-0"]
-                self.cells_info.at[properties["label"] - 1, "bounding_box_min_col"] = properties["bbox-1"]
-                self.cells_info.at[properties["label"] - 1, "bounding_box_max_row"] = properties["bbox-2"]
-                self.cells_info.at[properties["label"] - 1, "bounding_box_max_col"] = properties["bbox-3"]
+                self.cells_info.loc[properties["label"] - 1, "bounding_box_min_col"] = properties["bbox-1"]
+                self.cells_info.loc[properties["label"] - 1, "bounding_box_max_row"] = properties["bbox-2"]
+                self.cells_info.loc[properties["label"] - 1, "bounding_box_max_col"] = properties["bbox-3"]
                 self.save_cells_info()
             return 0
