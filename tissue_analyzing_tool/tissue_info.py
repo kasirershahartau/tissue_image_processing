@@ -1780,6 +1780,8 @@ class Tissue(object):
         else:
             working_indices = np.array(only_for_labels) - 1
         for cell_index in working_indices:
+            cells_info.at[cell_index, "neighbors"] = set()
+        for cell_index in working_indices:
             cell_label = cell_index + 1
             neighborhood = labels[dilated_image == cell_label]
             neighborhood[neighborhood == cell_label] = 0
@@ -2585,8 +2587,7 @@ class Tissue(object):
             img[rr, cc] = 1
         return img[np.newaxis, :, :] * np.array(MARKING_COLOR).reshape((3, 1, 1))
 
-    def add_segmentation_line(self, frame, point1, point2=None, initial=False, final=False, hc_marker_image=None,
-                              hc_threshold=0.1, percentile_above_threshold=90):
+    def add_segmentation_line(self, frame, point1, point2=None, initial=False, final=False):
         points_too_far = False
         labels = self.get_labels(frame)
         if labels is None:
