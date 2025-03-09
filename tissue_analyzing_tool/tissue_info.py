@@ -1772,9 +1772,9 @@ class Tissue(object):
         if labels is None:
             return 0
         cells_info = self.get_cells_info(frame_number)
-        # Using max pooling with 3X3 kernel so if cell i that has a neighbor with a smaller label it would have at least
+        # Using max pooling with 5X5 kernel so if cell i that has a neighbor with a smaller label it would have at least
         # one pixel labeled as i in the dilated image
-        dilated_image = maximum_filter(labels, (3,3), mode='constant')
+        dilated_image = maximum_filter(labels, (5,5), mode='constant')
         if only_for_labels is None:
             working_indices = cells_info.query("empty_cell == 0").index.to_numpy()
         else:
