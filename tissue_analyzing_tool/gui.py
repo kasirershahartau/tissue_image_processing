@@ -467,11 +467,14 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                                                  self.fitting_stage > 0)
             if analysis_img is not None:
                 add_analysis = True
+        current_frame_display = self.current_frame.copy()
+        current_frame_display[1][self.current_frame[0] > 0] = 0
+        current_frame_display[2][self.current_frame[0] > 0] = 0
         if add_analysis:
-            disp_image = np.transpose(np.where(analysis_img == 0, self.current_frame,
+            disp_image = np.transpose(np.where(analysis_img == 0, current_frame_display,
                                               np.round(analysis_img*255).astype("uint8")), (1, 2, 0))
         else:
-            disp_image = np.transpose(self.current_frame, (1, 2, 0))
+            disp_image = np.transpose(current_frame_display, (1, 2, 0))
         disp_image = cv2.cvtColor(disp_image, cv2.COLOR_BGR2RGB)
         QI = QtGui.QImage(bytes(disp_image), self.img_dimensions.Y, self.img_dimensions.X, 3*self.img_dimensions.Y, QtGui.QImage.Format_RGB888)
         QI.setColorTable(COLORTABLE)
