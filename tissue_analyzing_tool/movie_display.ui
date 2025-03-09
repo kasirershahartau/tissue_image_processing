@@ -138,6 +138,9 @@
     <property name="orientation">
      <enum>Qt::Horizontal</enum>
     </property>
+    <property name="invertedControls">
+     <bool>false</bool>
+    </property>
    </widget>
    <widget class="QLabel" name="atoh_level_label">
     <property name="geometry">
@@ -169,6 +172,9 @@
     </property>
     <property name="orientation">
      <enum>Qt::Horizontal</enum>
+    </property>
+    <property name="invertedControls">
+     <bool>false</bool>
     </property>
    </widget>
    <widget class="QLabel" name="zo_level_label">
@@ -516,6 +522,9 @@ in all frames</string>
     </property>
     <property name="orientation">
      <enum>Qt::Horizontal</enum>
+    </property>
+    <property name="invertedControls">
+     <bool>false</bool>
     </property>
    </widget>
    <widget class="QLabel" name="plot_single_cell_data_label1">
