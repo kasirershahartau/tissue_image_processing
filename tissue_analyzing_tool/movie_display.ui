@@ -1762,8 +1762,8 @@ memory</string>
    <widget class="QPushButton" name="export_to_tiff_button">
     <property name="geometry">
      <rect>
-      <x>1370</x>
-      <y>640</y>
+      <x>1270</x>
+      <y>700</y>
       <width>75</width>
       <height>23</height>
      </rect>
@@ -1907,7 +1907,7 @@ memory</string>
      <x>0</x>
      <y>0</y>
      <width>1609</width>
-     <height>21</height>
+     <height>20</height>
     </rect>
    </property>
   </widget>
