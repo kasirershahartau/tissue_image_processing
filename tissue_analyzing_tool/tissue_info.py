@@ -2787,7 +2787,7 @@ class Tissue(object):
                         max_area = self.max_cell_area * mean_area
                         min_area = self.min_cell_area * mean_area
                         valid = min_area < area1 + area2 < max_area
-                        cell_info.at[new_label - 1, "valid"] = valid
+                        cell_info.at[new_label - 1, "valid"] = int(valid)
                         new_type = max(type1, type2)
                         cell_info.at[new_label - 1, "type"] = new_type
                         if cell_types is not None:
@@ -2837,7 +2837,7 @@ class Tissue(object):
                         new_labels = np.hstack((new_labels, cell_info.shape[0] + np.arange(1, n_new_labels - new_labels.size + 1)))
                 else:
                     new_labels = cell_info.shape[0] + np.arange(1, n_new_labels + 1)
-            return new_labels
+            return new_labels.flatten()
         return 0
 
     def update_after_adding_segmentation_line(self, cell_label, frame):
