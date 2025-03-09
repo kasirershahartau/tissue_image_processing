@@ -1767,11 +1767,8 @@ class Tissue(object):
             circle = Circle((int(cell.cx), int(cell.cy)), 8) #plot the circle using centroid coordinates and a radius
             ax.add_patch(circle) #make circles in places of centroid
     
-    def find_neighbors(self, frame_number, labels_region=None, only_for_labels=None):#finds all the neighbors in the tissue
-        if labels_region is None:
-            labels = self.get_labels(frame_number)
-        else:
-            labels = labels_region
+    def find_neighbors(self, frame_number, only_for_labels=None):#finds all the neighbors in the tissue
+        labels = self.get_labels(frame_number)
         if labels is None:
             return 0
         cells_info = self.get_cells_info(frame_number)
@@ -2834,7 +2831,7 @@ class Tissue(object):
                     if new_labels.size > n_new_labels:
                         new_labels = new_labels[:n_new_labels]
                     else:
-                        new_labels = np.hstack((new_labels, cell_info.shape[0] + np.arange(1, n_new_labels - new_labels.size + 1)))
+                        new_labels = np.hstack((new_labels.flatten(), cell_info.shape[0] + np.arange(1, n_new_labels - new_labels.size + 1)))
                 else:
                     new_labels = cell_info.shape[0] + np.arange(1, n_new_labels + 1)
             return new_labels.flatten()
@@ -2873,7 +2870,6 @@ class Tissue(object):
             labels[region_first_row:region_last_row, region_first_col:region_last_col] = cell_region
             if cell_info is not None:
                 try:
-
                     properties = regionprops_table(cell_region, properties=("label", "area", "perimeter",
                                                                             "centroid", "bbox"))
                     mean_area = np.mean(cell_info.area.to_numpy())
@@ -2899,10 +2895,8 @@ class Tissue(object):
                                              "n_neighbors": 0,
                                              "type": int(old_cell_type)}
                             cell_info.loc[region_label - 1] = pd.Series(new_cell_info)
-                    for neighbor_label in old_cell_neighbors:
-                        cell_info.at[neighbor_label - 1, "neighbors"].remove(cell_label)
                     need_to_update_neighbors = old_cell_neighbors + list(new_labels)
-                    self.find_neighbors(frame, labels_region=cell_region, only_for_labels=need_to_update_neighbors)
+                    self.find_neighbors(frame, only_for_labels=need_to_update_neighbors)
                     if cell_types is not None:
                         for new_cell_label in new_labels:
                             cell_types[labels == new_cell_label] = old_cell_type if cell_info.valid[new_cell_label - 1] else INVALID_TYPE_INDEX
@@ -4000,4 +3994,10 @@ class Tissue(object):
                 self.cells_info.loc[properties["label"] - 1, "bounding_box_max_row"] = properties["bbox-2"]
                 self.cells_info.loc[properties["label"] - 1, "bounding_box_max_col"] = properties["bbox-3"]
                 self.save_cells_info()
-            return 0
+        return 0
+
+    def update_neighbors_for_all_cells(self):
+        for frame in range(1, self.number_of_frames + 1):
+            self.find_neighbors(frame)
+            self.save_cells_info()
+        return 0
