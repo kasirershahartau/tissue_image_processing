@@ -1767,21 +1767,20 @@ class Tissue(object):
             circle = Circle((int(cell.cx), int(cell.cy)), 8) #plot the circle using centroid coordinates and a radius
             ax.add_patch(circle) #make circles in places of centroid
     
-    def find_neighbors(self, frame_number, labels_region=None, only_for_labels=None):#finds all the neighbors in the tissue
-        if labels_region is None:
-            labels = self.get_labels(frame_number)
-        else:
-            labels = labels_region
+    def find_neighbors(self, frame_number, only_for_labels=None):#finds all the neighbors in the tissue
+        labels = self.get_labels(frame_number)
         if labels is None:
             return 0
         cells_info = self.get_cells_info(frame_number)
-        # Using max pooling with 3X3 kernel so if cell i that has a neighbor with a smaller label it would have at least
+        # Using max pooling with 5X5 kernel so if cell i that has a neighbor with a smaller label it would have at least
         # one pixel labeled as i in the dilated image
-        dilated_image = maximum_filter(labels, (3,3), mode='constant')
+        dilated_image = maximum_filter(labels, (5,5), mode='constant')
         if only_for_labels is None:
             working_indices = cells_info.query("empty_cell == 0").index.to_numpy()
         else:
             working_indices = np.array(only_for_labels) - 1
+        for cell_index in working_indices:
+            cells_info.at[cell_index, "neighbors"] = set()
         for cell_index in working_indices:
             cell_label = cell_index + 1
             neighborhood = labels[dilated_image == cell_label]
@@ -2343,7 +2342,7 @@ class Tissue(object):
         if cell_types is None:
             cell_types = np.ones_like(self.labels) * INVALID_TYPE_INDEX
         valid_cells_info = self.cells_info.query("valid == 1")[["label", "type"]]
-        for type_index in range(np.max(valid_cells_info.type) + 1):
+        for type_index in range(int(np.max(valid_cells_info.type)) + 1):
             type_labels = valid_cells_info.query("type == %d" % type_index).label.to_numpy()
             cell_types[np.isin(self.labels, type_labels)] = type_index
         invalid_cells_labels = self.cells_info.query("valid == 0").label.to_numpy()
@@ -2588,8 +2587,7 @@ class Tissue(object):
             img[rr, cc] = 1
         return img[np.newaxis, :, :] * np.array(MARKING_COLOR).reshape((3, 1, 1))
 
-    def add_segmentation_line(self, frame, point1, point2=None, initial=False, final=False, hc_marker_image=None,
-                              hc_threshold=0.1, percentile_above_threshold=90):
+    def add_segmentation_line(self, frame, point1, point2=None, initial=False, final=False):
         points_too_far = False
         labels = self.get_labels(frame)
         if labels is None:
@@ -2873,7 +2871,6 @@ class Tissue(object):
             labels[region_first_row:region_last_row, region_first_col:region_last_col] = cell_region
             if cell_info is not None:
                 try:
-
                     properties = regionprops_table(cell_region, properties=("label", "area", "perimeter",
                                                                             "centroid", "bbox"))
                     mean_area = np.mean(cell_info.area.to_numpy())
@@ -2899,10 +2896,8 @@ class Tissue(object):
                                              "n_neighbors": 0,
                                              "type": int(old_cell_type)}
                             cell_info.loc[region_label - 1] = pd.Series(new_cell_info)
-                    for neighbor_label in old_cell_neighbors:
-                        cell_info.loc[neighbor_label - 1, "neighbors"].remove(cell_label)   # Tomer changed .at to .loc
                     need_to_update_neighbors = old_cell_neighbors + list(new_labels)
-                    self.find_neighbors(frame, labels_region=cell_region, only_for_labels=need_to_update_neighbors)
+                    self.find_neighbors(frame, only_for_labels=need_to_update_neighbors)
                     if cell_types is not None:
                         for new_cell_label in new_labels:
                             cell_types[labels == new_cell_label] = old_cell_type if cell_info.valid[new_cell_label - 1] else INVALID_TYPE_INDEX
@@ -4000,4 +3995,10 @@ class Tissue(object):
                 self.cells_info.loc[properties["label"] - 1, "bounding_box_max_row"] = properties["bbox-2"]
                 self.cells_info.loc[properties["label"] - 1, "bounding_box_max_col"] = properties["bbox-3"]
                 self.save_cells_info()
-            return 0
+        return 0
+
+    def update_neighbors_for_all_cells(self):
+        for frame in range(1, self.number_of_frames + 1):
+            self.find_neighbors(frame)
+            self.save_cells_info()
+        return 0

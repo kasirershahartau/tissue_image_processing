@@ -467,11 +467,14 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                                                  self.fitting_stage > 0)
             if analysis_img is not None:
                 add_analysis = True
+        current_frame_display = self.current_frame.copy()
+        current_frame_display[1][self.current_frame[0] > 0] = 0
+        current_frame_display[2][self.current_frame[0] > 0] = 0
         if add_analysis:
-            disp_image = np.transpose(np.where(analysis_img == 0, self.current_frame,
+            disp_image = np.transpose(np.where(analysis_img == 0, current_frame_display,
                                               np.round(analysis_img*255).astype("uint8")), (1, 2, 0))
         else:
-            disp_image = np.transpose(self.current_frame, (1, 2, 0))
+            disp_image = np.transpose(current_frame_display, (1, 2, 0))
         disp_image = cv2.cvtColor(disp_image, cv2.COLOR_BGR2RGB)
         QI = QtGui.QImage(bytes(disp_image), self.img_dimensions.Y, self.img_dimensions.X, 3*self.img_dimensions.Y, QtGui.QImage.Format_RGB888)
         QI.setColorTable(COLORTABLE)
@@ -721,10 +724,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                                 hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].T
                             else:
                                 hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].compute().T
-                            self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()), final=True,
-                                                                   hc_marker_image=hc_marker_img,
-                                                                   hc_threshold=self.hc_threshold_spin_box.value()/100,
-                                                                   percentile_above_threshold=self.hc_threshold_percentage_spin_box.value())
+                            self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()), final=True)
                     else:
                         points_too_far = self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()),
                                                                self.fix_segmentation_last_position,
@@ -734,10 +734,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                         else:
                             self.fix_segmentation_last_position = (pos.x(), pos.y())
                 elif button == QtCore.Qt.MiddleButton:
-                    if self.img_in_memory:
-                        hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].T
-                    else:
-                        hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].compute().T
+                    if self.fix_segmentation_last_position is not None:
+                        self.tissue_info.add_segmentation_line(frame, self.fix_segmentation_last_position, final=True)
+                        self.fix_segmentation_last_position = None
                     self.tissue_info.remove_segmentation_line(frame, (pos.x(), pos.y()))
                 self.segmentation_changed = True
                 self.current_segmentation = self.tissue_info.get_segmentation(frame)
@@ -1544,14 +1543,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
     def finish_fixing_segmentation(self):
         frame = self.frame_slider.value()
         if self.fix_segmentation_last_position is not None:
-            if self.img_in_memory:
-                hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].T
-            else:
-                hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].compute().T
-            self.tissue_info.add_segmentation_line(frame, self.fix_segmentation_last_position, final=True,
-                                                   hc_marker_image=hc_marker_img,
-                                                   hc_threshold=self.hc_threshold_spin_box.value()/100,
-                                                   percentile_above_threshold=self.hc_threshold_percentage_spin_box.value())
+            self.tissue_info.add_segmentation_line(frame, self.fix_segmentation_last_position, final=True)
             self.fix_segmentation_last_position = None
         self.tissue_info.update_labels(self.frame_slider.value())
         self.segmentation_changed = True
