@@ -2834,7 +2834,7 @@ class Tissue(object):
                     if new_labels.size > n_new_labels:
                         new_labels = new_labels[:n_new_labels]
                     else:
-                        new_labels = np.hstack((new_labels, cell_info.shape[0] + np.arange(1, n_new_labels - new_labels.size + 1)))
+                        new_labels = np.hstack((new_labels.flatten(), cell_info.shape[0] + np.arange(1, n_new_labels - new_labels.size + 1)))
                 else:
                     new_labels = cell_info.shape[0] + np.arange(1, n_new_labels + 1)
             return new_labels.flatten()
@@ -2900,7 +2900,7 @@ class Tissue(object):
                                              "type": int(old_cell_type)}
                             cell_info.loc[region_label - 1] = pd.Series(new_cell_info)
                     for neighbor_label in old_cell_neighbors:
-                        cell_info.at[neighbor_label - 1, "neighbors"].remove(cell_label)
+                        cell_info.loc[neighbor_label - 1, "neighbors"].remove(cell_label)   # Tomer changed .at to .loc
                     need_to_update_neighbors = old_cell_neighbors + list(new_labels)
                     self.find_neighbors(frame, labels_region=cell_region, only_for_labels=need_to_update_neighbors)
                     if cell_types is not None:
