@@ -16,6 +16,7 @@ from matplotlib import pyplot as plt
 from matplotlib import cm as colormap
 from matplotlib.patches import Circle
 from matplotlib.colors import LogNorm
+from mock.mock import inplace
 from scipy.ndimage.filters import maximum_filter, minimum_filter
 from scipy.ndimage import convolve1d
 from scipy.interpolate import UnivariateSpline
@@ -40,7 +41,7 @@ CELL_INFO_SPECS = {"area": 0,
                    "label": 0,
                    "cx": 0,
                    "cy": 0,
-                   "mean_intensity": [0],
+                   "mean_intensity": [],
                    "neighbors": set(),
                    "n_neighbors": 0,
                    "valid": 0,
@@ -803,7 +804,7 @@ class Tissue(object):
     def calculate_neighbors_correlation_function(self, frame, valid_cells, set_state_by="type", method="neighbors", type_name=""):
         type_index = self.type_name_to_index(type_name)
         if set_state_by == "intensity":
-            state = valid_cells.mean_intensity
+            state = valid_cells.mean_intensity[type_index]
         elif set_state_by == "type":
             state = pd.Series(data=0, index=valid_cells.index)
             HC_indices = valid_cells.loc[is_positive_for_type(valid_cells.type.to_numpy(), type_index)].index
@@ -1807,6 +1808,8 @@ class Tissue(object):
         min_filtered_region = min_filtered_labels[region_first_row:region_last_row, region_first_col:region_last_col]
         neighbor_labels = np.array(list(cell_info.neighbors.copy()))
         if cell_type == 'all':
+            neighbors_from_the_right_type = np.ones(neighbor_labels.shape, dtype=bool)
+        elif cell_type == 'valid':
             neighbors_from_the_right_type = (cells_info.valid[np.array(neighbor_labels) - 1] == 1).to_numpy()
         else:
             type_index = self.type_name_to_index(cell_type)
@@ -2341,12 +2344,16 @@ class Tissue(object):
         cell_types = self.get_cell_types(frame)
         if cell_types is None:
             cell_types = np.ones_like(self.labels) * INVALID_TYPE_INDEX
-        valid_cells_info = self.cells_info.query("valid == 1")[["label", "type"]]
+        labels = self.get_labels(frame)
+        cells_info = self.get_cells_info(frame)
+        if labels is None or cells_info is None:
+            return 0
+        valid_cells_info = cells_info.query("valid == 1")[["label", "type"]]
         for type_index in range(np.max(valid_cells_info.type) + 1):
             type_labels = valid_cells_info.query("type == %d" % type_index).label.to_numpy()
-            cell_types[np.isin(self.labels, type_labels)] = type_index
-        invalid_cells_labels = self.cells_info.query("valid == 0").label.to_numpy()
-        cell_types[np.isin(self.labels, invalid_cells_labels)] = INVALID_TYPE_INDEX
+            cell_types[np.isin(labels, type_labels)] = type_index
+        invalid_cells_labels = cells_info.query("valid == 0").label.to_numpy()
+        cell_types[np.isin(labels, invalid_cells_labels)] = INVALID_TYPE_INDEX
         self.set_cell_types(frame, cell_types)
         return 0
 
@@ -3885,16 +3892,14 @@ class Tissue(object):
         min_filtered_label = minimum_filter(labels_copy, footprint=np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]]),
                                             mode='constant')
         max_index = cells_info.index.max()
-        output = np.zeros((max_index, max_index))
+        output = np.zeros((max_index + 1, max_index + 1))
         for index, cell in cells_info.iterrows():
             neighbor_labels, contact_lengths = self.calculate_contact_length(frame, cell, max_filtered_label,
                                                                              min_filtered_label)
             for (neighbor_label, contact_length) in zip(neighbor_labels, contact_lengths):
                 output[index, neighbor_label - 1] = contact_length
-                output[neighbor_label - 1, index] = contact_length
-
-            if index > (max_index//2 + 1):
-                break
+            if (output.T != output).all():
+                print("Error, Matrix is not symmetric")
         return output
 
     def save_neighbors_contact_matrix(self, frame):
@@ -4001,4 +4006,41 @@ class Tissue(object):
         for frame in range(1, self.number_of_frames + 1):
             self.find_neighbors(frame)
             self.save_cells_info()
+        return 0
+
+    def remove_lines_from_table(self, frame, labels_to_remove, update_cell_id=False):
+        labels_to_remove = np.array(labels_to_remove)
+        cells_info = self.get_cells_info(frame)
+        labels = self.get_labels(frame)
+        if cells_info is not None and labels is not None:
+            self.cells_info.drop(labels_to_remove - 1, inplace=True)
+            for i in range(1, cells_info.shape[0]):
+                if i in labels_to_remove:
+                    continue
+                labels_removed_below = np.sum((labels_to_remove < i).astype(int))
+                if update_cell_id:
+                    self.cells_info.loc[i - 1, "label"] = cells_info.loc[i - 1, "label"] - labels_removed_below
+                current_neighbors = list(cells_info.at[i - 1, "neighbors"])
+                updated_neighbors = set()
+                for neighbor in current_neighbors:
+                    labels_removed_below = np.sum((labels_to_remove < neighbor).astype(int))
+                    updated_neighbors.add(neighbor - labels_removed_below)
+                self.cells_info.loc[i - 1, "neighbors"] = updated_neighbors
+                labels[labels == i] = i - labels_removed_below
+            self.cells_info.reset_index(drop = True, inplace = True)
+            self.save_cells_info()
+            self.save_labels()
+        return 0
+
+    def fix_zero_labeled_cells(self):
+        for frame in range(1, self.number_of_frames + 1):
+            cells_info = self.get_cells_info(frame)
+            if cells_info is None:
+                continue
+            existing_labels = np.unique(cells_info.labels.to_numpy())
+            zero_labeled_cells = cells_info.query("label == 0")["index"]
+            new_labels = zero_labeled_cells.index.to_numpy() + 1
+            need_to_update = np.isin(new_labels, existing_labels)
+            new_labels[need_to_update] = np.max(existing_labels) + np.arange(1, len(need_to_update))
+            self.cells_info.loc[zero_labeled_cells.index, "label"] = new_labels
         return 0
