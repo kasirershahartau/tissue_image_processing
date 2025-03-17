@@ -2341,7 +2341,11 @@ class Tissue(object):
         cell_types = self.get_cell_types(frame)
         if cell_types is None:
             cell_types = np.ones_like(self.labels) * INVALID_TYPE_INDEX
-        valid_cells_info = self.cells_info.query("valid == 1")[["label", "type"]]
+        cells_info = self.get_cells_info(frame)
+        labels = self.get_labels(frame)
+        if cells_info is None or labels is None:
+            return 0
+        valid_cells_info = cells_info.query("valid == 1")[["label", "type"]]
         for type_index in range(int(np.max(valid_cells_info.type)) + 1):
             type_labels = valid_cells_info.query("type == %d" % type_index).label.to_numpy()
             cell_types[np.isin(self.labels, type_labels)] = type_index

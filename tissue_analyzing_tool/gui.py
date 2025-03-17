@@ -672,9 +672,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         dialog = AddTypeDialog(self)
         if dialog.exec():
             type_name, type_channel = dialog.get_inputs()
-            self.fake_channels.append(int(type_channel) - 1)
+            self.fake_channels.append(int(type_channel))
             self.channel_names.append(type_name)
-            self.tissue_info.add_fake_type(type_name, int(type_channel) - 1)
+            self.tissue_info.add_fake_type(type_name, int(type_channel))
             self.atoh_spin_box.setMaximum(len(self.channel_names))
             self.zo_spin_box.setMaximum(len(self.channel_names))
 
@@ -771,7 +771,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                         cell_id = cell.label
                     text += '\ncell id = %d' % cell_id
                     if double_click:
-                        self.cell_tracking_spin_box.setValue(cell_id)
+                        self.cell_tracking_spin_box.setValue(int(cell_id))  # added int() to avoid a "got an unexpected numpy.float64" bug
                 self.pixel_info.setText(text)
 
     def undo_last_action(self):
