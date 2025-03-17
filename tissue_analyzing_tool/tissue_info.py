@@ -4002,3 +4002,16 @@ class Tissue(object):
             self.find_neighbors(frame)
             self.save_cells_info()
         return 0
+
+    def fix_zero_labeled_cells(self):
+        for frame in range(1, self.number_of_frames + 1):
+            cells_info = self.get_cells_info(frame)
+            if cells_info is None:
+                continue
+            existing_labels = np.unique(cells_info.labels.to_numpy())
+            zero_labeled_cells = cells_info.query("label == 0")["index"]
+            new_labels = zero_labeled_cells.index.to_numpy() + 1
+            need_to_update = np.isin(new_labels, existing_labels)
+            new_labels[need_to_update] = np.max(existing_labels) + np.arange(1, len(need_to_update))
+            self.cells_info.loc[zero_labeled_cells.index, "label"] = new_labels
+        return 0
