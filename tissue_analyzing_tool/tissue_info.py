@@ -2341,8 +2341,12 @@ class Tissue(object):
         cell_types = self.get_cell_types(frame)
         if cell_types is None:
             cell_types = np.ones_like(self.labels) * INVALID_TYPE_INDEX
-        valid_cells_info = self.cells_info.query("valid == 1")[["label", "type"]]
-        for type_index in range(np.max(valid_cells_info.type) + 1):
+        cells_info = self.get_cells_info(frame)
+        labels = self.get_labels(frame)
+        if cells_info is None or labels is None:
+            return 0
+        valid_cells_info = cells_info.query("valid == 1")[["label", "type"]]
+        for type_index in range(int(np.max(valid_cells_info.type)) + 1):
             type_labels = valid_cells_info.query("type == %d" % type_index).label.to_numpy()
             cell_types[np.isin(self.labels, type_labels)] = type_index
         invalid_cells_labels = self.cells_info.query("valid == 0").label.to_numpy()
@@ -4001,4 +4005,17 @@ class Tissue(object):
         for frame in range(1, self.number_of_frames + 1):
             self.find_neighbors(frame)
             self.save_cells_info()
+        return 0
+
+    def fix_zero_labeled_cells(self):
+        for frame in range(1, self.number_of_frames + 1):
+            cells_info = self.get_cells_info(frame)
+            if cells_info is None:
+                continue
+            existing_labels = np.unique(cells_info.labels.to_numpy())
+            zero_labeled_cells = cells_info.query("label == 0")["index"]
+            new_labels = zero_labeled_cells.index.to_numpy() + 1
+            need_to_update = np.isin(new_labels, existing_labels)
+            new_labels[need_to_update] = np.max(existing_labels) + np.arange(1, len(need_to_update))
+            self.cells_info.loc[zero_labeled_cells.index, "label"] = new_labels
         return 0
