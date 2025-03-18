@@ -16,7 +16,6 @@ from matplotlib import pyplot as plt
 from matplotlib import cm as colormap
 from matplotlib.patches import Circle
 from matplotlib.colors import LogNorm
-from mock.mock import inplace
 from scipy.ndimage.filters import maximum_filter, minimum_filter
 from scipy.ndimage import convolve1d
 from scipy.interpolate import UnivariateSpline
@@ -41,7 +40,6 @@ CELL_INFO_SPECS = {"area": 0,
                    "label": 0,
                    "cx": 0,
                    "cy": 0,
-                   "mean_intensity": [],
                    "neighbors": set(),
                    "n_neighbors": 0,
                    "valid": 0,
@@ -804,7 +802,7 @@ class Tissue(object):
     def calculate_neighbors_correlation_function(self, frame, valid_cells, set_state_by="type", method="neighbors", type_name=""):
         type_index = self.type_name_to_index(type_name)
         if set_state_by == "intensity":
-            state = valid_cells.mean_intensity[type_index]
+            state = valid_cells["mean_intensity_" + type_name]
         elif set_state_by == "type":
             state = pd.Series(data=0, index=valid_cells.index)
             HC_indices = valid_cells.loc[is_positive_for_type(valid_cells.type.to_numpy(), type_index)].index
@@ -1034,7 +1032,7 @@ class Tissue(object):
         return start_frame
 
     def get_frame_data(self, frame, feature, valid_cells, special_features=[], global_features=[], spatial_features=[],
-                      for_histogram=False, reference=None, intensity_img=None, window_radius=0, types=None):
+                      for_histogram=False, reference=None, iintensity_img=None, window_radius=0, types=None):
         if feature in special_features:
             if feature == "psi6":
                 nearest_HCs = self.find_nearest_neighbors_using_voroni_tesselation(valid_cells)
@@ -1060,7 +1058,7 @@ class Tissue(object):
             elif feature == "second neighbors from the same type":
                 data = self.calculate_n_neighbors_from_type(frame, valid_cells, cell_type='same', second_neighbors=True)
             elif feature == "Mean atoh intensity":
-                data = self.calculate_mean_intensity(frame, valid_cells, intensity_img=intensity_img)
+                data = self.calculate_mean_intensity(frame, valid_cells, intensity_img=intensity_img, type_name="HC")
             elif feature == "Distance from ablation":
                 data = self.calculate_distance_from_ablation(frame, valid_cells)
             elif "contact length" in feature:
@@ -1134,11 +1132,19 @@ class Tissue(object):
             data = valid_cells[feature].to_numpy()
         return data, ""
 
-    def calculate_mean_intensity(self,frame, valid_cells, intensity_img):
+    def calculate_mean_intensity(self, frame, valid_cells, intensity_img, type_name):
         labels = self.get_labels(frame)
+        if labels is None:
+            return 0
+        intensity_column = "mean_intensity_" + type_name
+        if intensity_column in valid_cells.columns:
+            return valid_cells[intensity_column].to_numpy()
         props = regionprops_table(labels, intensity_img, properties=('label', 'intensity_mean'))
         valid_cells_labels = valid_cells.index.to_numpy() + 1
         valid_cells_indices = np.intersect1d(props['label'], valid_cells_labels, return_indices=True)[1]
+        cells_info = self.get_cells_info(frame)
+        if cells_info is not None:
+            self.cells_info.loc[props['label'] - 1, intensity_column] = props['intensity_mean']
         return props['intensity_mean'][valid_cells_indices]
 
     @staticmethod
@@ -2279,6 +2285,7 @@ class Tissue(object):
 
     def add_fake_type(self, type_name, type_channel):
         self.type_names.append(type_name)
+        self.channel_names.append(type_name)
         self.fake_channels.append(type_channel)
 
     def calc_cell_types(self, type_marker_image, frame_number, type_name, threshold=0.1,
@@ -2287,9 +2294,6 @@ class Tissue(object):
         labels = self.get_labels(frame_number)
         if cells_info is None or labels is None:
             return 0
-        cell_types = self.get_cell_types(frame_number)
-        if cell_types is None:
-            cell_types = INVALID_TYPE_INDEX * np.ones_like(labels).astype(np.uint8)
         new_type = type_name not in self.type_names
         if new_type:
             self.type_names.append(type_name)
@@ -2304,8 +2308,7 @@ class Tissue(object):
                                        extra_properties=(percentile_intensity,))
         cell_indices = properties['label'] - 1
         if new_type:
-            for cell_index in cell_indices:
-                cells_info.at[cell_index, "mean_intensity"].append(properties['intensity_mean'])
+            cells_info.loc[cell_indices, "mean_intensity_" + type_name] = properties['intensity_mean']
 
         areas = cells_info.area.to_numpy()
         mean_area = np.mean(areas)
@@ -2751,7 +2754,7 @@ class Tissue(object):
             labels[labels == cell1_label] = new_label
             labels[labels == cell2_label] = new_label
             removed_line_length = np.sum((labels == -1).astype(int))
-            if part_of_undo:
+            if part_of_undo and new_label > 0:
                 labels[labels == -1] = new_label
                 labels[labels < 0] += 1
                 if not self._finished_last_line_addition:
@@ -2842,6 +2845,8 @@ class Tissue(object):
                         new_labels = np.hstack((new_labels.flatten(), cell_info.shape[0] + np.arange(1, n_new_labels - new_labels.size + 1)))
                 else:
                     new_labels = cell_info.shape[0] + np.arange(1, n_new_labels + 1)
+            if 0 in new_labels:
+                print("Error: setting zero labeled cell")
             return new_labels.flatten()
         return 0
 
@@ -4013,8 +4018,7 @@ class Tissue(object):
         cells_info = self.get_cells_info(frame)
         labels = self.get_labels(frame)
         if cells_info is not None and labels is not None:
-            self.cells_info.drop(labels_to_remove - 1, inplace=True)
-            for i in range(1, cells_info.shape[0]):
+            for i in range(1, cells_info.shape[0] + 1):
                 if i in labels_to_remove:
                     continue
                 labels_removed_below = np.sum((labels_to_remove < i).astype(int))
@@ -4025,8 +4029,10 @@ class Tissue(object):
                 for neighbor in current_neighbors:
                     labels_removed_below = np.sum((labels_to_remove < neighbor).astype(int))
                     updated_neighbors.add(neighbor - labels_removed_below)
-                self.cells_info.loc[i - 1, "neighbors"] = updated_neighbors
+                self.cells_info.loc[i - 1, "neighbors"].clear()
+                self.cells_info.loc[i - 1, "neighbors"].update(updated_neighbors)
                 labels[labels == i] = i - labels_removed_below
+            self.cells_info.drop(labels_to_remove - 1, inplace=True)
             self.cells_info.reset_index(drop = True, inplace = True)
             self.save_cells_info()
             self.save_labels()
@@ -4044,3 +4050,21 @@ class Tissue(object):
             new_labels[need_to_update] = np.max(existing_labels) + np.arange(1, len(need_to_update))
             self.cells_info.loc[zero_labeled_cells.index, "label"] = new_labels
         return 0
+
+    def fix_mean_intensity(self, img, img_in_memory=False):
+        for frame in range(1, self.number_of_frames + 1):
+            cells_info = self.get_cells_info(frame)
+            if cells_info is None:
+                continue
+            if "mean_intensity" in cells_info.columns:
+                self.cells_info.drop(columns=["mean_intensity"], inplace=True)
+            for channel_index, channel_name in enumerate(self.channel_names):
+                if channel_index >= img.shape[1]:
+                    break
+                if channel_name in self.type_names:
+                    intensity_img = img[frame - 1, channel_index, 0, :, :].T
+                    if not img_in_memory:
+                        intensity_img = intensity_img.compute()
+                    self.calculate_mean_intensity(frame, cells_info, intensity_img, channel_name)
+        return 0
+

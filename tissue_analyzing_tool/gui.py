@@ -672,11 +672,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         dialog = AddTypeDialog(self)
         if dialog.exec():
             type_name, type_channel = dialog.get_inputs()
-            self.fake_channels.append(int(type_channel) - 1)
+            self.fake_channels.append(int(type_channel))
             self.channel_names.append(type_name)
-            self.tissue_info.add_fake_type(type_name, int(type_channel) - 1)
-            self.atoh_spin_box.setMaximum(len(self.channel_names))
-            self.zo_spin_box.setMaximum(len(self.channel_names))
+            self.tissue_info.add_fake_type(type_name, int(type_channel))
+            self.atoh_spin_box.setMaximum(len(self.channel_names) - 1)
+            self.zo_spin_box.setMaximum(len(self.channel_names) - 1)
 
     def abort_event_marking(self):
         self.mark_event_stage = 0
@@ -720,10 +720,6 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                     if double_click:
                         if self.fix_segmentation_last_position is not None:
                             self.fix_segmentation_last_position = None
-                            if self.img_in_memory:
-                                hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].T
-                            else:
-                                hc_marker_img = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].compute().T
                             self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()), final=True)
                     else:
                         points_too_far = self.tissue_info.add_segmentation_line(frame, (pos.x(), pos.y()),
@@ -1068,7 +1064,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         feature = self.plot_single_cell_data_combo_box.currentText()
         plot_window = PlotDataWindow(self, working_dir=self.working_directory)
         if "intensity" in feature:
-            intensity_images = self.img[:, self.atoh_spin_box.value(), 0, :, :]
+            if self.atoh_spin_box.value() < self.number_of_channels:
+                channel = self.atoh_spin_box.value()
+            else:
+                channel = self.fake_channels[self.atoh_spin_box.value() - self.number_of_channels]
+            intensity_images = self.img[:, channel, 0, :, :]
             if not self.img_in_memory:
                 intensity_images = intensity_images.compute()
             intensity_images = np.transpose(intensity_images, (0, 2, 1))
@@ -1090,7 +1090,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         if "intensity" in feature:
             frames = np.arange(max(frame - frames_around_event, 0),
                                min(frame + frames_around_event + 1, self.number_of_frames + 1))
-            intensity_images = self.img[frames - 1, self.atoh_spin_box.value(), 0, :, :]
+            if self.atoh_spin_box.value() < self.number_of_channels:
+                channel = self.atoh_spin_box.value()
+            else:
+                channel = self.fake_channels[self.atoh_spin_box.value() - self.number_of_channels]
+            intensity_images = self.img[frames - 1, channel, 0, :, :]
             if not self.img_in_memory:
                 intensity_images = intensity_images.compute()
             intensity_images = np.transpose(intensity_images, (0, 2, 1))
@@ -1110,7 +1114,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         cell_type = self.plot_single_frame_data_cell_type_combo_box.currentText()
         frame = self.frame_slider.value()
         if "intensity" in x_feature or "intensity" in y_feature:
-            intensity_image = self.img[frame - 1, self.atoh_spin_box.value(), 0, :, :].T
+            if self.atoh_spin_box.value() < self.number_of_channels:
+                channel = self.atoh_spin_box.value()
+            else:
+                channel = self.fake_channels[self.atoh_spin_box.value() - self.number_of_channels]
+            intensity_image = self.img[frame - 1, channel, 0, :, :].T
             if not self.img_in_memory:
                 intensity_image = intensity_image.compute()
         else:
@@ -1200,7 +1208,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             cells_type, positive_for_type = ("HC", True) if "HC" in event_type else ("HC", False) if "SC" in event_type else ("all", True)
             reference_frame = self.choose_reference_frame_spin_box.value()
             if "intensity" in x_feature or (y_feature is not None and "intensity" in y_feature):
-                intensity_image = self.img[reference_frame - 1, self.atoh_spin_box.value(), 0, :, :]
+                if self.atoh_spin_box.value() < self.number_of_channels:
+                    channel = self.atoh_spin_box.value()
+                else:
+                    channel = self.fake_channels[self.atoh_spin_box.value() - self.number_of_channels]
+                intensity_image = self.img[reference_frame - 1, channel, 0, :, :]
                 if not self.img_in_memory:
                     intensity_image = intensity_image.compute()
                 intensity_image = intensity_image.T
@@ -1214,7 +1226,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                                                                            x_radius=x_radius, y_radius=y_radius)
         else:
             if "intensity" in x_feature or (y_feature is not None and "intensity" in y_feature):
-                intensity_images = self.img[:, self.atoh_spin_box.value(), 0, :, :]
+                if self.atoh_spin_box.value() < self.number_of_channels:
+                    channel = self.atoh_spin_box.value()
+                else:
+                    channel = self.fake_channels[self.atoh_spin_box.value() - self.number_of_channels]
+                intensity_images = self.img[:, channel, 0, :, :]
                 if not self.img_in_memory:
                     intensity_images = intensity_images.compute()
                 intensity_images = np.transpose(intensity_images, (0, 2, 1))
@@ -1304,7 +1320,10 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.analyze_segmentation_progress_bar.show()
         self.cancel_analysis_button.show()
         zo_channel = self.zo_spin_box.value()
-        atoh_channel = self.atoh_spin_box.value()
+        if self.atoh_spin_box.value() < self.number_of_channels:
+            atoh_channel = self.atoh_spin_box.value()
+        else:
+            atoh_channel = self.fake_channels[self.atoh_spin_box.value() - self.number_of_channels]
         self.segmentation_thread = UnetSegmentationThread(self.img, frames, zo_channel, atoh_channel, self.tissue_info,
                                                           self.img_in_memory)
         self.segmentation_thread._signal.connect(self.frame_segmentation_and_analysis_done)
@@ -1390,7 +1409,10 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.analyze_segmentation_progress_bar.reset()
         self.analyze_segmentation_progress_bar.show()
         self.cancel_analysis_button.show()
-        atoh_channel = self.atoh_spin_box.value()
+        if self.atoh_spin_box.value() < self.number_of_channels:
+            atoh_channel = self.atoh_spin_box.value()
+        else:
+            atoh_channel = self.fake_channels[self.atoh_spin_box.value() - self.number_of_channels]
         hc_threshold = self.hc_threshold_spin_box.value()/100
         hc_threshold_percentage = self.hc_threshold_percentage_spin_box.value()
         if self.peak_window_size_label.isChecked():
@@ -1711,8 +1733,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             fake_channels = self.tissue_info.get_fake_channels()
             if fake_channels:
                 self.fake_channels = fake_channels
-            self.atoh_spin_box.setMaximum(len(self.channel_names))
-            self.zo_spin_box.setMaximum(len(self.channel_names))
+            self.atoh_spin_box.setMaximum(len(self.channel_names) - 1)
+            self.zo_spin_box.setMaximum(len(self.channel_names) - 1)
             self.cells_number_changed()
             self.update_single_cell_features()
             self.update_single_frame_features()
