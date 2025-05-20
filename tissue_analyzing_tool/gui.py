@@ -2,7 +2,7 @@ import logging
 
 import numpy as np
 import pandas as pd
-from PyQt5 import QtCore, uic, QtWidgets, QtGui #, QtWebEngineWidgets
+from PyQt5 import QtCore, uic, QtWidgets, QtGui, QtWebEngineWidgets
 import tissue_info
 import matplotlib
 import pickle

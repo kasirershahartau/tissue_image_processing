@@ -148,7 +148,7 @@ def is_positive_for_type(type, type_index):
         if hasattr(type, "__len__"):
             res = np.ones_like(type)
             for t in pos_types:
-                res[not is_positive_for_type(type, t)] = 0 # original ~, instead of "not"
+                res[~is_positive_for_type(type, t)] = 0
             for t in neg_types:
                 res[is_positive_for_type(type, t)] = 0
             return res.astype(np.bool)
@@ -209,7 +209,7 @@ class Tissue(object):
                                          "timing by number of HC neighbors",
                                          "rates by number of HC neighbors"]
     CELL_TYPES = ["all"]
-    FITTING_SHAPES = ["ellipse", "circle arc", "line", "spline"]
+    FITTING_SHAPES = ["ellipse", "circle", "circle arc", "line", "spline"]
     EVENT_TYPES = ["ablation", "division", "delamination", "differentiation", "promoted differentiation"]
     ADDITIONAL_EVENT_MARKING_OPTION = ["delete event"]
     ADDITIONAL_EVENT_STATISTICS_OPTIONS = ["overall reference", "overall reference HC", "overall reference SC"]
@@ -1032,7 +1032,7 @@ class Tissue(object):
         return start_frame
 
     def get_frame_data(self, frame, feature, valid_cells, special_features=[], global_features=[], spatial_features=[],
-                      for_histogram=False, reference=None, iintensity_img=None, window_radius=0, types=None):
+                      for_histogram=False, reference=None, intensity_img=None, window_radius=0, types=None):
         if feature in special_features:
             if feature == "psi6":
                 nearest_HCs = self.find_nearest_neighbors_using_voroni_tesselation(valid_cells)
@@ -1806,6 +1806,9 @@ class Tissue(object):
     def calculate_contact_length(self, frame, cell_info, max_filtered_labels, min_filtered_labels, cell_type='all', positive_for_type=True):
         cells_info = self.get_cells_info(frame)
         cell_label = cells_info.query("label == %d and empty_cell == 0" % cell_info.label).index.to_numpy() + 1
+        if cell_label.size > 1:
+            print("Error: There are few cells with the same label = %d in frame %d, cells indices are %s" %(int(cell_info.label), frame, str(cell_label)))
+            cell_label = cell_label[0]
         region_first_row = int(max(0, cell_info.bounding_box_min_row - 2))
         region_last_row = int(cell_info.bounding_box_max_row + 2)
         region_first_col = int(max(0, cell_info.bounding_box_min_col - 2))
@@ -1885,6 +1888,7 @@ class Tissue(object):
             frame = frame_data.frame.values[0]
             cells_info = self.get_cells_info(frame)
             cells_info.loc[frame_data.index, "label"] = frame_data["particle"] + 1
+            self.fix_duplicated_label_cells_in_frame(frame)
             yield frame
         return 0
 
@@ -2352,8 +2356,8 @@ class Tissue(object):
         if labels is None or cells_info is None:
             return 0
         valid_cells_info = cells_info.query("valid == 1")[["label", "type"]]
-        for type_index in range(np.max(valid_cells_info.type) + 1):
-            type_labels = valid_cells_info.query("type == %d" % type_index).label.to_numpy()
+        for type_index in range(int(np.max(valid_cells_info.type)) + 1):
+            type_labels = valid_cells_info.query("type == %d" % type_index).index.to_numpy() + 1
             cell_types[np.isin(labels, type_labels)] = type_index
         invalid_cells_labels = cells_info.query("valid == 0").label.to_numpy()
         cell_types[np.isin(labels, invalid_cells_labels)] = INVALID_TYPE_INDEX
@@ -3015,6 +3019,8 @@ class Tissue(object):
             norm_factor = 1
         if shape == "ellipse":
             res = self.fit_an_ellipse(X, Y, ax, norm_factor)
+        elif shape == "circle":
+            res = self.fit_a_circle(X, Y, ax, norm_factor)
         elif shape == "circle arc":
             res = self.fit_a_circle_arc(X, Y, ax, norm_factor)
         elif shape == "line":
@@ -3328,6 +3334,63 @@ class Tissue(object):
                "rotation angle": (-rotating_angle, rotating_angle_err),
                "center x": (center_x, center_x_err), "center y": (center_y, center_y_err),
                "eccentricity": (eccentricity, eccentricity_err), "Chi square": (chi_sqr, 0), "N": (X.size, 0)}
+        return res
+
+    def fit_a_circle(self, X, Y, ax, norm_factor):
+
+        # rescaling coordinates to avoid overflow
+        rescale_factor = np.abs(max(np.max(X), np.max(Y)))
+        rescaled_X = (X - np.mean(X)) / rescale_factor
+        rescaled_Y = (Y - np.mean(Y)) / rescale_factor
+
+        # Formulate and solve the least squares problem ||Ax - b ||^2
+        A = np.column_stack([rescaled_X ** 2 + rescaled_Y ** 2, rescaled_X, rescaled_Y])
+        b = np.ones_like(X)
+        params, chi_sqr, _, _ = np.linalg.lstsq(A, b, rcond=None)
+        params = params.squeeze()
+        chi_sqr = chi_sqr[0]
+        params_cov = np.linalg.inv(A.T.dot(A))
+
+
+        # Obtaining canonical parameters
+        x_center = -params[1]/(2*params[0])
+        y_center = -params[2]/(2*params[0])
+        radius = np.sqrt(1/params[0] + x_center**2 + y_center**2)
+
+        # Obtaining canonical parameters errors
+        x_center_der = np.array([2*params[1]/(params[0]**2), -2/params[0], 0])
+        y_center_der = np.array([2*params[2]/(params[0]**2), 0, -2/params[0]])
+        radius_der = (1/(2*radius)) * 2*x_center*x_center_der + 2*y_center*y_center_der + np.array([-1/(params[0]**2), 0, 0])
+
+        x_center_err = self.calc_standard_error(x_center_der, params_cov)
+        y_center_err = self.calc_standard_error(y_center_der, params_cov)
+        radius_err = self.calc_standard_error(radius_der, params_cov)
+
+        # Rescaling results
+        radius *= rescale_factor
+        x_center = x_center*rescale_factor + np.mean(X)
+        y_center = y_center*rescale_factor + np.mean(Y)
+        radius_err *= rescale_factor
+        x_center_err *= rescale_factor
+        y_center_err *= rescale_factor
+        chi_sqr *= rescale_factor ** 2 / (norm_factor * X.size)
+        # plot the image
+        ax.imshow(self.labels == 0)
+
+        # Plot the  data
+        ax.scatter(X, Y, label='Data Points')
+
+        # Plot the least squares circle
+        angle = np.linspace(0,2*np.pi, 100)
+        x_coord = x_center + radius*np.cos(angle)
+        y_coord = y_center + radius*np.sin(angle)
+        ax.plot(x_coord, y_coord, 'r', linewidth=2, label="Fit")
+        ax.legend()
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        res = {"radius": (radius, radius_err), "x_center": (x_center, x_center_err),
+               "y_center": (y_center, y_center_err),
+               "Chi square": (chi_sqr, 0), "N": (X.size, 0)}
         return res
 
     def initialize_working_space(self):
@@ -3749,10 +3812,10 @@ class Tissue(object):
         event_labels = ["division", "delamination", "differentiation", "reference_SC", "reference_HC"]
         features = [("area", "roundness"), ("HC contact length", "SC contact length"),
                     ("HC density", "HC type_fraction"), ("HC neighbors", "SC neighbors"),
-                    ("n_neighbors",), ("HC second neighbors", "SC second neighbors"),
+                    ("n_neighbors",), ('perimeter',), ("HC second neighbors", "SC second neighbors"),
                     ("timing histogram",)]
         feature_labels = ["area_and_roundness", "contact_length_by_type", "HC_density_and_fraction",
-                          "neighbors_by_type", "number_of_neighbors", "second_neighbors_by_type", "timing"]
+                          "neighbors_by_type", "number_of_neighbors", "perimeter", "second_neighbors_by_type", "timing"]
         for event_type, event_label in zip(event_types, event_labels):
             for feature, feature_label in zip(features, feature_labels):
 
@@ -3907,9 +3970,20 @@ class Tissue(object):
                 print("Error, Matrix is not symmetric")
         return output
 
-    def save_neighbors_contact_matrix(self, frame):
+    def save_frame_data_for_simulation(self, frame):
+        movie_name = os.path.basename(self.data_path).replace(".tif", "")
+        directory = os.path.dirname(self.data_path)
+        labels = self.get_labels(frame)
+        cells_info = self.get_cells_info(frame)
+        cells_info_copy = cells_info.copy()
+        cells_info_copy.drop(columns="empty_cell",inplace=True)
+        cells_info_copy.rename(columns={"label":"cell_id"}, inplace=True)
+        cells_info_copy["label"] = cells_info.index.to_numpy() + 1
         contact_matrix = self.calc_neighbors_contact_matrix(frame)
-        np.save(os.path.join(self.data_path, "contact_matrix_frame_%d" % frame), contact_matrix)
+        np.save(os.path.join(directory, "%s_contact_matrix_frame_%d" % (movie_name, frame)), contact_matrix)
+        np.save(os.path.join(directory, "%s_labels_frame_%d" % (movie_name, frame)), labels)
+        cells_info_copy.to_pickle(os.path.join(directory, "%s_cells_info_frame_%d" % (movie_name, frame)))
+        return 0
 
 
     def save_cell_type_names(self):
@@ -4043,12 +4117,42 @@ class Tissue(object):
             cells_info = self.get_cells_info(frame)
             if cells_info is None:
                 continue
-            existing_labels = np.unique(cells_info.labels.to_numpy())
-            zero_labeled_cells = cells_info.query("label == 0")["index"]
-            new_labels = zero_labeled_cells.index.to_numpy() + 1
+            existing_labels = np.unique(cells_info.label.to_numpy())
+            zero_labeled_cells = cells_info.query("label == 0").index
+            new_labels = zero_labeled_cells.to_numpy() + 1
             need_to_update = np.isin(new_labels, existing_labels)
-            new_labels[need_to_update] = np.max(existing_labels) + np.arange(1, len(need_to_update))
-            self.cells_info.loc[zero_labeled_cells.index, "label"] = new_labels
+
+            new_labels[need_to_update] = np.max(existing_labels) + np.arange(1, np.sum(need_to_update.astype(int)) + 1)
+            self.cells_info.loc[zero_labeled_cells, "label"] = new_labels
+        return 0
+
+    def fix_duplicated_label_cells_in_frame(self, frame):
+        cells_info = self.get_cells_info(frame)
+        if cells_info is None:
+            return 0
+        existing_labels = np.unique(cells_info.label.to_numpy())
+        duplicated_labels = np.unique(cells_info.loc[cells_info["label"].duplicated(), "label"].to_numpy())
+        indices_to_update = []
+        for label in duplicated_labels:
+            cells = cells_info.query("label == %d" % label)
+            valid_cells = cells.query("valid == 1")
+            if valid_cells.shape[0] > 0:
+                keep = valid_cells.index[0]
+            else:
+                keep = cells.index[0]
+            for idx, cell in cells.iterrows():
+                if idx != keep:
+                    indices_to_update.append(idx)
+        indices_to_update = np.array(indices_to_update)
+        new_labels = indices_to_update + 1
+        need_to_update = np.isin(new_labels, existing_labels)
+        new_labels[need_to_update] = np.max(existing_labels) + np.arange(1, np.sum(need_to_update.astype(int)) + 1)
+        self.cells_info.loc[indices_to_update, "label"] = new_labels
+        return 0
+
+    def fix_duplicated_labels_in_all_frames(self):
+        for frame in range(1, self.number_of_frames + 1):
+            self.fix_duplicated_label_cells_in_frame(frame)
         return 0
 
     def fix_mean_intensity(self, img, img_in_memory=False):
