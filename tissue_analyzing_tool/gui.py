@@ -298,8 +298,10 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.frame_line_edit.editingFinished.connect(self.frame_line_edit_changed)
         self.zo_spin_box.valueChanged.connect(self.zo_related_widget_changed)
         self.atoh_spin_box.valueChanged.connect(self.atoh_related_widget_changed)
-        self.zo_level_scroll_bar.valueChanged.connect(self.zo_related_widget_changed)
-        self.atoh_level_scroll_bar.valueChanged.connect(self.atoh_related_widget_changed)
+        self.min_zo_level_scroll_bar.valueChanged.connect(self.zo_related_widget_changed)
+        self.max_zo_level_scroll_bar.valueChanged.connect(self.zo_related_widget_changed)
+        self.min_atoh_level_scroll_bar.valueChanged.connect(self.atoh_related_widget_changed)
+        self.max_atoh_level_scroll_bar.valueChanged.connect(self.atoh_related_widget_changed)
         self.segment_frame_button.clicked.connect(self.segment_frame)
         self.analyze_frame_button.clicked.connect(self.find_cell_types_in_frame)
         self.open_file_pb.clicked.connect(self.open_file)
@@ -429,7 +431,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                     disp_img = self.img[frame_number - 1, zo_channel, 0, :, :].T
                 else:
                     disp_img = self.img[frame_number - 1, zo_channel, 0, :, :].compute().T
-                disp_img = disp_img * self.zo_level_scroll_bar.value() * (10 / max(np.average(disp_img),1))
+                min_zo_level = np.percentile(disp_img, self.min_zo_level_scroll_bar.value())
+                max_zo_level = np.percentile(disp_img, self.max_zo_level_scroll_bar.value())
+                disp_img = disp_img - min_zo_level
+                np.putmask(disp_img, disp_img < 0, 0)
+                disp_img = 255 * disp_img / (max_zo_level - min_zo_level)
                 np.putmask(disp_img, disp_img > 255, 255)
                 self.current_frame[1, :, :] = disp_img
             else:
@@ -444,7 +450,11 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                    disp_img = self.img[frame_number - 1, atoh_channel, 0, :, :].T
                 else:
                    disp_img = self.img[frame_number - 1, atoh_channel, 0, :, :].compute().T
-                disp_img = self.atoh_level_scroll_bar.value() * disp_img * (10 / max(np.average(disp_img),1))
+                min_atoh_level = np.percentile(disp_img,self.min_atoh_level_scroll_bar.value())
+                max_atoh_level = np.percentile(disp_img,self.max_atoh_level_scroll_bar.value())
+                disp_img = disp_img - min_atoh_level
+                np.putmask(disp_img, disp_img < 0, 0)
+                disp_img =255 * disp_img / (max_atoh_level - min_atoh_level)
                 np.putmask(disp_img, disp_img > 255, 255)
                 self.current_frame[2, :, :] = disp_img
             else:
@@ -843,8 +853,10 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.atoh_check_box.setEnabled(True)
             self.zo_spin_box.setEnabled(True)
             self.atoh_spin_box.setEnabled(True)
-            self.atoh_level_scroll_bar.setEnabled(True)
-            self.zo_level_scroll_bar.setEnabled(True)
+            self.min_atoh_level_scroll_bar.setEnabled(True)
+            self.max_atoh_level_scroll_bar.setEnabled(True)
+            self.min_zo_level_scroll_bar.setEnabled(True)
+            self.max_zo_level_scroll_bar.setEnabled(True)
             self.segment_frame_button.setEnabled(True)
             self.segmentation_threshold_spin_box.setEnabled(True)
             self.segmentation_kernel_std_spin_box.setEnabled(True)
@@ -864,8 +876,10 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.atoh_check_box.setEnabled(False)
             self.zo_spin_box.setEnabled(False)
             self.atoh_spin_box.setEnabled(False)
-            self.atoh_level_scroll_bar.setEnabled(False)
-            self.zo_level_scroll_bar.setEnabled(False)
+            self.min_atoh_level_scroll_bar.setEnabled(False)
+            self.max_atoh_level_scroll_bar.setEnabled(False)
+            self.min_zo_level_scroll_bar.setEnabled(False)
+            self.max_zo_level_scroll_bar.setEnabled(False)
             self.segment_frame_button.setEnabled(False)
             self.analyze_frame_button.setEnabled(False)
             self.segmentation_threshold_spin_box.setEnabled(False)
@@ -1672,7 +1686,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         if f_name:
             filename = os.path.basename(f_name)
             outfolder = os.path.dirname(f_name)
-            self.tissue_info.export_segmentation_to_tiff(outfolder, filename, arr_shape=(self.img_dimensions.Y, self.img_dimensions.X))
+            self.tissue_info.export_segmentation_and_cell_types_to_tiff(outfolder, filename)
 
     def frame_saving_done(self, msg):
         percentage_done = msg
