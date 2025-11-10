@@ -33,6 +33,7 @@ import json
 import trackpy
 from itertools import chain, combinations, filterfalse
 import pickle
+from ast import literal_eval
 
 MAX_SEG_LINE_LENGTH = 100
 CELL_INFO_SPECS = {"area": 0,
@@ -1722,7 +1723,7 @@ class Tissue(object):
         if cell_info is None:
             return None
         neighbors_from_type = np.zeros((cells.shape[0],))
-        if second_neighbors:
+        if second_neighbors: # TODO implement with fake types
             second_type = 'all' if cell_type == 'same' else cell_type
             second_order_neighbors = self.find_second_order_neighbors(frame, cells, second_type, positive_for_type=positive_for_type)
         index = 0
@@ -1735,8 +1736,8 @@ class Tissue(object):
                 neighbors = np.array(list(second_order_neighbors[index]))
             else:
                 neighbors = np.array(list(row.neighbors))
-            if (cell_type != 'all' and (not second_neighbors)) or cell_type == 'same':
-                neighbors_data = cell_info.loc[neighbors - 1, ["valid", "type", "empty_cell"]]
+            neighbors_data = cell_info.loc[neighbors - 1, ["valid", "type", "empty_cell"]]
+            if (cell_type not in ['all', 'valid', 'invalid'] and (not second_neighbors)) or cell_type == 'same':
                 type_index = self.type_name_to_index(look_for_type)
                 if positive_for_type:
                     valid_neighbors_from_the_right_type = neighbors_data.loc[
@@ -1747,8 +1748,14 @@ class Tissue(object):
                         ~is_positive_for_type(neighbors_data.type.to_numpy(), type_index)].query(
                         "valid == 1 and empty_cell == 0")
                 neighbors_from_type[index] = valid_neighbors_from_the_right_type.shape[0]
-            else:
+            elif cell_type == 'all':
                 neighbors_from_type[index] = neighbors.size
+            elif cell_type == 'valid':
+                valid_neighbors = neighbors_data.query("valid == 1 and empty_cell == 0")
+                neighbors_from_type[index] = valid_neighbors.shape[0]
+            elif cell_type == 'invalid':
+                invalid_neighbors = neighbors_data.query("valid == 0 and empty_cell == 0")
+                neighbors_from_type[index] = invalid_neighbors.shape[0]
             index += 1
         return neighbors_from_type.astype(np.int)
 
@@ -2072,19 +2079,22 @@ class Tissue(object):
             yield frame
         return 0
 
-    def fix_one_frame_tracking_using_local_drifts(self, start_frame, images, step_size=100, window_size=500,
-                                                  image_in_memory=False, shift_x=0, shift_y=0):
-
+    def fix_one_frame_tracking_using_local_drifts(self, start_frame, end_frame, images, step_size=100, window_size=700,
+                                                  image_in_memory=False, start_frame_pos=None, end_frame_pos=None):
         # find next valid frame
         next_frame = -1
         for frame in range(start_frame + 1, self.number_of_frames):
             if self.valid_frames[frame - 1] == 1:
                 next_frame = frame
                 break
-        if next_frame < 0:
+        if next_frame < 0 or next_frame != end_frame:
             return 0
-        if shift_x != 0 or shift_y != 0:
-            shift = (-shift_x, -shift_y)
+        if start_frame_pos is not None and end_frame_pos is not None:
+            start_centroid = self.get_cell_centroid_by_id(start_frame, self.get_cell_id_by_position(start_frame, start_frame_pos))
+            end_centroid = self.get_cell_centroid_by_id(end_frame, self.get_cell_id_by_position(end_frame, end_frame_pos))
+            shift_x = end_centroid[0] - start_centroid[0]
+            shift_y = end_centroid[1] - start_centroid[1]
+            shift = (shift_y, shift_x)
         elif self.stage_locations is not None:
             shift = (self.stage_locations.loc[next_frame - 1, ["z", "y", "x"]].to_numpy() -
                      self.stage_locations.loc[start_frame - 1, ["z", "y", "x"]].to_numpy()) / \
@@ -3438,6 +3448,16 @@ class Tissue(object):
             file_path = os.path.join(self.working_dir, "frame_%d_data.pkl" % frame_number)
             if os.path.isfile(file_path):
                 self.cells_info = pd.read_pickle(file_path)
+            elif os.path.isfile(file_path.replace("pkl", "h5")):
+                self.cells_info = pd.read_hdf(file_path.replace("pkl", "h5"), key="df")
+                def literal_eval_neighbors(x):
+                    if x == "set()":
+                        return set()
+                    else:
+                        x = x.replace("np.int64(", "")
+                        x = x.replace(")", "")
+                        return literal_eval(x)
+                self.cells_info["neighbors"] = self.cells_info["neighbors"].apply(lambda x: literal_eval_neighbors(x) if isinstance(x, str) else x)
             else:
                 self.cells_info = None
         self.cells_info_frame = frame_number
@@ -3451,8 +3471,12 @@ class Tissue(object):
         file_path = os.path.join(self.working_dir, "events_data.pkl")
         if os.path.isfile(file_path):
             self.events = pd.concat([self.events, pd.read_pickle(file_path)])
-            self.events['source'] = self.events['source'].fillna('manual')
-            self.events.drop_duplicates(inplace=True, ignore_index=True)
+        elif os.path.isfile(file_path.replace("pkl", "h5")):
+            self.events = pd.read_hdf(file_path.replace("pkl", "h5"))
+        else:
+            return self.events
+        self.events['source'] = self.events['source'].fillna('manual')
+        self.events.drop_duplicates(inplace=True, ignore_index=True)
         return self.events
 
     def load_drifts(self):
@@ -3480,6 +3504,8 @@ class Tissue(object):
         file_path = os.path.join(directory, file_name)
         if os.path.isfile(file_path):
             return pd.DataFrame(pd.read_pickle(file_path))
+        elif os.path.isfile(file_path.replace("pkl", "h5")):
+            return pd.DataFrame(pd.read_hdf(file_path.replace("pkl", "h5"), key="df"))
         else:
             return None
 
@@ -3734,6 +3760,8 @@ class Tissue(object):
             file_path = os.path.join(self.working_dir, "frame_%d_data.pkl" % frame)
             if os.path.isfile(file_path):
                 self.cell_info_list[index] = pd.read_pickle(file_path)
+            elif os.path.isfile(file_path.replace("pkl", "h5")):
+                self.cell_info_list[index] = pd.read_hdf(file_path.replace("pkl", "h5"), key="df")
             else:
                 self.cell_info_list[index] = None
         return 0
@@ -3923,8 +3951,11 @@ class Tissue(object):
             if self.is_frame_valid(frame):
                 labels = self.get_trackking_labels(frame)
                 out[frame - 1, 0, 0, :,:] = labels.astype("uint16")
-                cell_types = self.get_cell_types(frame)
+                cell_types = np.copy(self.get_cell_types(frame))
+                cell_types[cell_types == 0] = 2
+                cell_types[cell_types == 255] = 0
                 out[frame - 1, 1, 0, :, :] = cell_types.astype("uint16")
+
         save_tiff(os.path.join(outfolder, filename + '.tif'),out , axes="TCZYX", data_type="uint16")
         return 0
 
@@ -3934,7 +3965,7 @@ class Tissue(object):
         for frame in range(1, self.number_of_frames + 1):
             if self.is_frame_valid(frame):
                 labels = self.get_labels(frame)
-                out[frame - 1, 0, 0, :, :] = labels.astype("uint16").T
+                out[frame - 1, 0, 0, :, :] = labels.astype("uint16")
         save_tiff(os.path.join(outfolder, filename + '.tif'), out, axes="TCZYX", data_type="uint16")
         return 0
 
@@ -3969,6 +4000,37 @@ class Tissue(object):
             if (output.T != output).all():
                 print("Error, Matrix is not symmetric")
         return output
+
+    def calc_recoil_speed_from_circular_ablation(self, shape_name, first_frame, last_frame):
+        last_frame_data = self.get_cells_info(last_frame)
+        last_frame_cells = self.get_valid_non_edge_cells(last_frame,last_frame_data)
+        circle_data = self.shape_fitting_results[last_frame - 1][shape_name]
+        inner_cells = self.get_cells_inside_a_circle(last_frame_cells,
+                                                     (circle_data["x_center"][0], circle_data["y_center"][0]),
+                                                     circle_data["radius"][0])[["cx", "cy", "label", "neighbors", "type", "valid", "empty_cell"]].copy()
+        inner_cells["to_center_x"] = inner_cells.eval("%f - cx" % circle_data["x_center"][0])
+        inner_cells["to_center_y"] = inner_cells.eval("%f - cy" % circle_data["y_center"][0])
+        inner_cells["dist_to_center"] = inner_cells.eval("(to_center_x ** 2 + to_center_y ** 2) ** 0.5")
+        first_frame_data = self.get_cells_info(first_frame)
+        first_frame_cells = self.get_valid_non_edge_cells(first_frame, first_frame_data)[["cx", "cy", "label"]]
+        inner_cells = inner_cells.merge(first_frame_cells, on="label", how="left", suffixes=("_last", "_first"))
+        inner_cells = inner_cells.dropna(axis=0)
+        inner_cells["movement_x"] = inner_cells.eval("cx_last - cx_first")
+        inner_cells["movement_y"] = inner_cells.eval("cy_last - cy_first")
+        # fix inner circle drift
+        average_movement_x = np.average(inner_cells["movement_x"])
+        average_movement_y = np.average(inner_cells["movement_y"])
+        inner_cells["movement_x"] = inner_cells.eval("movement_x - %f" % average_movement_x)
+        inner_cells["movement_y"] = inner_cells.eval("movement_y - %f" % average_movement_y)
+        inner_cells["radial_movement"] = inner_cells.eval(
+            "(movement_x * to_center_x + movement_y * to_center_y) / dist_to_center")
+        n_invalid_neighbors = self.calculate_n_neighbors_from_type(last_frame, inner_cells, cell_type='invalid')
+        outermost_inner_cells = inner_cells[n_invalid_neighbors > 0]
+        outermost_inner_cells.to_pickle(os.path.join(os.path.dirname(self.data_path), "recoil_data.pkl"))
+        return outermost_inner_cells
+
+
+
 
     def save_frame_data_for_simulation(self, frame):
         movie_name = os.path.basename(self.data_path).replace(".tif", "")
