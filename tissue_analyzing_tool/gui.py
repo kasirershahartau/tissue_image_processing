@@ -260,6 +260,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.event_end_frame = None
         self.event_start_position = None
         self.event_end_position = None
+        self.fix_tracking_stage = 0
+        self.fix_tracking_start_frame = None
+        self.first_frame_position = None
         self.working_directory = WORKING_DIR
         self.epyseg_dir = None
         self.epyseg = None
@@ -356,6 +359,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.event_type_combo_box.addItems(tissue_info.Tissue.ADDITIONAL_EVENT_STATISTICS_OPTIONS)
         self.plot_event_statistics_botton.clicked.connect(self.plot_event_statistics)
         self.add_type_button.clicked.connect(self.add_type)
+        self.fix_one_frame_tracking_button.clicked.connect(self.fix_one_frame_tracking)
+        self.abort_fix_one_frame_tracking_button.clicked.connect(self.abort_fix_one_frame_tracking)
 
     def open_file(self):
         global img
@@ -433,6 +438,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                     disp_img = self.img[frame_number - 1, zo_channel, 0, :, :].compute().T
                 min_zo_level = np.percentile(disp_img, self.min_zo_level_scroll_bar.value())
                 max_zo_level = np.percentile(disp_img, self.max_zo_level_scroll_bar.value())
+                if max_zo_level == min_zo_level:
+                    max_zo_level += 1
                 disp_img = disp_img - min_zo_level
                 np.putmask(disp_img, disp_img < 0, 0)
                 disp_img = 255 * disp_img / (max_zo_level - min_zo_level)
@@ -452,6 +459,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                    disp_img = self.img[frame_number - 1, atoh_channel, 0, :, :].compute().T
                 min_atoh_level = np.percentile(disp_img,self.min_atoh_level_scroll_bar.value())
                 max_atoh_level = np.percentile(disp_img,self.max_atoh_level_scroll_bar.value())
+                if max_atoh_level == min_atoh_level:
+                    max_atoh_level += 1
                 disp_img = disp_img - min_atoh_level
                 np.putmask(disp_img, disp_img < 0, 0)
                 disp_img =255 * disp_img / (max_atoh_level - min_atoh_level)
@@ -678,6 +687,40 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.display_frame()
         return 0
 
+    def fix_one_frame_tracking(self, pos=None):
+        self.fix_one_frame_tracking_button.setEnabled(False)
+        self.fix_one_frame_tracking_button.hide()
+        self.abort_fix_one_frame_tracking_button.setEnabled(True)
+        self.abort_fix_one_frame_tracking_button.show()
+        if self.fix_tracking_stage == 0:
+            message_box = QtWidgets.QMessageBox
+            message_box.about(self, '', 'Go to the first frame\nand click a cell that you can manually track to the next frame')
+            self.fix_tracking_stage = 1
+        elif self.fix_tracking_stage == 1:
+            self.first_frame_position = pos
+            self.fix_tracking_start_frame = self.frame_slider.value()
+            message_box = QtWidgets.QMessageBox
+            message_box.about(self, '',
+                              'Go to the next_valid frame\nand click on the same cell')
+            self.fix_tracking_stage = 2
+        elif self.fix_tracking_stage == 2:
+            fix_tracking_end_frame = self.frame_slider.value()
+            zo_channel = self.zo_spin_box.value()
+            if zo_channel >= self.number_of_channels:
+                zo_channel = self.fake_channels[zo_channel - self.number_of_channels]
+            self.tissue_info.fix_one_frame_tracking_using_local_drifts(self.fix_tracking_start_frame, fix_tracking_end_frame,
+                                                                       self.img[:, zo_channel, 0, :, :], image_in_memory=self.img_in_memory,
+                                                                       start_frame_pos=self.first_frame_position,
+                                                                       end_frame_pos=pos)
+            self.fix_tracking_stage = 0
+            self.fix_one_frame_tracking_button.setEnabled(True)
+            self.fix_one_frame_tracking_button.show()
+            self.abort_fix_one_frame_tracking_button.setEnabled(False)
+            self.abort_fix_one_frame_tracking_button.hide()
+            self.analysis_changed = True
+            self.display_frame()
+        return 0
+
     def add_type(self):
         dialog = AddTypeDialog(self)
         if dialog.exec():
@@ -696,6 +739,14 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.mark_event_button.show()
         self.delete_events_button.setEnabled(True)
         self.mark_event_combo_box.setEnabled(True)
+        return 0
+
+    def abort_fix_one_frame_tracking(self):
+        self.fix_tracking_stage = 0
+        self.abort_fix_one_frame_traking_button.setEnabled(False)
+        self.abort_fix_one_frame_traking_button.hide()
+        self.fix_one_frame_tracking_button.setEnabled(True)
+        self.fix_one_frame_tracking_button.show()
         return 0
 
     def delete_events(self):
@@ -763,6 +814,8 @@ class FormImageProcessing(QtWidgets.QMainWindow):
                 self.analysis_changed = True
                 self.correct_tracking(off=True)
                 self.display_frame()
+            elif self.fix_tracking_stage > 0:
+                self.fix_one_frame_tracking((pos.x(), pos.y()))
             elif self.mark_event_stage > 0:
                 self.mark_event((pos.x(), pos.y()))
             elif self.fitting_stage > 0:
@@ -944,7 +997,9 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.plot_event_statistics_botton.setEnabled(False)
             self.event_statistics_window_radius_x_data_label_spin_box.setEnabled(False)
             self.event_statistics_window_radius_y_data_label_spin_box.setEnabled(False)
-
+            self.fix_one_frame_tracking_button.setEnabled(False)
+            self.abort_fix_one_frame_tracking_button.setEnabled(False)
+            self.abort_fix_one_frame_tracking_button.hide()
         if segmentation:
             self.show_segmentation_check_box.setEnabled(True)
             self.save_segmentation_button.setEnabled(True)
@@ -1035,6 +1090,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.event_statistics_window_radius_x_data_label_spin_box.setEnabled(True)
             self.event_statistics_window_radius_y_data_label_spin_box.setEnabled(True)
             self.export_to_tiff_button.setEnabled(True)
+            self.fix_one_frame_tracking_button.setEnabled(True)
         else:
             self.show_cell_types_check_box.setEnabled(False)
             self.show_cell_tracking_check_box.setEnabled(False)
@@ -1070,6 +1126,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
             self.abort_event_marking_button.hide()
             self.choose_marking_target_combo_box.removeItem(self.choose_marking_target_combo_box.findData("Cells"))
             self.export_to_tiff_button.setEnabled(False)
+            self.fix_one_frame_tracking_button.setEnabled(False)
 
     def plot_single_cell_data(self):
         if self.plot_single_cell_data_combo_box.currentIndex() < 0:
@@ -1771,7 +1828,7 @@ class SegmentAllThread(QtCore.QThread):
         self.img_in_memory = img_in_memory
 
     def __del__(self):
-        self.wait()
+        self.exit(0)
 
     def run(self):
         done_frames = 0
@@ -1817,7 +1874,7 @@ class CellTypesThread(QtCore.QThread):
         self.img_in_memory = img_in_memory
 
     def __del__(self):
-        self.wait()
+        self.exit(0)
 
     def run(self):
         done_frames = 0
@@ -1855,7 +1912,7 @@ class TrackingThread(QtCore.QThread):
         self.final_frame = final_frame
 
     def __del__(self):
-        self.wait()
+        self.exit(0)
 
     def run(self):
         tracking_generator = self.tissue_info.track_cells_iterator_with_trackpy(initial_frame=self.initial_frame,
@@ -1885,7 +1942,7 @@ class EventFindingThread(QtCore.QThread):
         self.final_frame = final_frame
 
     def __del__(self):
-        self.wait()
+        self.exit(0)
 
     def run(self):
         event_finding_generator = self.tissue_info.find_events_iterator(initial_frame=self.initial_frame,
@@ -1912,7 +1969,7 @@ class SaveDataThread(QtCore.QThread):
         self.path = file_path
 
     def __del__(self):
-        self.wait()
+        self.exit(0)
 
     def run(self):
         for percent_done in self.tissue_info.save(self.path):
@@ -1933,7 +1990,7 @@ class LoadDataThread(QtCore.QThread):
         self.type_name = type_name
 
     def __del__(self):
-        self.wait()
+        self.exit(0)
 
     def run(self):
         for percent_done in self.tissue_info.load(self.path, type_name=self.type_name):
@@ -1957,7 +2014,7 @@ class SaveImagesThread(QtCore.QThread):
         self.img_in_memory = img_in_memory
 
     def __del__(self):
-        self.wait()
+        self.exit(0)
 
     def run(self):
         for frame in self.frames:
@@ -1988,7 +2045,7 @@ class UnetSegmentationThread(QtCore.QThread):
         self.img_in_memory = img_in_memory
 
     def __del__(self):
-        self.wait()
+        self.exit(0)
 
     def run(self):
         done_frames = 0
@@ -2044,7 +2101,7 @@ class ExternalSegmentationThread(QtCore.QThread):
     def __del__(self):
         self.observer.stop()
         self.observer.join()
-        self.wait()
+        self.exit(0)
 
     def load_file(self, path):
         file_name = os.path.basename(path)

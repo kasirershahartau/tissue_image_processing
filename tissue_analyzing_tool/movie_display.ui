@@ -1883,6 +1883,34 @@ memory</string>
      <string>max</string>
     </property>
    </widget>
+   <widget class="QPushButton" name="fix_one_frame_tracking_button">
+    <property name="geometry">
+     <rect>
+      <x>1290</x>
+      <y>450</y>
+      <width>131</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>fix one frame tracking</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="abort_fix_one_frame_tracking_button">
+    <property name="geometry">
+     <rect>
+      <x>1460</x>
+      <y>450</y>
+      <width>101</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>cancel fix tracking</string>
+    </property>
+   </widget>
+   <zorder>abort_fix_one_frame_tracking_button</zorder>
+   <zorder>fix_one_frame_tracking_button</zorder>
    <zorder>track_cells_button</zorder>
    <zorder>open_file_pb</zorder>
    <zorder>zo_check_box</zorder>
