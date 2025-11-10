@@ -1,6 +1,11 @@
 import numpy as np
+import pandas as pd
 import scipy as sp
 from matplotlib import pyplot as plt
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
+from statsmodels.genmod.bayes_mixed_glm import PoissonBayesMixedGLM
+from scipy.stats import norm
 
 ANDERSON_THRESHOLD = 0.05
 DAGOSTINO_THRESHOLD = 0.05
@@ -9,12 +14,12 @@ KOLMOGOROV_THRESHOLD = 0.05
 F_THRESHOLD = 0.05
 
 class TwoSampleCompare:
-    def __init__(self, sample1, sample2, sample1_label='sample1', sample2_label='sample2', continouse=True):
+    def __init__(self, sample1, sample2, sample1_label='sample1', sample2_label='sample2', continues=True):
         self.sample1 = sample1
         self.sample2 = sample2
         self.sample1_label = sample1_label
         self.sample2_label = sample2_label
-        self.continues = continouse
+        self.continues = continues
 
     @staticmethod
     def anderson_test(sample):
@@ -50,11 +55,14 @@ class TwoSampleCompare:
         dagostino2 = self.dagostino_test(self.sample2)
         print("%s  dagostino test p-val: %.3f" % (self.sample2_label, dagostino2))
         dagostino_passed = dagostino1 > DAGOSTINO_THRESHOLD and dagostino2 > DAGOSTINO_THRESHOLD
-        shapiro1 = self.shapiro_test(self.sample1)
-        print("%s  shapiro test p-val: %.3f" % (self.sample1_label, shapiro1))
-        shapiro2 = self.shapiro_test(self.sample2)
-        print("%s  shapiro test p-val: %.3f" % (self.sample2_label, shapiro2))
-        shapiro_passed = shapiro1 > SHAPIRO_THRESHOLD and shapiro2 > SHAPIRO_THRESHOLD
+        if self.sample1.size > 2 and self.sample2.size > 2:
+            shapiro1 = self.shapiro_test(self.sample1)
+            print("%s  shapiro test p-val: %.3f" % (self.sample1_label, shapiro1))
+            shapiro2 = self.shapiro_test(self.sample2)
+            print("%s  shapiro test p-val: %.3f" % (self.sample2_label, shapiro2))
+            shapiro_passed = shapiro1 > SHAPIRO_THRESHOLD and shapiro2 > SHAPIRO_THRESHOLD
+        else:
+            shapiro_passed = False
         kolmogorov1 = self.kolmogorov_test(self.sample1)
         print("%s  kolmogorov test p-val: %.3f" % (self.sample1_label, kolmogorov1))
         kolmogorov2 = self.kolmogorov_test(self.sample2)
@@ -90,6 +98,76 @@ class TwoSampleCompare:
             statistics, pvalue = sp.stats.ttest_ind(self.sample1, self.sample2, equal_var=equal_variances, nan_policy='omit')
             print("Using %s test: statistics - %.3f, p-value - %.3f" % (test, statistics, pvalue))
         return pvalue
+
+class HierarchicalTwoSamplesCompare:
+    """ Comparing two samples with hierarchical structure (e.g. different cells in the same tissue for a few biological
+     repeats"""
+
+    def __init__(self, data1, data2, continues=True):
+        """
+        data1, data2 - DataCollector instances where each file is a biological repeat
+        """
+        self.data = self.rearrange_data_into_table(data1, data2)
+        self.continues = continues
+
+    @staticmethod
+    def rearrange_data_into_table(data1, data2):
+        df = []
+        repeat_index = 1
+        for data_index, data in enumerate([data1, data2]):
+            for biological_repeat in range(data.get_number_of_biological_repeats()):
+                for measurement in data.get_partial_sample(biological_repeat):
+                    df.append({
+                        'measurement': measurement,
+                        'fixed_effect_label': data_index,
+                        'biological_repeat': f"R{repeat_index}"
+                    })
+                repeat_index += 1
+        df = pd.DataFrame(df)
+        df['fixed_effect_label'] = df['fixed_effect_label'].astype('category')
+        df['biological_repeat'] = df['biological_repeat'].astype('category')
+        return df
+
+    def fit_poissonian_GLMM(self):
+        # Define model matrices
+        endog = self.data['measurement']
+        exog = sm.add_constant(self.data['fixed_effect_label'])
+        exog_re = pd.get_dummies(self.data['biological_repeat'], drop_first=False)  # random effect
+        ident = list(range(exog_re.shape[1]))
+
+        # Fit Poisson GLMM
+        model = PoissonBayesMixedGLM(endog, exog, exog_re, ident)
+        result = model.fit_vb()
+        return result
+
+    def fit_LMM(self):
+        model = smf.mixedlm("measurement ~ fixed_effect_label", self.data, groups=self.data["biological_repeat"])
+        result = model.fit()
+        return result
+
+    @staticmethod
+    def calc_pval_from_mean_and_sd(mean, sd):
+        z_val = mean/sd
+        p_val = 2 * (1 - norm.cdf(np.abs(z_val)))
+        return p_val
+
+    def compare_samples(self):
+        try:
+            if self.continues:
+                res = self.fit_LMM()
+                p_val = res.pvalues["fixed_effect_label[T.1]"]
+            else:
+                res = self.fit_poissonian_GLMM()
+                fixed_effect_mean = res.fe_mean[1]
+                fixed_effect_sd = res.fe_sd[1]
+                p_val = self.calc_pval_from_mean_and_sd(fixed_effect_mean, fixed_effect_sd)
+            print(res.summary())
+        except np.linalg.LinAlgError:
+            print("Didn't converge")
+            return 1
+        return p_val
+
+
 
 
 def barplot_annotate_brackets(num1, num2, data, center, height, yerr=None, dh=.05, barh=.05, fs=None, maxasterix=None, ax=None):
@@ -131,7 +209,7 @@ def barplot_annotate_brackets(num1, num2, data, center, height, yerr=None, dh=.0
     lx, ly = center[num1], height[num1]
     rx, ry = center[num2], height[num2]
 
-    if yerr:
+    if yerr.size:
         ly += yerr[num1]
         ry += yerr[num2]
 
@@ -154,14 +232,8 @@ def barplot_annotate_brackets(num1, num2, data, center, height, yerr=None, dh=.0
     ax.text(*mid, text, **kwargs)
     return (y+barh)/(ax_y1 - ax_y0)
 
-
-def compare_and_plot_samples(samples_list, labels, pairs_to_compare, continues=True, plot_style="violin", color='white',
-                             edge_color='grey', fig=None, ax=None, show_statistics=False, show_N=False):
-
-    # Statistical analysis for each sample
-    averages = [np.average(sample) for sample in samples_list]
-    sample_sizes = [sample.size for sample in samples_list]
-    standard_errors = [np.std(sample)/np.sqrt(sample.size) for sample in samples_list]
+def compare_and_plot_samples(samples_list, pairs_to_compare, continues=True, plot_style="violin", color='white',
+                             edge_color='grey', fig=None, ax=None, show_statistics=False, show_N=False, hirarchical=False):
 
     # Statistical analysis for each pair
     pvalues = np.zeros((len(pairs_to_compare),))
@@ -171,9 +243,19 @@ def compare_and_plot_samples(samples_list, labels, pairs_to_compare, continues=T
             continues_sample = continues[sample1_index] and continues[sample2_index]
         else:
             continues_sample = continues
-        analyzer = TwoSampleCompare(samples_list[sample1_index], samples_list[sample2_index],
-                                    labels[sample1_index], labels[sample2_index], continouse=continues_sample)
+        if hirarchical:
+            analyzer = HierarchicalTwoSamplesCompare(samples_list[sample1_index], samples_list[sample2_index],
+                                                     continues=continues_sample)
+        else:
+            analyzer = TwoSampleCompare(samples_list[sample1_index].get_sample(), samples_list[sample2_index].get_sample(),
+                                        samples_list[sample1_index].name, samples_list[sample2_index].name,
+                                        continues=continues_sample)
         pvalues[index] = analyzer.compare_samples()
+
+    averages = np.array([sample.get_average() for sample in samples_list])
+    standard_errors = np.array([sample.get_se() for sample in samples_list])
+    sample_sizes = np.array([sample.get_number_of_data_points() for sample in samples_list])
+    labels = [sample.name for sample in samples_list]
 
     # Creating box plot
     w = 0.6  # bar width
@@ -189,16 +271,17 @@ def compare_and_plot_samples(samples_list, labels, pairs_to_compare, continues=T
     if plot_style == "bar":
         ax.bar(x,
                height=averages,
-               yerr=standard_errors,  # error bars
                capsize=12,  # error bar cap width in points
                width=w,  # bar width
                tick_label=labels,
                color=color,  # face color transparent
                edgecolor=edge_color,
                )
-        scatter = False
+        for pos, y, err, color in zip(x,averages, standard_errors, edge_color):
+            ax.errorbar(pos, y, err, lw=2, capsize=15, capthick=2, color=color)
+        scatter = True
     elif plot_style == "box":
-        parts = ax.boxplot(samples_list,
+        parts = ax.boxplot([s.get_sample() for s in samples_list],
                    vert=True,
                    showmeans=True,
                    labels=labels,
@@ -213,7 +296,7 @@ def compare_and_plot_samples(samples_list, labels, pairs_to_compare, continues=T
         errors = False
 
     elif plot_style == "violin":
-        parts = ax.violinplot(samples_list,
+        parts = ax.violinplot([s.get_sample() for s in samples_list],
                       vert=True,
                       showmeans=False,
                       showextrema=False,
@@ -225,6 +308,26 @@ def compare_and_plot_samples(samples_list, labels, pairs_to_compare, continues=T
         for pc, c, ec in zip(parts['bodies'], color, edge_color):
             pc.set_facecolor(c)
             pc.set_edgecolor(ec)
+    elif plot_style == "histogram":
+        y_lim = 0
+        for i, dataset in enumerate([s.get_sample() for s in samples_list]):
+            hist, bin_edges = np.histogram(dataset, bins=(np.arange(np.max(dataset) + 2) - 0.5))
+            norm_hist = hist/(1.5*np.max(hist))
+            bottom = bin_edges[:-1] + 0.5
+            heights = np.ones((bin_edges.size - 1))
+            lefts = i - 0.5*norm_hist
+            y_lim = max(y_lim, np.max(dataset))
+            ax.barh(bottom, norm_hist, height=heights, left=lefts, color=color[i], edgecolor=edge_color[i], linewidth=1, alpha=0.6)
+            # for j, val in enumerate(norm_hist):
+            #     ax.text(i, bin_edges[j] + 0.5,
+            #             "%f.1"%(100*(val/np.sum(norm_hist))),
+            #             horizontalalignment='center'
+            #             )
+        errors = True
+
+        ax.set_xlim([-0.4, len(samples_list) - 0.6])
+        ax.set_ylim([-1, y_lim+0.6])
+
     if show_N:
         for index in range(len(samples_list)):
             ax.text(x[index],
@@ -236,23 +339,27 @@ def compare_and_plot_samples(samples_list, labels, pairs_to_compare, continues=T
         # Adding scattered points on top of the bars
         for i in range(len(x)):
             # distribute scatter randomly across whole width of bar
-            ax.scatter(x[i] + np.random.random(sample_sizes[i]) * w/4 - w / 8, samples_list[i], color=(0., 0.5, 0.5, 0.5))
+            ax.scatter(x[i] + np.random.random(sample_sizes[i]) * w - w / 2, samples_list[i].get_sample(), color="black", marker=".")
     if errors:
-        ax.errorbar(x,
-                    averages,
-                    yerr=standard_errors,
-                    fmt="om",
-                    capsize=20
+        for i in range(len(x)):
+            ax.errorbar(x[i],
+                    averages[i],
+                    yerr=standard_errors[i],
+                    color="black",
+                    marker="*",
+                    markersize=10,
+                    capsize=10,
+                    elinewidth=2
                     )
     # Setting plot y-limits
-    data_max = np.max(np.array([np.max(sample) for sample in samples_list]))
-    data_min = np.min(np.array([np.min(sample) for sample in samples_list]))
+    data_max = np.max(np.array([sample.get_max() for sample in samples_list]))
+    data_min = np.min(np.array([sample.get_min() for sample in samples_list]))
     max_error = np.max(np.array([averages[i] + standard_errors[i] for i in range(len(samples_list))]))
     min_error = np.min(np.array([averages[i] - standard_errors[i] for i in range(len(samples_list))]))
     low_lim = min(min_error, data_min)
     high_lim = max(max_error, data_max)
     addition = (high_lim - low_lim) * 0.1
-    ax.set_ylim([low_lim - addition, high_lim + addition])
+    # ax.set_ylim([low_lim - addition, high_lim + addition])
 
     # Adding p-value brackets for each compared pair
     if show_statistics:

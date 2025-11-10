@@ -8,6 +8,8 @@ import pandas as pd
 import os, sys
 import subprocess
 import seaborn as sns
+from tensorflow.python.ops.numpy_ops import append
+
 from statistical_analysis import compare_and_plot_samples
 
 # Change before running
@@ -15,29 +17,64 @@ E17_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-11-11-E
                "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-12-23_E17.5_utricle_atoh_zo\\position4-analysis",
                "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2021-11-11-E17.5-utricle\\position4-analysis\\"]
 P0_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-07-31_P0\\position3-analysis\\",
-              "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-07-31_P0\\position2-analysis\\"]
+              "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-07-31_P0\\position2-analysis\\",
+              "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2024-08-04_P0 Utricle_Zo1GFP_atoh1 mCherry\\position2-analysis\\"]
 Rho_inhibition_E17_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-12-01_E17.5_utricle_rho_inhibition\\position2_event_statistics\\"]
 Rho_inhibition_P0_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2023-06-25_P0_atoh_zo_rock_inhibitor\\position3_event_statistics\\"]
-
+E17_ablation_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-01-20-E17.5_ablation\\position3-analysis\\"]
+P0_ablation_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-06-05_P0_utricle_ablation\\position2-analysis\\Event statistics"]
+E17_DAPT_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-01-06-E17.5_DAPT\\position2-results"]
+P0_DAPT_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-02-20_P0_DAPT"]
+E19_folders = ["D:\\Kasirer\\experimental_results\\fixed\Vestibule\\2025-03-30_E19.5_utricle\\position1-analysis",
+               "D:\\Kasirer\\experimental_results\\fixed\Vestibule\\2025-03-30_E19.5_utricle\\position2-analysis",
+               "D:\\Kasirer\\experimental_results\\fixed\Vestibule\\2025-04-06_E19.5_utricle\\position1-analysis",
+               "D:\\Kasirer\\experimental_results\\fixed\Vestibule\\2025-04-06_E19.5_utricle\\position2-analysis",
+               "D:\\Kasirer\\experimental_results\\fixed\Vestibule\\2025-04-06_E19.5_utricle\\position3-analysis"]
+E17_circular_ablation_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-06-19_E17.5_utricle_circular_ablation\\utricle1",
+                                 "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-06-19_E17.5_utricle_circular_ablation\\utricle2",
+                                 "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-06-19_E17.5_utricle_circular_ablation\\utricle3",
+                                 "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-09-11_E17.5_utricle_circular_ablation\\utricle1",
+                                 "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-09-11_E17.5_utricle_circular_ablation\\utricle2",
+                                 "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-09-11_E17.5_utricle_circular_ablation\\utricle3"]
+P0_circular_ablation_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-07-27_P0_circular_ablation\\utricle1",
+                                "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-07-27_P0_circular_ablation\\utricle3",
+                                "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-08-24_P0_utricle_circular_ablation\\utricle1",
+                                "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-08-24_P0_utricle_circular_ablation\\utricle2",
+                                "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-08-24_P0_utricle_circular_ablation\\utricle3",
+                                "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-09-14_P0_utricle_circular_ablation\\utricle1"]
 class DataCollector:
-    def __init__(self, name, folders, file_names, data_labels, normalization=1):
+    def __init__(self, name, folders=[], file_names=[], data_labels=[], normalization=1, sample=None):
         self.name = name
-        self.files = [os.path.join(folder, file_name) for folder, file_name in zip(folders, file_names)]
-        self.labels = data_labels
-        self.normalization = normalization
-        self.sample = self.collect()
-
+        if sample is not None:
+            self.sample = sample/normalization
+        else:
+            self.files = [os.path.join(folder, file_name) for folder, file_name in zip(folders, file_names)]
+            self.labels = data_labels
+            self.normalization = normalization
+            self.initial_batch_indices = None
+            self.sample = self.collect()
 
     def collect(self):
         s = np.empty(0)
+        self.initial_batch_indices = []
         for f, l in zip(self.files, self.labels):
             all_data = pd.read_pickle(f)
             relevant_data = all_data[l]
+            self.initial_batch_indices.append(s.size)
             s = np.hstack((s, relevant_data.to_numpy() / self.normalization))
+        self.initial_batch_indices = np.array(self.initial_batch_indices)
         return s[~np.isnan(s)]
+
+    def get_name(self):
+        return self.name
 
     def get_sample(self):
         return self.sample
+
+    def get_partial_sample(self, file_index):
+        start = self.initial_batch_indices[file_index]
+        end = self.sample.size if file_index + 1 >= self.initial_batch_indices.size  else self.initial_batch_indices[file_index + 1]
+        return self.sample[start:end]
 
     def get_number_of_data_points(self):
         return self.sample.size
@@ -45,7 +82,7 @@ class DataCollector:
     def get_average(self):
         return np.average(self.sample)
 
-    def get_number_of_biological_repeates(self):
+    def get_number_of_biological_repeats(self):
         return len(self.files)
 
     def get_std(self):
@@ -59,6 +96,8 @@ class DataCollector:
 
     def get_min(self):
         return np.min(self.sample)
+
+
 
 def combine_frame_compare_results():
     # Contact length with SC
@@ -107,21 +146,24 @@ def combine_frame_compare_results():
 
 from scipy.optimize import curve_fit
 
-ellipse_folder = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-02-24_E17.5_circular_ablation"
-def fit_circular_ablation_results(folder, initial_radius):
+ellipse_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-02-24_E17.5_circular_ablation",
+                   "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-02-20_P0_circular_ablation\\60um"]
+# ellipse_folder = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-02-06-P0_circular_ablation\\50um"
+# ellipse_folder = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-05-13_P0_circular_ablation"
+def fit_circular_ablation_results_to_ellipse(folder, initial_radius):
     font_size = 40
-    major_axis_data = pd.read_pickle(os.path.join(folder,"inner_elipse_major_axis_data"))
-    minor_axis_data = pd.read_pickle(os.path.join(folder, "inner_elipse_minor_axis_data"))
-    eccentricity_data = pd.read_pickle(os.path.join(folder, "inner_elipse_eccentricity_data"))
-    time = np.array([0, 5, 10, 15, 20, 25])
-    time_fit = np.linspace(0,25,300)
+    major_axis_data = pd.read_pickle(os.path.join(folder,"inner_ellipse_major_axis_data"))
+    minor_axis_data = pd.read_pickle(os.path.join(folder, "inner_ellipse_minor_axis_data"))
+    eccentricity_data = pd.read_pickle(os.path.join(folder, "inner_ellipse_eccentricity_data"))
+
     eccentricity = eccentricity_data["inner ellipse:eccentricity average"]
     eccentricity_err = eccentricity_data["inner ellipse:eccentricity se"]
     major = major_axis_data["inner ellipse:semi-major average"]*0.1
     major_err = major_axis_data["inner ellipse:semi-major se"]*0.1
     minor = minor_axis_data["inner ellipse:semi-minor average"]*0.1
     minor_err = minor_axis_data["inner ellipse:semi-minor se"]*0.1
-
+    time = np.arange(start=0, stop=5*(eccentricity.size+1), step=5)
+    time_fit = np.linspace(0, 5*(eccentricity.size+1), 300)
     minor = np.hstack([initial_radius, minor])
     major = np.hstack([initial_radius, major])
     eccentricity = np.hstack([0, eccentricity])
@@ -129,21 +171,22 @@ def fit_circular_ablation_results(folder, initial_radius):
     major_err = np.hstack([0.1, major_err])
     eccentricity_err = np.hstack([0.001, eccentricity_err])
 
-    popt_major, pcov_major = curve_fit(lambda t, a: a, time[:-1], major[:-1], p0=[60],
-                                       sigma=major_err[:-1])
-    popt_minor, pcov_minor = curve_fit(lambda t, a, b: (initial_radius - a) * np.exp(-b * t) + a, time[:-1], minor[:-1], p0=[50, 0.5],
-                                       sigma=minor_err[:-1])
-    popt_eccentricity, pcov_eccentricity = curve_fit(lambda t, a, b:  a * (1 - np.exp(-b * t)), time[:-1], eccentricity[:-1], p0=[0.075, 0.5],
-                                       sigma=eccentricity_err[:-1])
+    popt_major, pcov_major = curve_fit(lambda t, a, b: (initial_radius - a) * np.exp(-b * t) + a, time, major, p0=[45, 0],
+                                       sigma=major_err)
+    popt_minor, pcov_minor = curve_fit(lambda t, a, b: (initial_radius - a) * np.exp(-b * t) + a, time, minor, p0=[45, 0],
+                                       sigma=minor_err)
+    popt_eccentricity, pcov_eccentricity = curve_fit(lambda t, a, b:  a * (1 - np.exp(-b * t)) , time, eccentricity, p0=[0.075, 0],
+                                       sigma=eccentricity_err)
     plt.rcParams.update({'font.size': font_size})
     fig1, ax1 = plt.subplots(figsize=(10,10))
 
     ax1.errorbar(time, major, yerr=major_err, fmt="*", markersize=30, label="Data", linewidth=6)
-    ax1.plot(time, popt_major[0]*np.ones(time.shape), label="Fit", linewidth=6)
+    ax1.plot(time_fit, (initial_radius - popt_major[0]) * np.exp(-popt_major[1] * time_fit) + popt_major[0], label="Fit", linewidth=6)
     ax1.set_xlabel("Time (minutes)", fontsize=font_size)
     ax1.set_ylabel("Major axis (microns)", fontsize=font_size)
     ax1.legend(loc="upper left")
-    print("Major axis results: constant=%f+-%f" % (popt_major[0], np.sqrt(pcov_major[0,0])))
+    print("Major axis results: constant=%f+-%f exponent=%f+-%f" % (popt_major[0], np.sqrt(pcov_major[0,0]),
+                                                                   popt_major[1], np.sqrt(pcov_major[1,1])))
     plt.tight_layout()
     plt.show()
     fig2, ax2 = plt.subplots(figsize=(10,10))
@@ -164,6 +207,93 @@ def fit_circular_ablation_results(folder, initial_radius):
                                                                      popt_eccentricity[1], np.sqrt(pcov_eccentricity[1,1])))
     plt.tight_layout()
     plt.show()
+
+def fit_circular_ablation_results_to_circle(E17_folders, P0_folders, initial_radius):
+    font_size = 40
+    plt.rcParams.update({'font.size': font_size})
+    fig1, ax1 = plt.subplots(figsize=(10, 10))
+    colors = ["blue", "red"]
+    labels = ["E17.5", "P0"]
+    radii_avg = []
+    radii_se = []
+    stresses = []
+    stresses_err = []
+    times = []
+    fit_times = []
+    for (list_index, folder_list) in enumerate([E17_folders, P0_folders]):
+        if not folder_list:
+            continue
+        radii_data = [pd.read_pickle(os.path.join(folder,"inner_circle_radius_data")) for folder in folder_list]
+        radii = [radius_data["inner circle:radius average"].values*0.1983 for radius_data in radii_data]
+        radii_err = [radius_data["inner circle:radius se"].values*0.1983 for radius_data in radii_data]
+        max_size = np.max([radius.size for radius in radii])
+        time = np.arange(start=1, stop=max_size+1, step=1)
+        time = np.hstack([0, time])
+        times.append(time)
+        time_fit = np.linspace(0, max_size+1, 300)
+        fit_times.append(time_fit)
+        radii = [np.hstack([initial_radius, radius]) for radius in radii]
+        radii_err = [np.hstack([0.1, radius_err]) for radius_err in radii_err]
+        stresses.append([])
+        stresses_err.append([])
+        # Shorten long lists
+        min_len = min(len(sublist) for sublist in radii)
+        truncated_radii = np.array([sublist[:min_len] for sublist in radii])
+        truncated_radii_err = np.array([sublist[:min_len] for sublist in radii_err])
+        for radius, radius_err in zip(truncated_radii, truncated_radii_err):
+            popt_radius, pcov_radius = curve_fit(lambda t, a, b: (initial_radius - a) * np.exp(-b * t) + a,
+                                                 time[:radius.size], radius,
+                                                 p0=[initial_radius * 0.8, 0], sigma=radius_err)
+            final_radius = popt_radius[0]
+            final_radius_err = np.sqrt(pcov_radius[0, 0])
+            young_over_visc = popt_radius[1]
+            young_over_visc_err = np.sqrt(pcov_radius[1, 1])
+            print("Final_radius=%f+-%f young's_modulus_over_viscosity=%f+-%f" % (final_radius, final_radius_err,
+                                                                                 young_over_visc, young_over_visc_err))
+            stress = (initial_radius / final_radius - 1) * 4 * young_over_visc
+            stress_error = np.sqrt(
+                ((-initial_radius / (final_radius ** 2)) * 4 * young_over_visc * final_radius_err) ** 2 +
+                ((initial_radius / final_radius - 1) * 4 * young_over_visc_err) ** 2)
+            ax1.plot(time_fit, (initial_radius - final_radius) * np.exp(-young_over_visc * time_fit) + final_radius,
+                     color=colors[list_index], linewidth=3)
+            stresses[list_index].append(stress)
+            stresses_err[list_index].append(stress_error)
+            print("Bulk_stress_over_viscosity=%f+-%f" % (stress, stress_error))
+
+        radii_avg.append(np.average(truncated_radii, axis=0))
+        radius_std = np.std(truncated_radii, axis=0)
+        radius_std[0] = 0.1
+        if truncated_radii.shape[0] > 1:
+            radii_se.append(radius_std/np.sqrt(truncated_radii.shape[0]))
+        else:
+            radii_se.append(radii_err[0])
+        ax1.errorbar(time[:radii_avg[list_index].size], radii_avg[list_index], yerr=radii_se[list_index], fmt="*", markersize=30,
+                     label="%s Data" %labels[list_index], linewidth=2, color=colors[list_index])
+    # Calculating bulk stress according to 10.7554/eLife.57964
+    # calculated stress/viscosity in units of 1/time-unit
+    index = 0
+    for radius, radius_err in zip(radii_avg, radii_se):
+        popt_radius, pcov_radius = curve_fit(lambda t, a, b: (initial_radius - a) * np.exp(-b * t) + a,
+                                             times[index][:radius.size], radius,
+                                             p0=[initial_radius * 0.8, 0], sigma=radius_err)
+        final_radius = popt_radius[0]
+        young_over_visc = popt_radius[1]
+        ax1.plot(time_fit, (initial_radius - final_radius) * np.exp(-young_over_visc * fit_times[index]) + final_radius,
+                 label="%s Fit" % labels[index], linewidth=6, color=colors[index])
+        index += 1
+    ax1.set_xlabel("Time (minutes)", fontsize=font_size)
+    ax1.set_ylabel("Radius (microns)", fontsize=font_size)
+    ax1.legend(loc="upper right")
+    edge_color = ["blue", "red"]
+    E17_stress = DataCollector("E17 Stress", sample=np.array(stresses[0]))
+    P0_stress = DataCollector("P0 Stress", sample=np.array(stresses[1]))
+    fig2, ax2, res = compare_and_plot_samples([E17_stress, P0_stress], [(0, 1)], continues=True,
+                                            plot_style="bar", color=edge_color, edge_color=edge_color,
+                                            show_statistics=True, show_N=True)
+
+    plt.tight_layout()
+    plt.show()
+
 
 def combine_single_cell_results(folder, initial_time=-1, final_time=-1, differentiation_time=-1):
     font_size = 22
@@ -517,58 +647,391 @@ def compare_E17_P0_HC_neighbors_for_differentiation_and_trans_differentiation():
     E17_diff = DataCollector("E17.5 differentiating cells", E17_folders,
                              ["neighbors_by_type_differentiation_data"]*3,
                              ["HC neighbors"]*3)
-    E17_diff.sample = E17_diff.sample[E17_diff.sample < 4]
     E17_trans_diff = DataCollector("E17.5 trans-differentiating cells",
-    ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-01-20-E17.5_ablation\\position3-analysis\\"],
+                            E17_ablation_folders,
                              ["promoted_differentiation_neighbors_by_type_data"],
                              ["HC neighbors"])
+    E17_trans_ref_SC = DataCollector("E17.5 trans-differentiating reference_SC",
+                                   E17_ablation_folders,
+                                   ["reference_SC_frame_96_data"],
+                                   ["HC neighbors"])
     E17_ref_SC = DataCollector("E17.5 reference SC +24h", E17_folders,
                                ["neighbors_by_type_reference_SC_frame96_data",
                                  "neighbors_by_type_reference_SC_frame97_data",
                                 "neighbors_by_type_reference_SC_frame96_data"],
                              ["HC neighbors"] * 3)
     P0_diff = DataCollector("P0 differentiating cells", P0_folders,
-                             ["neighbors_by_type_differentiation_data"] * 2,
-                             ["HC neighbors"] * 2)
+                             ["neighbors_by_type_differentiation_data"] * 3,
+                             ["HC neighbors"] * 3)
     P0_trans_diff = DataCollector("P0 trans-differentiating cells",
-    ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-06-05_P0_utricle_ablation\\position2-analysis\\Event statistics"],
+    P0_ablation_folders,
                              ["neighbors_by_type_promoted_differentiation_data"],
                              ["HC neighbors"])
+    P0_trans_ref_SC = DataCollector("P0 trans-differentiating reference SC",
+                                  P0_ablation_folders,
+                                  ["neighbors_by_type_reference_SC_frame96_data"],
+                                  ["HC neighbors"])
     P0_ref_SC = DataCollector("P0 reference SC +24h", P0_folders,
-                              ["neighbors_by_type_reference_SC_frame96_data",
-                              "neighbors_by_type_reference_SC_frame96_data"],
-                             ["HC neighbors"] * 2)
+                              ["neighbors_by_type_reference_SC_frame96_data"]*3,
+                             ["HC neighbors"] * 3)
     samples_list = [E17_diff, E17_trans_diff, E17_ref_SC, P0_diff, P0_trans_diff, P0_ref_SC]
-    pairs_to_compare = [(0,1), (0,2), (0,3), (3,4), (3,5)]
+    pairs_to_compare = [(0,3),(1,4), (0,1), (3,4), (0,2), (3,5)]
+    # samples_list = [E17_diff, E17_ref_SC,P0_diff, P0_ref_SC]
     full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
-                                            plot_style="bar", color=["white"]*6, edge_color=["blue"]*3 + ["red"]*3,
-                                            show_statistics=True, show_N=True)
+                                            plot_style="histogram", color= ["cyan"] * 3 + ["pink"] *3, edge_color=["blue"] * 3 + ["red"] * 3,
+                                            show_statistics=True, show_N=True, hirarchical=True)
     empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
-                                                      plot_style="bar", color=["white"] * 6,
+                                                      plot_style="histogram", color=["cyan"] * 3 + ["pink"] * 3,
                                                       edge_color=["blue"] * 3 + ["red"] * 3,
                                                       show_statistics=False, show_N=False)
-    no_SC_samples_list = [E17_diff, E17_trans_diff, P0_diff, P0_trans_diff]
-    no_SC_pairs_to_compare = [(0, 1), (0, 2), (2, 3)]
-    no_SC_fig, no_SC_ax, res = compare_and_plot_samples(no_SC_samples_list, no_SC_pairs_to_compare, continues=False,
-                                                      plot_style="bar", color=["white"] * 4,
-                                                      edge_color=["blue"] * 2 + ["red"] * 2,
-                                                      show_statistics=True, show_N=True)
-    empty_no_SC_fig, empty_no_SC_ax, res = compare_and_plot_samples(no_SC_samples_list, no_SC_pairs_to_compare, continues=False,
-                                                        plot_style="bar", color=["white"] * 4,
-                                                        edge_color=["blue"] * 2 + ["red"] * 2,
-                                                        show_statistics=False, show_N=False)
+    plt.show()
 
-    no_transdiff_samples_list = [E17_diff, E17_ref_SC, P0_diff, P0_ref_SC]
-    no_transdiff_pairs_to_compare = [(0, 1), (0, 2), (2, 3)]
-    no_transdiff_fig, no_transdiff_ax, res = compare_and_plot_samples(no_transdiff_samples_list, no_transdiff_pairs_to_compare, continues=False,
-                                                        plot_style="bar", color=["white"] * 4,
-                                                        edge_color=["blue"] * 2 + ["red"] * 2,
-                                                        show_statistics=True, show_N=True)
-    empty_no_transdiff_fig, empty_no_transdiff_ax, res = compare_and_plot_samples(no_transdiff_samples_list, no_transdiff_pairs_to_compare,
-                                                                    continues=False,
-                                                                    plot_style="bar", color=["white"] * 4,
-                                                                    edge_color=["blue"] * 2 + ["red"] * 2,
-                                                                    show_statistics=False, show_N=False)
+    E17_rev_hist = [None]*3
+    P0_rev_hist = [None]*3
+    for i in range(3):
+        E17_diff_hist, E17_diff_bin_edges = np.histogram(E17_diff.get_partial_sample(i), bins=(np.arange(np.max(E17_diff.get_partial_sample(i)) + 2) - 0.5))
+        E17_ref_hist, E17_ref_bin_edges = np.histogram(E17_ref_SC.get_partial_sample(i),
+                                                    bins=(np.arange(np.max(E17_ref_SC.get_partial_sample(i)) + 2) - 0.5))
+        E17_rev_hist[i] = E17_diff_hist/E17_ref_hist[:E17_diff_hist.size]
+    for i in range(3):
+        P0_diff_hist, P0_diff_bin_edges = np.histogram(P0_diff.get_partial_sample(i),
+                                                     bins=(np.arange(np.max(P0_diff.get_partial_sample(i)) + 2) - 0.5))
+        P0_ref_hist, P0_ref_bin_edges = np.histogram(P0_ref_SC.get_partial_sample(i),
+                                                   bins=(np.arange(np.max(P0_ref_SC.get_partial_sample(i)) + 2) - 0.5))
+        P0_rev_hist[i] = P0_diff_hist / P0_ref_hist[:P0_diff_hist.size]
+    from itertools import zip_longest
+    E17_rev_hist = np.array(list(zip_longest(*E17_rev_hist, fillvalue=0))).T
+    P0_rev_hist = np.array(list(zip_longest(*P0_rev_hist, fillvalue=0))).T
+    E17_rev_averages = np.average(E17_rev_hist, axis=0)
+    P0_rev_averages = np.average(P0_rev_hist, axis=0)
+    plt.bar(np.arange(E17_rev_averages.size)-0.125, 100*E17_rev_averages, width=0.25, color="cyan", edgecolor="blue")
+    plt.bar(np.arange(P0_rev_averages.size)+0.125, 100*P0_rev_averages, width=0.25, color="pink", edgecolor="red")
+    plt.legend(["E17.5", "P0"], prop={'size': 20})
+    for i in range(E17_rev_hist.shape[0]):
+        plt.scatter(np.arange(E17_rev_averages.size) - 0.125, 100 * E17_rev_hist[i], marker="*", color="black")
+    for i in range(P0_rev_hist.shape[0]):
+        plt.scatter(np.arange(P0_rev_averages.size) + 0.125, 100 * P0_rev_hist[i], marker="*", color="black")
+    from statistical_analysis import TwoSampleCompare
+    for n_neighbors in range(len(E17_rev_hist[0])):
+        sample1 = np.array([E17_rev_hist[i][n_neighbors] for i in range(3)])
+        sample2 = np.array([P0_rev_hist[i][n_neighbors] for i in range(3)])
+        comparer = TwoSampleCompare(sample1, sample2, sample1_label='E17.5', sample2_label='P0', continues=True)
+        pval = comparer.compare_samples()
+        print(sample1)
+        print(sample2)
+        print("pval for %d HC neighbors = %f" %(n_neighbors, pval))
+    plt.xlabel("#HC neighbors", fontsize=20)
+    plt.ylabel("% differentiating SCs", fontsize=20)
+    plt.ylim([0, 30])
+    plt.xticks(np.arange(P0_rev_hist.size), labels=np.arange(P0_rev_hist.size), fontsize=20)
+    plt.yticks(fontsize=20)
+    plt.xlim([-0.5, 2.5])
+    plt.tight_layout()
+
+    plt.figure()
+    E17_trans_diff_hist, E17_trans_diff_bin_edges = np.histogram(E17_trans_diff.get_sample(),
+                                                     bins=(np.arange(np.max(E17_trans_diff.get_sample()) + 2) - 0.5))
+    E17_trans_ref_hist, E17_trans_ref_bin_edges = np.histogram(E17_trans_ref_SC.get_sample(),
+                                                   bins=(np.arange(np.max(E17_trans_ref_SC.get_sample()) + 2) - 0.5))
+    E17_trans_rev_hist = E17_trans_diff_hist / E17_trans_ref_hist[:E17_trans_diff_hist.size]
+    P0_trans_diff_hist, P0_trans_diff_bin_edges = np.histogram(P0_trans_diff.get_sample(),
+                                                   bins=(np.arange(np.max(P0_trans_diff.get_sample()) + 2) - 0.5))
+    P0_trans_ref_hist, P0_trans_ref_bin_edges = np.histogram(P0_trans_ref_SC.get_sample(),
+                                                 bins=(np.arange(np.max(P0_trans_ref_SC.get_sample()) + 2) - 0.5))
+    P0_trans_rev_hist = P0_trans_diff_hist / P0_trans_ref_hist[:P0_trans_diff_hist.size]
+    plt.bar(np.arange(E17_trans_rev_hist.size)-0.125, 100*E17_trans_rev_hist, width=0.25, color="cyan", edgecolor="blue")
+    plt.bar(np.arange(P0_trans_rev_hist.size) + 0.125, 100*P0_trans_rev_hist, width=0.25, color="pink", edgecolor="red")
+    plt.legend(["E17.5", "P0"], prop={'size': 20})
+    plt.xlabel("#HC neighbors", fontsize=20)
+    plt.ylabel("% trans-differentiating SCs", fontsize=20)
+    plt.ylim([0, 25])
+    plt.xticks(np.arange(P0_trans_rev_hist.size), labels=np.arange(P0_trans_rev_hist.size), fontsize=20)
+    plt.yticks(fontsize=20)
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+
+    # no_SC_samples_list = [E17_diff, E17_trans_diff, P0_diff, P0_trans_diff]
+    # no_SC_pairs_to_compare = [(0, 1), (0, 2), (2, 3)]
+    # no_SC_fig, no_SC_ax, res = compare_and_plot_samples(no_SC_samples_list, no_SC_pairs_to_compare, continues=False,
+    #                                                   plot_style="bar", color=["white"] * 4,
+    #                                                   edge_color=["blue"] * 2 + ["red"] * 2,
+    #                                                   show_statistics=True, show_N=True)
+    # empty_no_SC_fig, empty_no_SC_ax, res = compare_and_plot_samples(no_SC_samples_list, no_SC_pairs_to_compare, continues=False,
+    #                                                     plot_style="bar", color=["white"] * 4,
+    #                                                     edge_color=["blue"] * 2 + ["red"] * 2,
+    #                                                     show_statistics=False, show_N=False)
+    #
+    # no_transdiff_samples_list = [E17_diff, E17_ref_SC, P0_diff, P0_ref_SC]
+    # no_transdiff_pairs_to_compare = [(0, 1), (0, 2), (2, 3)]
+    # no_transdiff_fig, no_transdiff_ax, res = compare_and_plot_samples(no_transdiff_samples_list, no_transdiff_pairs_to_compare, continues=False,
+    #                                                     plot_style="bar", color=["white"] * 4,
+    #                                                     edge_color=["blue"] * 2 + ["red"] * 2,
+    #                                                     show_statistics=True, show_N=True)
+    # empty_no_transdiff_fig, empty_no_transdiff_ax, res = compare_and_plot_samples(no_transdiff_samples_list, no_transdiff_pairs_to_compare,
+    #                                                                 continues=False,
+    #                                                                 plot_style="bar", color=["white"] * 4,
+    #                                                                 edge_color=["blue"] * 2 + ["red"] * 2,
+    #                                                                 show_statistics=False, show_N=False)
+    plt.show()
+
+def compare_E17_P0_HC_contact_length_for_differentiation_and_trans_differentiation():
+    E17_diff = DataCollector("E17.5 differentiating cells", E17_folders,
+                             ["contact_length_by_type_differentiation_data"]*3,
+                             ["HC contact length"]*3, normalization=10)
+    E17_trans_diff = DataCollector("E17.5 trans-differentiating cells", E17_ablation_folders,
+                             ["contact_length_by_type_promoted_differentiation_data"],
+                             ["HC contact length"], normalization=10)
+    E17_ref_SC = DataCollector("E17.5 reference SC +24h", E17_folders,
+                               ["contact_length_by_type_reference_SC_frame96_data",
+                                          "contact_length_by_type_reference_SC_frame97_data",
+                                          "contact_length_by_type_reference_SC_frame96_data"],
+                             ["HC contact length"] * 3, normalization=10)
+    P0_diff = DataCollector("P0 differentiating cells", P0_folders,
+                             ["contact_length_by_type_differentiation_data"] * 3,
+                             ["HC contact length"] * 3, normalization=10)
+    P0_trans_diff = DataCollector("P0 trans-differentiating cells", P0_ablation_folders,
+                             ["contact_length_by_type_promoted_differentiation_data"],
+                             ["HC contact length"], normalization=10)
+    P0_ref_SC = DataCollector("P0 reference SC +24h", P0_folders,
+                              ["contact_length_by_type_reference_SC_frame96_data"]*3,
+                             ["HC contact length"] * 3, normalization=10)
+    # E17_trans_ref_SC = DataCollector("E17.5 trans-differentiating reference_SC",
+    #                                  [
+    #                                      "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-01-20-E17.5_ablation\\position3-analysis\\"],
+    #                                  ["reference_SC_frame_96_data"],
+    #                                  ["HC contact length"])
+    # P0_trans_ref_SC = DataCollector("P0 trans-differentiating reference SC",
+    #                                 [
+    #                                     "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-06-05_P0_utricle_ablation\\position2-analysis\\Event statistics"],
+    #                                 ["neighbors_by_type_reference_SC_frame96_data"],
+    #                                 ["HC contact length"])
+    samples_list = [E17_diff, E17_trans_diff, E17_ref_SC, P0_diff, P0_trans_diff, P0_ref_SC]
+    pairs_to_compare = [(0,3)]
+    # samples_list = [E17_diff, E17_ref_SC,P0_diff, P0_ref_SC]
+    # pairs_to_compare = [(0, 1)]
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=True,
+                                            plot_style="violin", color= ["cyan"] * 3 + ["pink"] *3, edge_color=["blue"] * 3 + ["red"] * 3,
+                                            show_statistics=True, show_N=True, hirarchical=True)
+
+    full_ax.set_ylabel("Apical contact length with neighboring HCs (microns)")
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="violin", color=["cyan"] * 3 + ["pink"] * 3,
+                                                      edge_color=["blue"] * 3 + ["red"] * 3,
+                                                      show_statistics=False, show_N=False)
+
+
+    plt.show()
+
+    E17_rev_hist = [None] * 3
+    P0_rev_hist = [None] * 3
+    for i in range(3):
+        E17_diff_hist, E17_diff_bin_edges = np.histogram(E17_diff.get_partial_sample(i), bins=(
+                    np.arange(np.max(E17_diff.get_partial_sample(i)) + 2) - 0.5))
+        E17_ref_hist, E17_ref_bin_edges = np.histogram(E17_ref_SC.get_partial_sample(i),
+                                                       bins=(np.arange(
+                                                           np.max(E17_ref_SC.get_partial_sample(i)) + 2) - 0.5))
+        E17_rev_hist[i] = E17_diff_hist[:E17_ref_hist.size] / E17_ref_hist[:E17_diff_hist.size]
+    for i in range(3):
+        P0_diff_hist, P0_diff_bin_edges = np.histogram(P0_diff.get_partial_sample(i),
+                                                       bins=(np.arange(
+                                                           np.max(P0_diff.get_partial_sample(i)) + 2) - 0.5))
+        P0_ref_hist, P0_ref_bin_edges = np.histogram(P0_ref_SC.get_partial_sample(i),
+                                                     bins=(np.arange(
+                                                         np.max(P0_ref_SC.get_partial_sample(i)) + 2) - 0.5))
+        P0_rev_hist[i] = P0_diff_hist[:P0_ref_hist.size] / P0_ref_hist[:P0_diff_hist.size]
+    from itertools import zip_longest
+    E17_rev_hist = np.array(list(zip_longest(*E17_rev_hist, fillvalue=0))).T
+    P0_rev_hist = np.array(list(zip_longest(*P0_rev_hist, fillvalue=0))).T
+    E17_rev_averages = np.average(E17_rev_hist, axis=0)
+    P0_rev_averages = np.average(P0_rev_hist, axis=0)
+    plt.bar(np.arange(E17_rev_averages.size) - 0.125, 100 * E17_rev_averages, width=0.25, color="cyan",
+            edgecolor="blue")
+    plt.bar(np.arange(P0_rev_averages.size) + 0.125, 100 * P0_rev_averages, width=0.25, color="pink", edgecolor="red")
+    plt.legend(["E17.5", "P0"], prop={'size': 20})
+    for i in range(E17_rev_hist.shape[0]):
+        plt.scatter(np.arange(E17_rev_averages.size) - 0.125, 100 * E17_rev_hist[i], marker="*", color="black")
+    for i in range(P0_rev_hist.shape[0]):
+        plt.scatter(np.arange(P0_rev_averages.size) + 0.125, 100 * P0_rev_hist[i], marker="*", color="black")
+    plt.xlabel("contact length with HC neighbors", fontsize=20)
+    plt.ylabel("% differentiating SCs", fontsize=20)
+    plt.xticks(np.arange(P0_rev_hist.size), labels=np.arange(P0_rev_hist.size), fontsize=20)
+    plt.yticks(fontsize=20)
+    plt.tight_layout()
+
+    # plt.figure()
+    # E17_trans_diff_hist, E17_trans_diff_bin_edges = np.histogram(E17_trans_diff.get_sample(),
+    #                                                              bins=(np.arange(
+    #                                                                  np.max(E17_trans_diff.get_sample()) + 2) - 0.5))
+    # E17_trans_ref_hist, E17_trans_ref_bin_edges = np.histogram(E17_trans_ref_SC.get_sample(),
+    #                                                            bins=(np.arange(
+    #                                                                np.max(E17_trans_ref_SC.get_sample()) + 2) - 0.5))
+    # E17_trans_rev_hist = E17_trans_diff_hist / E17_trans_ref_hist[:E17_trans_diff_hist.size]
+    # P0_trans_diff_hist, P0_trans_diff_bin_edges = np.histogram(P0_trans_diff.get_sample(),
+    #                                                            bins=(np.arange(
+    #                                                                np.max(P0_trans_diff.get_sample()) + 2) - 0.5))
+    # P0_trans_ref_hist, P0_trans_ref_bin_edges = np.histogram(P0_trans_ref_SC.get_sample(),
+    #                                                          bins=(np.arange(
+    #                                                              np.max(P0_trans_ref_SC.get_sample()) + 2) - 0.5))
+    # P0_trans_rev_hist = P0_trans_diff_hist / P0_trans_ref_hist[:P0_trans_diff_hist.size]
+    # plt.bar(np.arange(E17_trans_rev_hist.size) - 0.125, 100 * E17_trans_rev_hist, width=0.25, color="cyan",
+    #         edgecolor="blue")
+    # plt.bar(np.arange(P0_trans_rev_hist.size) + 0.125, 100 * P0_trans_rev_hist, width=0.25, color="pink",
+    #         edgecolor="red")
+    # plt.legend(["E17.5", "P0"], prop={'size': 20})
+    # plt.xlabel("#HC neighbors", fontsize=20)
+    # plt.ylabel("% trans-differentiating SCs", fontsize=20)
+    # plt.ylim([0, 25])
+    # plt.xticks(np.arange(P0_trans_rev_hist.size), labels=np.arange(P0_trans_rev_hist.size), fontsize=20)
+    # plt.yticks(fontsize=20)
+    # plt.tight_layout()
+    plt.show()
+
+def compare_E17_E19_neighbors():
+    E17_after_48h_HC_neighbors_for_HC = DataCollector("E17.5 +48h HC neigh for HC", E17_folders[:-1],
+                               ["neighbors_by_type_reference_HC_frame191_data",
+                                          "neighbors_by_type_reference_HC_frame199_data"],
+                                         ["HC neighbors"] * 2)
+    E17_after_48h_SC_neighbors_for_HC = DataCollector("E17.5 +48h SC neigh for HC", E17_folders[:-1],
+                                                      ["neighbors_by_type_reference_HC_frame191_data",
+                                                       "neighbors_by_type_reference_HC_frame199_data"],
+                                                      ["SC neighbors"] * 2)
+    E17_after_48h_HC_neighbors_for_SC = DataCollector("E17.5 +48h HC neigh for SC", E17_folders[:-1],
+                                                      ["neighbors_by_type_reference_SC_frame191_data",
+                                                       "neighbors_by_type_reference_SC_frame199_data"],
+                                                      ["HC neighbors"] * 2)
+    E17_after_48h_SC_neighbors_for_SC = DataCollector("E17.5 +48h SC neigh for SC", E17_folders[:-1],
+                                                      ["neighbors_by_type_reference_SC_frame191_data",
+                                                       "neighbors_by_type_reference_SC_frame199_data"],
+                                                      ["SC neighbors"] * 2)
+    E19_HC_neighbors_for_HC = DataCollector("E19.5 HC neigh for HC", E19_folders,
+                                            ["neighbors_by_type_for_HC_data"]*len(E19_folders),
+                                            ["HC neighbors"]*len(E19_folders))
+    E19_SC_neighbors_for_HC = DataCollector("E19.5 SC neigh for HC", E19_folders,
+                                            ["neighbors_by_type_for_HC_data"] * len(E19_folders),
+                                            ["SC neighbors"] * len(E19_folders))
+    E19_HC_neighbors_for_SC = DataCollector("E19.5 HC neigh for SC", E19_folders,
+                                            ["neighbors_by_type_for_SC_data"] * len(E19_folders),
+                                            ["HC neighbors"] * len(E19_folders))
+    E19_SC_neighbors_for_SC = DataCollector("E19.5 SC neigh for SC", E19_folders,
+                                            ["neighbors_by_type_for_SC_data"] * len(E19_folders),
+                                            ["SC neighbors"] * len(E19_folders))
+    samples_list = [E17_after_48h_HC_neighbors_for_HC, E19_HC_neighbors_for_HC,
+                    E17_after_48h_HC_neighbors_for_SC, E19_HC_neighbors_for_SC,
+                    E17_after_48h_SC_neighbors_for_HC, E19_SC_neighbors_for_HC,
+                    E17_after_48h_SC_neighbors_for_SC, E19_SC_neighbors_for_SC]
+    pairs_to_compare = [(0,1), (2,3), (4,5), (6,7)]
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                            plot_style="histogram", color= ["cyan","pink"] *4,
+                                                      edge_color=["blue", "red"] * 4,
+                                            show_statistics=True, show_N=True)
+
+    full_ax.set_ylabel("# neighbors")
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="histogram", color= ["cyan","pink"] *4,
+                                                      edge_color=["blue", "red"] * 4,
+                                                      show_statistics=False, show_N=False)
+
+
+    plt.show()
+
+def compare_E17_E19_contact_length():
+    E17_after_48h_HC_contact_length_for_HC = DataCollector("E17.5 +48h HC contact length for HC", E17_folders[:-1],
+                               ["contact_length_by_type_reference_HC_frame191_data",
+                                          "contact_length_by_type_reference_HC_frame199_data"],
+                                         ["HC contact length"] * 2, normalization=10)
+    E17_after_48h_SC_contact_length_for_HC = DataCollector("E17.5 +48h SC contact length for HC", E17_folders[:-1],
+                                                      ["contact_length_by_type_reference_HC_frame191_data",
+                                                       "contact_length_by_type_reference_HC_frame199_data"],
+                                                      ["SC contact length"] * 2, normalization=10)
+    E17_after_48h_HC_contact_length_for_SC = DataCollector("E17.5 +48h HC contact length for SC", E17_folders[:-1],
+                                                      ["contact_length_by_type_reference_SC_frame191_data",
+                                                       "contact_length_by_type_reference_SC_frame199_data"],
+                                                      ["HC contact length"] * 2, normalization=10)
+    E17_after_48h_SC_contact_length_for_SC = DataCollector("E17.5 +48h SC contact length for SC", E17_folders[:-1],
+                                                      ["contact_length_by_type_reference_SC_frame191_data",
+                                                       "contact_length_by_type_reference_SC_frame199_data"],
+                                                      ["SC contact length"] * 2, normalization=10)
+    E19_HC_contact_length_for_HC = DataCollector("E19.5 HC contact length for HC", E19_folders,
+                                            ["contact_length_by_type_for_HC_data"]*len(E19_folders),
+                                            ["HC contact length"]*len(E19_folders), normalization=10)
+    E19_SC_contact_length_for_HC = DataCollector("E19.5 SC contact length for HC", E19_folders,
+                                            ["contact_length_by_type_for_HC_data"] * len(E19_folders),
+                                            ["SC contact length"] * len(E19_folders), normalization=10)
+    E19_HC_contact_length_for_SC = DataCollector("E19.5 HC contact length for HC", E19_folders,
+                                            ["contact_length_by_type_for_SC_data"] * len(E19_folders),
+                                            ["HC contact length"] * len(E19_folders), normalization=10)
+    E19_SC_contact_length_for_SC = DataCollector("E19.5 SC contact length for HC", E19_folders,
+                                            ["contact_length_by_type_for_SC_data"] * len(E19_folders),
+                                            ["SC contact length"] * len(E19_folders), normalization=10)
+    samples_list = [E17_after_48h_HC_contact_length_for_HC, E19_HC_contact_length_for_HC,
+                    E17_after_48h_HC_contact_length_for_SC, E19_HC_contact_length_for_SC,
+                    E17_after_48h_SC_contact_length_for_HC, E19_SC_contact_length_for_HC,
+                    E17_after_48h_SC_contact_length_for_SC, E19_SC_contact_length_for_SC]
+    pairs_to_compare = [(0,1), (2,3), (4,5), (6,7)]
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                            plot_style="violin", color= ["cyan","pink"] *4,
+                                                      edge_color=["blue", "red"] * 4,
+                                            show_statistics=True, show_N=True)
+
+    full_ax.set_ylabel("Contact length (microns)")
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="violin", color= ["cyan","pink"] *4,
+                                                      edge_color=["blue", "red"] * 4,
+                                                      show_statistics=False, show_N=False)
+
+
+    plt.show()
+
+def compare_E17_E19_area_and_roundness():
+    E17_after_48h_HC_area = DataCollector("E17.5 +48h HC area", E17_folders[:-1],
+                               ["area_and_roundness_reference_HC_frame191_data",
+                                          "area_and_roundness_reference_HC_frame199_data"],
+                                         ["area"] * 2, normalization=100)
+    E17_after_48h_SC_area = DataCollector("E17.5 +48h SC area", E17_folders[:-1],
+                                                      ["area_and_roundness_reference_SC_frame191_data",
+                                                       "area_and_roundness_reference_SC_frame199_data"],
+                                                      ["area"] * 2, normalization=100)
+    E17_after_48h_HC_roundness = DataCollector("E17.5 +48h HC roundness", E17_folders[:-1],
+                                                      ["area_and_roundness_reference_HC_frame191_data",
+                                                       "area_and_roundness_reference_HC_frame199_data"],
+                                                      ["roundness"] * 2, normalization=1)
+    E17_after_48h_SC_roundness = DataCollector("E17.5 +48h SC roundness", E17_folders[:-1],
+                                                      ["area_and_roundness_reference_SC_frame191_data",
+                                                       "area_and_roundness_reference_SC_frame199_data"],
+                                                      ["roundness"] * 2, normalization=1)
+    E19_HC_area = DataCollector("E19.5 HC area", E19_folders,
+                                            ["area_and_roundness_for_HC_data"]*len(E19_folders),
+                                            ["area"]*len(E19_folders), normalization=100)
+    E19_SC_area = DataCollector("E19.5 SC area", E19_folders,
+                                            ["area_and_roundness_for_SC_data"] * len(E19_folders),
+                                            ["area"] * len(E19_folders), normalization=100)
+    E19_HC_roundness = DataCollector("E19.5 HC roundness", E19_folders,
+                                            ["area_and_roundness_for_HC_data"] * len(E19_folders),
+                                            ["roundness"] * len(E19_folders), normalization=1)
+    E19_SC_roundness = DataCollector("E19.5 SC roundness", E19_folders,
+                                            ["area_and_roundness_for_SC_data"] * len(E19_folders),
+                                            ["roundness"] * len(E19_folders), normalization=1)
+    samples_list = [E17_after_48h_HC_area, E19_HC_area,
+                    E17_after_48h_SC_area, E19_SC_area,
+                    E17_after_48h_HC_roundness, E19_HC_roundness,
+                    E17_after_48h_SC_roundness, E19_SC_roundness]
+    pairs_to_compare = [(0,1), (2,3), (4,5), (6,7)]
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                            plot_style="violin", color= ["cyan","pink"] *4,
+                                                      edge_color=["blue", "red"] * 4,
+                                            show_statistics=True, show_N=True)
+
+    full_ax.set_ylabel("Contact length (microns)")
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="violin", color= ["cyan","pink"] *4,
+                                                      edge_color=["blue", "red"] * 4,
+                                                      show_statistics=False, show_N=False)
+
+
     plt.show()
 
 def compare_E17_P0_neighbors_by_type_for_differentiation():
@@ -648,13 +1111,13 @@ def compare_E17_neighbors_by_type_for_differentiation_and_transdiff():
 
 
 def compare_E17_P0_rho_inhibition_neighbors_by_type():
-    E17_diff = DataCollector("E17.5 differentiating cells", Rho_inhibition_E17_folders,
+    E17_diff_rho = DataCollector("E17.5 differentiating cells", Rho_inhibition_E17_folders,
                              ["neighbors_by_type_differentiation_data"],
                              ["HC neighbors"])
     E17_ref_SC = DataCollector("E17.5 reference SC +24h", Rho_inhibition_E17_folders,
                              ["neighbors_by_type_reference_SC_frame91_data"],
                              ["HC neighbors"])
-    P0_diff = DataCollector("P0 differentiating cells",
+    P0_diff_rho = DataCollector("P0 differentiating cells",
                             Rho_inhibition_P0_folders,
                             ["neighbors_by_type_differentiation_data"],
                             ["HC neighbors"])
@@ -662,30 +1125,67 @@ def compare_E17_P0_rho_inhibition_neighbors_by_type():
                             Rho_inhibition_P0_folders,
                             ["neighbors_by_type_reference_SC_frame93_data"],
                             ["HC neighbors"])
-    samples_list = [E17_diff, E17_ref_SC, P0_diff, P0_ref_SC]
-    pairs_to_compare = [(0, 1), (2, 3), (0, 2)]
-    color = ["white"] * 4
-    edge_color = ["blue", "blue", "red", "red"]
+    E17_diff = DataCollector("E17.5 differentiating cells", E17_folders,
+                             ["neighbors_by_type_differentiation_data"] * 3,
+                             ["HC neighbors"] * 3)
+    P0_diff = DataCollector("P0 differentiating cells", P0_folders,
+                            ["neighbors_by_type_differentiation_data"] * 2,
+                            ["HC neighbors"] * 2)
+
+    samples_list = [E17_diff, P0_diff, E17_diff_rho, P0_diff_rho]
+    pairs_to_compare = [(0, 1), (2, 3), (0, 2), (1,3)]
+    color = ["cyan", "pink"] * 2
+    edge_color = ["blue", "red", "blue", "red"]
+    # samples_list = [E17_diff_rho, P0_diff_rho]
+    # pairs_to_compare = [(0, 1)]
+    color = ["cyan", "pink"]*2
+    edge_color = ["blue", "red"]*2
     full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
-                                                      plot_style="bar", color=color,
+                                                      plot_style="histogram", color=color,
                                                       edge_color=edge_color,
                                                       show_statistics=True, show_N=True)
     empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
-                                                      plot_style="bar", color=color,
+                                                      plot_style="histogram", color=color,
                                                       edge_color=edge_color,
                                                       show_statistics=False, show_N=False)
-    no_SC_samples_list = [E17_diff, P0_diff]
-    pairs_to_compare = [(0, 1)]
-    color = ["white"] * 2
-    edge_color = ["blue", "red"]
-    no_SC_full_fig, no_SC_full_ax, res = compare_and_plot_samples(no_SC_samples_list, pairs_to_compare, continues=False,
-                                                      plot_style="bar", color=color,
-                                                      edge_color=edge_color,
-                                                      show_statistics=True, show_N=True)
-    no_SC_empty_fig, no_SC_empty_ax, _ = compare_and_plot_samples(no_SC_samples_list, pairs_to_compare, continues=False,
-                                                      plot_style="bar", color=color,
-                                                      edge_color=edge_color,
-                                                      show_statistics=False, show_N=False)
+    # no_SC_samples_list = [E17_diff, P0_diff]
+    # pairs_to_compare = [(0, 1)]
+    # color = ["white"] * 2
+    # edge_color = ["blue", "red"]
+    # no_SC_full_fig, no_SC_full_ax, res = compare_and_plot_samples(no_SC_samples_list, pairs_to_compare, continues=False,
+    #                                                   plot_style="bar", color=color,
+    #                                                   edge_color=edge_color,
+    #                                                   show_statistics=True, show_N=True)
+    # no_SC_empty_fig, no_SC_empty_ax, _ = compare_and_plot_samples(no_SC_samples_list, pairs_to_compare, continues=False,
+    #                                                   plot_style="bar", color=color,
+    #                                                   edge_color=edge_color,
+    #                                                   show_statistics=False, show_N=False)
+    plt.figure()
+    E17_diff_hist, E17_diff_bin_edges = np.histogram(E17_diff_rho.get_sample(),
+                                                                 bins=(np.arange(
+                                                                     np.max(E17_diff_rho.get_sample()) + 2) - 0.5))
+    E17_ref_hist, E17_ref_bin_edges = np.histogram(E17_ref_SC.get_sample(),
+                                                               bins=(np.arange(
+                                                                   np.max(E17_ref_SC.get_sample()) + 2) - 0.5))
+    E17_rev_hist = E17_diff_hist / E17_ref_hist[:E17_diff_hist.size]
+    P0_trans_diff_hist, P0_trans_diff_bin_edges = np.histogram(P0_diff.get_sample(),
+                                                               bins=(np.arange(
+                                                                   np.max(P0_diff.get_sample()) + 2) - 0.5))
+    P0_ref_hist, P0_ref_bin_edges = np.histogram(P0_ref_SC.get_sample(),
+                                                             bins=(np.arange(
+                                                                 np.max(P0_ref_SC.get_sample()) + 2) - 0.5))
+    P0_rev_hist = P0_trans_diff_hist / P0_ref_hist[:P0_trans_diff_hist.size]
+    plt.bar(np.arange(E17_rev_hist.size) - 0.125, 100 * E17_rev_hist, width=0.25, color="cyan",
+            edgecolor="blue")
+    plt.bar(np.arange(P0_rev_hist.size) + 0.125, 100 * P0_rev_hist, width=0.25, color="pink",
+            edgecolor="red")
+    plt.legend(["E17.5", "P0"], prop={'size': 20})
+    plt.xlabel("#HC neighbors", fontsize=20)
+    plt.ylabel("% differentiating SCs", fontsize=20)
+    plt.ylim([0, 25])
+    plt.xticks(np.arange(P0_rev_hist.size), labels=np.arange(P0_rev_hist.size), fontsize=20)
+    plt.yticks(fontsize=20)
+    plt.tight_layout()
     plt.show()
 
 
@@ -1006,11 +1506,11 @@ def compare_deformability():
     plt.show()
 
 def plot_number_of_events():
-    data = pd.DataFrame({"stage": ["E17.5"] * 6 + ["P0"] * 6, #+ ["P0 with ablation"] * 3,
-                         "type": ["division", "delamination", "differentiation"] * 4,
-                        "number_of_events": [24, 30, 32, 11, 3, 28, 0, 0, 14, 2, 10, 9],#, 2, 20, 25],
-                        "frames": [173] * 3 + [221] * 3 + [121] * 3 + [107] * 3,# + [168] * 3,
-                        "area": [5661946.62] * 3 + [7256274.51] * 3 + [2826552.3] * 3 + [3535219.79] * 3# + [5942120.84] * 3
+    data = pd.DataFrame({"stage": ["E17.5"] * 9 + ["P0"] * 6, #+ ["P0 with ablation"] * 3,
+                         "type": ["division", "delamination", "differentiation"] * 5,
+                        "number_of_events": [24, 30, 32, 11, 3, 28, 21, 18, 59, 0, 0, 14, 2, 10, 9],#, 2, 20, 25],
+                        "frames": [173] * 3 + [221] * 3 + [119] *3 + [121] * 3 + [107] * 3,# + [168] * 3,
+                        "area": [5661946.62] * 3 + [7256274.51] * 3 + [3573407.49] *3 + [2826552.3] * 3 + [3535219.79] * 3# + [5942120.84] * 3
                          })
 
     data['number of events per frame per (100 microns)^2'] = data.eval("10000 * 92 * number_of_events / area")
@@ -1021,6 +1521,31 @@ def plot_number_of_events():
                     )
     g.map_dataframe(sns.stripplot, x='type', y='number of events per frame per (100 microns)^2', hue='stage',
                     palette=["#404040"], alpha=0.5, jitter=0, dodge=True, size=10)
+    plt.show()
+
+def plot_number_of_differentiations():
+    data = pd.DataFrame({"stage": ["E17.5"] * 3 + ["P0"] * 2,
+                         "type": ["differentiation"] * 5,
+                         "number_of_events": [32, 28,  59, 14, 9],
+                         "frames": [173, 221, 119, 121, 107],
+                         "area": [5661946.62, 7256274.51, 3573407.49, 2826552.3, 3535219.79],
+                         })
+    # norm_data = data.eval("10000 * 4 * number_of_events / area")
+    norm_data = data.eval("4 * number_of_events / frames")
+    E17_data = DataCollector(name="E17.5 differentiations", sample=norm_data[:3])
+    P0_data = DataCollector(name="P0 differentiations", sample=norm_data[3:])
+    samples_list = [E17_data, P0_data]
+    pairs_to_compare = []
+    color = ["blue", "red"]
+    edge_color = ["blue", "red"]
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="box", color=color,
+                                                      edge_color=edge_color,
+                                                      show_statistics=True, show_N=True)
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="box", color=color,
+                                                      edge_color=edge_color,
+                                                      show_statistics=False, show_N=False)
     plt.show()
 
 def plot_DAPT_data():
@@ -1039,28 +1564,39 @@ def plot_DAPT_data():
     plt.show()
 
 def plot_rho_inhibition_roundness():
-    folders = [Rho_inhibition_E17_folders[0], Rho_inhibition_P0_folders[0], E17_folders[0], P0_folders[1]]
-    file_name = "HC_roundness_compare_data"
+    folders = [Rho_inhibition_E17_folders[0], Rho_inhibition_P0_folders[0], E17_folders[0], P0_folders[0]]
+    file_name = "HC_roundness_vs_time_data"
     avg = []
     se = []
-    x = [0,24,48]
+    frames = []
+    x = np.array([0, 12, 24, 36, 48])
     for folder in folders:
         path = os.path.join(folder, file_name)
         if os.path.isfile(path):
             data = pd.read_pickle(path)
             avg.append(data["roundness average"].to_numpy())
             se.append(data["roundness se"].to_numpy())
+            frames.append(data["Frame"].to_numpy())
     count = 0
-    for a,s in zip(avg,se):
+    for f,a,s in zip(frames,avg,se):
         if count == 0:
-            fmt = "o-r"
-        elif count == 1:
-            fmt = "o--r"
-        elif count == 2:
             fmt = "o-b"
-        else:
+        elif count == 1:
+            fmt = "o-r"
+        elif count == 2:
             fmt = "o--b"
-        plt.errorbar(x,a,yerr=s,fmt=fmt)
+        else:
+            fmt = "o--r"
+        desired_frames = (x*4).astype(int)
+        # existing_frames = np.intersect1d(desired_frames, f)
+        existing_frames_idx = np.searchsorted(f, desired_frames)
+        if count ==1:
+            existing_frames_idx = existing_frames_idx[existing_frames_idx < a.size]
+        else:
+            existing_frames_idx[existing_frames_idx >= a.size] = a.size - 1
+        # running_avg = np.convolve(a, (1/3)*np.ones((3,)))
+        # running_se = np.sqrt(np.convolve(s*s, (1/3)*np.ones((3,))))
+        plt.errorbar(f[existing_frames_idx]/4,a[existing_frames_idx],yerr=s[existing_frames_idx],fmt=fmt)
         count += 1
     plt.show()
 
@@ -1128,7 +1664,7 @@ if __name__ == "__main__":
     # plot_DAPT_data()
     # plot_rho_inhibition_roundness()
 
-    # fit_circular_ablation_results(ellipse_folder, 60)
+    fit_circular_ablation_results_to_circle(E17_circular_ablation_folders, P0_circular_ablation_folders, 60)
     # combine_frame_compare_results()
     # combine_single_cell_results(folder, 1000, 2800, 1900)
     # plot_E17_HC_density_and_fraction()
@@ -1144,7 +1680,8 @@ if __name__ == "__main__":
     # compare_E17_P0_density()
     # compare_E17_P0_neighbors_by_type()
     # compare_E17_P0_neighbors_by_type_for_differentiation()
-    compare_E17_P0_HC_neighbors_for_differentiation_and_trans_differentiation()
+    # compare_E17_P0_HC_neighbors_for_differentiation_and_trans_differentiation()
+    # compare_E17_P0_HC_contact_length_for_differentiation_and_trans_differentiation()
     # compare_E17_P0_rho_inhibition_neighbors_by_type()
     # compare_P0_neighbors_by_type_for_differentiation_and_transdiff()
     # compare_E17_neighbors_by_type_for_differentiation_and_transdiff()
@@ -1155,10 +1692,12 @@ if __name__ == "__main__":
     # compare_distance_from_ablation()
     # compare_normal_and_promoted_differentiation_HC_neighbors()
     # plot_number_of_events()
+    # plot_number_of_differentiations()
     # compare_deformability()
     # plot_E17_second_neighbors_by_type()
     # plot_P0_second_neighbors_by_type()
     # plot_E17_rho_inhibition_neighbors_by_type()
-
-
+    # compare_E17_E19_neighbors()
+    # compare_E17_E19_contact_length()
+    # compare_E17_E19_area_and_roundness()
     # plot_differentiation_timing_by_n_HC_neighbors()
