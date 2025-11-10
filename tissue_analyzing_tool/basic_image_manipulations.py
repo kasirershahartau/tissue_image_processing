@@ -11,7 +11,7 @@ import numpy as np
 from scipy.stats import scoreatpercentile
 from scipy.ndimage import gaussian_filter
 from skimage.exposure import adjust_gamma
-from tifffile import TiffFile, imwrite
+from tifffile import TiffFile, imwrite, TiffWriter
 from aicsimageio import AICSImage
 from aicsimageio.readers import czi_reader, bioformats_reader
 from aicsimageio.writers import ome_tiff_writer
@@ -479,10 +479,45 @@ def concatenate_time_points(files):
     imgs = []
     for file in files:
         img = np.load(file).astype("uint16")
+        if imgs:
+            for dim in range(1,len(img.shape)-2):
+                if imgs[0].shape[dim] > img.shape[dim]:
+                    pad_width = [(0,0)]
+                    for d in range(1, len(img.shape)):
+                        if d == dim:
+                            pad_width.append((imgs[0].shape[dim] - img.shape[dim], 0))
+                        else:
+                            pad_width.append((0,0))
+                    img = np.pad(img, pad_width=pad_width, constant_values=0)
+            if img.shape[-2:] != imgs[0].shape[-2:]:
+                img = resize(img, (img.shape[:-2], imgs[0].shape[-2:]))
         imgs.append(img)
-        if img.shape[1:] != imgs[0].shape[1:]:
-            imgs[-1] = resize(img, (img.shape[0], imgs[0].shape[1:]))
     return np.concatenate(imgs, axis=0)
+
+def extract_all_frames_from_a_scene(path, scene_index, max_frames=None):
+    img = AICSImage(path, reader=bioformats_reader.BioformatsReader)
+    img.set_scene(scene_index)
+    data = img.get_image_dask_data(dimension_order_out="TZCYX")
+    total_frames = data.shape[0]  # Assuming time axis is first
+    # If max_frames is provided, limit the number
+    frame_count = min(total_frames, max_frames) if max_frames else total_frames
+    for t in range(frame_count):
+        # Load only one frame at a time to minimize memory
+        # Many readers support slicing for lazy loading
+        frame = data[t].compute()
+        yield frame
+    return 0
+
+def virtually_concatenate_time_points(files, position_indices, output_path="output.tif"):
+    first = True
+    with TiffWriter(output_path, bigtiff=True) as tif:
+        for czi_path, scene_idx in zip(files, position_indices):
+            for frame in extract_all_frames_from_a_scene(czi_path, scene_idx - 1):
+                if first:
+                    tif.write(frame, photometric='minisblack')
+                    first = False
+                else:
+                    tif.write(frame, photometric='minisblack')
 
 def calculate_drift(first_image, second_image, sub_pixel_precision=True):
     """
@@ -499,4 +534,11 @@ def calculate_drift(first_image, second_image, sub_pixel_precision=True):
     else:
         shift, error, diffphase = phase_cross_correlation(first_image, second_image)
     return shift[-2:]
+
+if __name__ == "__main__":
+    files = ["E:\\LSM880\\Lama\\2023-12-03 Atoh1-mCherry LFNG-GFP\\" + "m%d.czi" %i for i in range(1,5)]
+
+    position_indices = [1,1,1,1]
+    virtually_concatenate_time_points(files, position_indices,
+                            "E:\\LSM880\\Lama\\2023-12-03 Atoh1-mCherry LFNG-GFP\\position1-3D.tif")
 

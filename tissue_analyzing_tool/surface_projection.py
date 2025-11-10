@@ -200,6 +200,8 @@ def movie_surface_projection(files, reference_channel, position_final_movie, ini
                 continue
             current_projection = np.zeros((dims.T, dims.C, 1, dims.Y, dims.X))
             current_zmap = np.zeros((dims.T, 1, 1, dims.Y, dims.X))
+            if reference_channel >= dims.C:
+                reference_channel = dims.C - 1
             projector = read_image_in_chunks(file, series=position_num, dt=1,
                                              apply_function=time_point_surface_projection,
                                              output=[current_projection, current_zmap], axes='TCZYX',
@@ -287,9 +289,9 @@ def large_image_projection(input_dir, output_dir, input_file_name, position=1, r
         return 0
     dims = get_image_dimensions(path)
     for pos in position:
-        projection = np.zeros((1, dims.C, 1, dims.Y, dims.X))
-        zmap = np.zeros((1, 1, 1, dims.Y, dims.X))
-        projector = read_image_in_chunks(path, dx=chunk_size, dy=chunk_size,
+        projection = np.zeros((dims.T, dims.C, 1, dims.Y, dims.X))
+        zmap = np.zeros((dims.T, 1, 1, dims.Y, dims.X))
+        projector = read_image_in_chunks(path, dx=chunk_size, dy=chunk_size, dt=1,
                                          apply_function=time_point_surface_projection,
                                          output=[projection, zmap], axes='TCZYX', min_z=min_z, max_z=max_z,
                                          reference_channel=reference_channel, series=int(pos - 1), z_map=True, method=method,
@@ -297,8 +299,11 @@ def large_image_projection(input_dir, output_dir, input_file_name, position=1, r
                                          airyscan=airyscan)
         for chunk_num, chunk in enumerate(projector):
             print("Projecting position %d chunk %d" % (pos, chunk_num + 1), flush=True)
-        projection = projection.reshape((dims.C, dims.Y, dims.X))
-        zmap = zmap.reshape((1, dims.Y, dims.X))
+        if dims.T > 1:
+            projection = projection.reshape((dims.T, dims.C, dims.Y, dims.X))
+        else:
+            projection = projection.reshape((dims.C, dims.Y, dims.X))
+        zmap = zmap.reshape((dims.T, dims.Y, dims.X))
         postfix = '.' + input_file_name.split('.')[-1]
         if add_pos:
             pos_addition = "_position%d" % pos
@@ -306,7 +311,8 @@ def large_image_projection(input_dir, output_dir, input_file_name, position=1, r
             pos_addition = ""
         projection_file_name = os.path.join(output_dir, input_file_name.replace(postfix, pos_addition + "_projection.tif"))
         zmap_filename = os.path.join(output_dir, input_file_name.replace(postfix, pos_addition + "_zmap.npy"))
-        save_tiff(projection_file_name, projection, axes="CYX", data_type="uint16")
+        axes = "TCYX" if dims.T > 1 else "CYX"
+        save_tiff(projection_file_name, projection, axes=axes, data_type="uint16")
         np.save(zmap_filename, zmap)
 
 
