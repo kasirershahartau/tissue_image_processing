@@ -2,7 +2,12 @@ import logging
 
 import numpy as np
 import pandas as pd
-from PyQt5 import QtCore, uic, QtWidgets, QtGui, QtWebEngineWidgets
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QApplication
+QApplication.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling, True)
+QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
+from PyQt5 import QtCore, uic, QtWidgets, QtGui
+from PyQt5 import QtWebEngineWidgets
 import tissue_info
 import matplotlib
 import pickle
@@ -1236,7 +1241,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         if self.compare_frames_combo_box.currentIndex() < 0:
             return 0
         frames_string = self.compare_frames_line_edit.text()
-        split_frame_string =  re.findall("[-\d]+", frames_string)
+        split_frame_string = re.findall("[-\d]+", frames_string)
         frames = []
         for frame_string in split_frame_string:
             frame_string = re.sub(r"\s+", "", frame_string)

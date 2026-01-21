@@ -1150,8 +1150,8 @@ class Tissue(object):
 
     @staticmethod
     def match_labels_different_frames(labels_reference_frame, labels_wanted_frame):
-        labels_reference_frame = labels_reference_frame.astype(np.int)
-        labels_wanted_frame = labels_wanted_frame.astype(np.int)
+        labels_reference_frame = labels_reference_frame.astype(int)
+        labels_wanted_frame = labels_wanted_frame.astype(int)
         max_label = max(np.max(labels_reference_frame), np.max(labels_wanted_frame))
         # Creating arrays in which element i is the location of the label i in the sorted array
         sorting_indices_reference = -1 * np.ones((max_label + 1,)).astype(int)
@@ -1409,7 +1409,9 @@ class Tissue(object):
         if cells_type != 'all':
             title += " for %s only" % cells_type
         ax.set_title(title)
-        return pd.DataFrame({"Frame": data_frames, feature + " average": data, feature + " se": err, "N": n_results}), ""
+        cells_id = valid_cells.label.to_numpy()
+        return pd.DataFrame({"Frame": data_frames, feature + " average": data, feature + " se": err, "N": n_results,
+                             "cell_id":cells_id}), ""
 
     def plot_overall_statistics(self, frame, x_feature, y_feature, ax, intensity_img=None,
                                 x_cells_type="HC", x_positive_for_type=False,  y_cells_type="HC", y_positive_for_type=False,
@@ -1568,12 +1570,43 @@ class Tissue(object):
             ax.set_title(title)
         return res, msg
 
-    def split_into_promoted_and_normal_differentiation(self, threshold):
+
+
+    def split_into_promoted_and_normal_differentiation(self, threshold, output_dir):
         fig, ax = plt.subplots()
         res, msg = self.plot_event_statistics("differentiation", "Distance from ablation", 0, None, 0, ax, None)
         differentiation_indices = self.events.query("type == \"differentiation\"").index.to_numpy()
         near_ablation = res["Distance from ablation"].to_numpy() < threshold
         self.events.loc[differentiation_indices[near_ablation], "type"] = "promoted differentiation"
+        plt.close(fig)
+
+        event_label = "promoted_differentiation"
+        event_type = "promoted differentiation"
+        features = [("area", "roundness"), ("HC contact length", "SC contact length"),
+                    ("HC density", "HC type_fraction"), ("HC neighbors", "SC neighbors"),
+                    ("n_neighbors",), ('perimeter',), ("timing histogram",)]
+        feature_labels = ["area_and_roundness", "contact_length_by_type", "HC_density_and_fraction",
+                          "neighbors_by_type", "number_of_neighbors", "perimeter", "timing"]
+        for feature, feature_label in zip(features, feature_labels):
+            x_feature = feature[0]
+            if len(feature) > 1:
+                y_feature = feature[1]
+            else:
+                y_feature = None
+            x_radius = 200
+            y_radius = 200
+            fig, ax = plt.subplots()
+            filename = "%s_%s.png" % (feature_label, event_label)
+            data_filename = "%s_%s_data" % (feature_label, event_label)
+            res, msg = self.plot_event_statistics(event_type, x_feature, x_radius, y_feature, y_radius, ax,
+                                                  intensity_images=None)
+
+            fig.savefig(os.path.join(output_dir, filename))
+            plt.close(fig)
+            if isinstance(res, pd.DataFrame):
+                res.to_pickle(os.path.join(output_dir, data_filename))
+            elif isinstance(res, np.ndarray):
+                np.save(os.path.join(output_dir, data_filename), res)
         return 0
 
     @staticmethod
@@ -1615,7 +1648,7 @@ class Tissue(object):
     def calculate_n_cells_with_n_neighbors(self, frame, cells, neighbor_type, positive_for_type, second_neighbors=False):
         n_neighbors = self.calculate_n_neighbors_from_type(frame, cells, neighbor_type,
                                                            positive_for_type,
-                                                           second_neighbors).astype(np.int)
+                                                           second_neighbors).astype(int)
         max_number_of_neighbors = np.max(n_neighbors)
         abundance = np.zeros((int(max_number_of_neighbors) + 1))
         initial_n_neighbors, n_cells = np.unique(n_neighbors, return_counts=True)
@@ -1690,7 +1723,7 @@ class Tissue(object):
                 valid_cells = self.get_valid_non_edge_cells(1, cells_info).query(
                     "type == 0")  # only SC, TODO change to more general thing
                 n_neighbors = self.calculate_n_neighbors_from_type(event_frame, valid_cells, neighbor_type, positive_for_type,
-                                                 second_neighbors).astype(np.int)
+                                                 second_neighbors).astype(int)
             relevant_group_size = np.count_nonzero(n_neighbors == n_neighbors_for_event)
             if n_neighbors_for_event > max_number_of_neighbors:
                 continue
@@ -1757,7 +1790,7 @@ class Tissue(object):
                 invalid_neighbors = neighbors_data.query("valid == 0 and empty_cell == 0")
                 neighbors_from_type[index] = invalid_neighbors.shape[0]
             index += 1
-        return neighbors_from_type.astype(np.int)
+        return neighbors_from_type.astype(int)
 
     def calculate_n_neighbors_by_type(self, frame, cells, type_list):
         data = dict()
@@ -1859,6 +1892,8 @@ class Tissue(object):
             overall_drift_y = 0
             index = 0
             for frame in range(initial_frame, final_frame + 1):
+                if np.isnan(tissue.drifts[frame - 1, :]).any():
+                    update_next_drift = True
                 if tissue.valid_frames[frame - 1] == 0:
                     if not np.isnan(tissue.drifts[frame - 1, 0]):
                         tissue.drifts[frame - 1, :] = np.nan
@@ -2850,9 +2885,9 @@ class Tissue(object):
             if cell_info is None:
                 new_labels = np.max(labels) + np.arange(1, n_new_labels + 1)
             else:
-                empty_indices = np.argwhere(cell_info.empty_cell.to_numpy() == 1)
+                empty_indices = cell_info.query("empty_cell == 1").index
                 if len(empty_indices) > 0:
-                    new_labels = empty_indices + 1
+                    new_labels = empty_indices.to_numpy() + 1
                     if new_labels.size > n_new_labels:
                         new_labels = new_labels[:n_new_labels]
                     else:
@@ -3825,15 +3860,16 @@ class Tissue(object):
             print("finished frame %d" % frame, flush=True)
         return 0
 
-    def calculate_total_area_in_movie(self):
+    def calculate_average_area_in_movie(self):
         area = 0
         for frame in range(1, self.number_of_frames + 1):
             if self.is_frame_valid(frame):
                 cells_info = self.get_cells_info(frame)
                 valid_cells = cells_info.query("valid == 1 and empty_cell == 0")
                 area += np.sum(valid_cells.area.to_numpy())
-        print("Total area = %f pixels^2" % area)
-        return 0
+        average_valid_area = area/self.get_number_of_valid_frames()
+        print("Average area = %f pixels^2" % average_valid_area)
+        return average_valid_area
 
     def save_event_statistics_data(self, ref_frames, output_dir):
         event_types = ["division", "delamination", "differentiation", "overall reference SC", "overall reference HC"]
@@ -3922,9 +3958,41 @@ class Tissue(object):
             res_avg["N"] = res.count(axis=0)
             res_avg.to_excel(os.path.join(output_dir, "%savg.xlsx" % (type_name)))
 
-
-
-
+    def save_reference_data(self, output_dir, ref_frames=[1]):
+        event_types = ["overall reference SC", "overall reference HC"]
+        event_labels = ["reference_SC", "reference_HC"]
+        features = [("area", "roundness"), ("HC contact length", "SC contact length"),
+                    ("HC density", "HC type_fraction"), ("HC neighbors", "SC neighbors"),
+                    ("n_neighbors",), ('perimeter',)]
+        feature_labels = ["area_and_roundness", "contact_length_by_type", "HC_density_and_fraction",
+                          "neighbors_by_type", "number_of_neighbors", "perimeter"]
+        for event_type, event_label in zip(event_types, event_labels):
+            for feature, feature_label in zip(features, feature_labels):
+                x_feature = feature[0]
+                if len(feature) > 1:
+                    y_feature = feature[1]
+                else:
+                    y_feature = None
+                x_radius = 200
+                y_radius = 200
+                for frame in ref_frames:
+                    fig, ax = plt.subplots()
+                    filename = "%s_%s_frame%d.png" % (feature_label, event_label, frame)
+                    data_filename = "%s_%s_frame%d_data" % (feature_label, event_label, frame)
+                    cell_type = "HC"
+                    is_positive_for_type = "SC" not in event_type
+                    res, msg = self.plot_overall_statistics(frame, x_feature, y_feature, ax, intensity_img=None,
+                                                            x_cells_type=cell_type,
+                                                            x_positive_for_type=is_positive_for_type,
+                                                            y_cells_type=cell_type,
+                                                            y_positive_for_type=is_positive_for_type,
+                                                            x_radius=x_radius, y_radius=y_radius)
+                    fig.savefig(os.path.join(output_dir, filename))
+                    plt.close(fig)
+                    if isinstance(res, pd.DataFrame):
+                        res.to_pickle(os.path.join(output_dir, data_filename))
+                    elif isinstance(res, np.ndarray):
+                        np.save(os.path.join(output_dir, data_filename), res)
 
     def get_trackking_labels(self, frame):
         labels = self.get_labels(frame)
