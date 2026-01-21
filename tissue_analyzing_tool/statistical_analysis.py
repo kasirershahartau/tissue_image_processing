@@ -1,11 +1,13 @@
 import numpy as np
 import pandas as pd
 import scipy as sp
+import matplotlib
 from matplotlib import pyplot as plt
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
 from statsmodels.genmod.bayes_mixed_glm import PoissonBayesMixedGLM
 from scipy.stats import norm
+from scipy.interpolate import interp1d
 
 ANDERSON_THRESHOLD = 0.05
 DAGOSTINO_THRESHOLD = 0.05
@@ -46,27 +48,27 @@ class TwoSampleCompare:
 
     def check_for_normality(self):
         anderson1 = self.anderson_test(self.sample1)
-        print("%s anderson test p-val: %.3f" % (self.sample1_label, anderson1))
+        # print("%s anderson test p-val: %.3f" % (self.sample1_label, anderson1))
         anderson2 = self.anderson_test(self.sample2)
-        print("%s anderson test p-val: %.3f" % (self.sample2_label, anderson2))
+        # print("%s anderson test p-val: %.3f" % (self.sample2_label, anderson2))
         anderson_passed = anderson1 > ANDERSON_THRESHOLD and anderson2 > ANDERSON_THRESHOLD
         dagostino1 = self.dagostino_test(self.sample1)
-        print("%s  dagostino test p-val: %.3f" % (self.sample1_label, dagostino1))
+        # print("%s  dagostino test p-val: %.3f" % (self.sample1_label, dagostino1))
         dagostino2 = self.dagostino_test(self.sample2)
-        print("%s  dagostino test p-val: %.3f" % (self.sample2_label, dagostino2))
+        # print("%s  dagostino test p-val: %.3f" % (self.sample2_label, dagostino2))
         dagostino_passed = dagostino1 > DAGOSTINO_THRESHOLD and dagostino2 > DAGOSTINO_THRESHOLD
         if self.sample1.size > 2 and self.sample2.size > 2:
             shapiro1 = self.shapiro_test(self.sample1)
-            print("%s  shapiro test p-val: %.3f" % (self.sample1_label, shapiro1))
+            # print("%s  shapiro test p-val: %.3f" % (self.sample1_label, shapiro1))
             shapiro2 = self.shapiro_test(self.sample2)
-            print("%s  shapiro test p-val: %.3f" % (self.sample2_label, shapiro2))
+            # print("%s  shapiro test p-val: %.3f" % (self.sample2_label, shapiro2))
             shapiro_passed = shapiro1 > SHAPIRO_THRESHOLD and shapiro2 > SHAPIRO_THRESHOLD
         else:
             shapiro_passed = False
         kolmogorov1 = self.kolmogorov_test(self.sample1)
-        print("%s  kolmogorov test p-val: %.3f" % (self.sample1_label, kolmogorov1))
+        # print("%s  kolmogorov test p-val: %.3f" % (self.sample1_label, kolmogorov1))
         kolmogorov2 = self.kolmogorov_test(self.sample2)
-        print("%s  kolmogorov test p-val: %.3f" % (self.sample2_label, kolmogorov2))
+        # print("%s  kolmogorov test p-val: %.3f" % (self.sample2_label, kolmogorov2))
         kolmogorov_passed = kolmogorov1 > KOLMOGOROV_THRESHOLD and kolmogorov2 > KOLMOGOROV_THRESHOLD
         return (anderson_passed or dagostino_passed) or (shapiro_passed or kolmogorov_passed)
 
@@ -84,7 +86,7 @@ class TwoSampleCompare:
 
     def compare_variances(self):
         stat, pval = self.f_test(self.sample1, self.sample2)
-        print("F-statistics for variances: %.3f, p-value: %.3f" % (stat, pval))
+        # print("F-statistics for variances: %.3f, p-value: %.3f" % (stat, pval))
         return pval > F_THRESHOLD
 
     def compare_samples(self):
@@ -113,16 +115,14 @@ class HierarchicalTwoSamplesCompare:
     @staticmethod
     def rearrange_data_into_table(data1, data2):
         df = []
-        repeat_index = 1
         for data_index, data in enumerate([data1, data2]):
-            for biological_repeat in range(data.get_number_of_biological_repeats()):
-                for measurement in data.get_partial_sample(biological_repeat):
+            for group in range(data.get_number_of_groups()):
+                for measurement in data.get_partial_sample(group):
                     df.append({
                         'measurement': measurement,
                         'fixed_effect_label': data_index,
-                        'biological_repeat': f"R{repeat_index}"
+                        'biological_repeat': f"R{data.get_biological_repeat(group)}"
                     })
-                repeat_index += 1
         df = pd.DataFrame(df)
         df['fixed_effect_label'] = df['fixed_effect_label'].astype('category')
         df['biological_repeat'] = df['biological_repeat'].astype('category')
@@ -189,22 +189,23 @@ def barplot_annotate_brackets(num1, num2, data, center, height, yerr=None, dh=.0
     if type(data) is str:
         text = data
     else:
+        text = str(data)
         # * is p < 0.05
         # ** is p < 0.005
         # *** is p < 0.0005
         # etc.
-        text = ''
-        p = .05
-
-        while data < p:
-            text += '*'
-            p /= 10.
-
-            if maxasterix and len(text) == maxasterix:
-                break
-
-        if len(text) == 0:
-            text = 'n. s.'
+        # text = ''
+        # p = .05
+        #
+        # while data < p:
+        #     text += '*'
+        #     p /= 10.
+        #
+        #     if maxasterix and len(text) == maxasterix:
+        #         break
+        #
+        # if len(text) == 0:
+        #     text = 'n. s.'
 
     lx, ly = center[num1], height[num1]
     rx, ry = center[num2], height[num2]
@@ -233,7 +234,8 @@ def barplot_annotate_brackets(num1, num2, data, center, height, yerr=None, dh=.0
     return (y+barh)/(ax_y1 - ax_y0)
 
 def compare_and_plot_samples(samples_list, pairs_to_compare, continues=True, plot_style="violin", color='white',
-                             edge_color='grey', fig=None, ax=None, show_statistics=False, show_N=False, hirarchical=False):
+                             edge_color='grey', fig=None, ax=None, show_statistics=False, show_N=False,
+                             hirarchical=False, scatter=False):
 
     # Statistical analysis for each pair
     pvalues = np.zeros((len(pairs_to_compare),))
@@ -262,7 +264,6 @@ def compare_and_plot_samples(samples_list, pairs_to_compare, continues=True, plo
     x = np.arange(len(samples_list))  # x-coordinates of your bars
     if fig is None:
         fig, ax = plt.subplots()
-    scatter = False
     errors = False
     if not isinstance(color, list):
         color = [color for i in range(len(samples_list))]
@@ -279,7 +280,6 @@ def compare_and_plot_samples(samples_list, pairs_to_compare, continues=True, plo
                )
         for pos, y, err, color in zip(x,averages, standard_errors, edge_color):
             ax.errorbar(pos, y, err, lw=2, capsize=15, capthick=2, color=color)
-        scatter = True
     elif plot_style == "box":
         parts = ax.boxplot([s.get_sample() for s in samples_list],
                    vert=True,
@@ -310,6 +310,9 @@ def compare_and_plot_samples(samples_list, pairs_to_compare, continues=True, plo
             pc.set_edgecolor(ec)
     elif plot_style == "histogram":
         y_lim = 0
+        # for scatter if needed
+        y_centers = []
+        x_jitter_width = []
         for i, dataset in enumerate([s.get_sample() for s in samples_list]):
             hist, bin_edges = np.histogram(dataset, bins=(np.arange(np.max(dataset) + 2) - 0.5))
             norm_hist = hist/(1.5*np.max(hist))
@@ -318,11 +321,14 @@ def compare_and_plot_samples(samples_list, pairs_to_compare, continues=True, plo
             lefts = i - 0.5*norm_hist
             y_lim = max(y_lim, np.max(dataset))
             ax.barh(bottom, norm_hist, height=heights, left=lefts, color=color[i], edgecolor=edge_color[i], linewidth=1, alpha=0.6)
-            # for j, val in enumerate(norm_hist):
-            #     ax.text(i, bin_edges[j] + 0.5,
-            #             "%f.1"%(100*(val/np.sum(norm_hist))),
-            #             horizontalalignment='center'
-            #             )
+            if show_statistics:
+                for j, val in enumerate(norm_hist):
+                    ax.text(i, bin_edges[j] + 0.5,
+                            "%f.1"%(100*(val/np.sum(norm_hist))),
+                            horizontalalignment='center'
+                            )
+            y_centers.append(bottom)
+            x_jitter_width.append(norm_hist)
         errors = True
 
         ax.set_xlim([-0.4, len(samples_list) - 0.6])
@@ -337,9 +343,60 @@ def compare_and_plot_samples(samples_list, pairs_to_compare, continues=True, plo
                     )
     if scatter:
         # Adding scattered points on top of the bars
-        for i in range(len(x)):
-            # distribute scatter randomly across whole width of bar
-            ax.scatter(x[i] + np.random.random(sample_sizes[i]) * w - w / 2, samples_list[i].get_sample(), color="black", marker=".")
+        if plot_style == "violin":
+
+            violin_bodies = parts['bodies']
+            paths = [violin_body.get_paths()[0] for violin_body in violin_bodies]
+            vertices = [path.vertices for path in paths]
+
+            for i in range(len(x)):
+                v = vertices[i]
+                left = v[v[:, 0] < x[i]]  # x < center
+                right = v[v[:, 0] > x[i]]  # x > center
+                increasing_left = np.hstack((1, np.diff(left[:, 1]))) > 1e-7
+                f_left = interp1d(left[increasing_left, 1], left[increasing_left, 0], bounds_error=False, fill_value="extrapolate")
+                decreasing_right = np.hstack((1, np.diff(right[:, 1]))) < -1e-7
+                f_right = interp1d(np.flip(right[decreasing_right, 1]), np.flip(right[decreasing_right, 0]), bounds_error=False, fill_value="extrapolate")
+                for group_idx in range(samples_list[i].get_number_of_groups()):
+                    group = samples_list[i].get_partial_sample(group_idx)
+                    # distribute scatter randomly across the local width of the violin plot
+                    x_positions = []
+                    if len(group) > 100:
+                        group = np.random.choice(group, 100)
+                    for y in group:
+                        x_min = f_left(y)
+                        x_max = f_right(y)
+                        jittered_x = np.random.uniform(x_min, x_max)
+                        x_positions.append(jittered_x)
+                    # ax.scatter(x_positions, group, color=matplotlib.color_sequences["tab10"][group_idx], marker=".", s=10)
+                    ax.scatter(x_positions, group, color="gray", marker=".", s=10)
+        elif plot_style == "histogram":
+            for i in range(len(x)):
+                for group_idx in range(samples_list[i].get_number_of_groups()):
+                    group = samples_list[i].get_partial_sample(group_idx)
+                    # distribute scatter randomly across the local width of the violin plot
+                    x_positions = []
+                    y_positions = []
+                    if len(group) > 100:
+                        group = np.random.choice(group, 100)
+                    for y in group:
+                        w = x_jitter_width[i][np.where(y_centers[i]==y)[0]]
+                        jittered_x = np.random.uniform(x[i] - w/2, x[i] + w/2)
+                        jittered_y = np.random.uniform(y + 0.3, y - 0.3)
+                        x_positions.append(jittered_x)
+                        y_positions.append(jittered_y)
+                    # ax.scatter(x_positions, y_positions, color=matplotlib.color_sequences["tab10"][group_idx], marker=".", s=10)
+                    ax.scatter(x_positions, y_positions, color="gray", marker=".", s=10)
+        else:
+            y_jitter = 0
+            for i in range(len(x)):
+                for group_idx in range(samples_list[i].get_number_of_groups()):
+                    group = samples_list[i].get_partial_sample(group_idx)
+                    # distribute scatter randomly across whole width of bar
+                    # ax.scatter(x[i] + np.random.random(group.size) * w - w / 2, group + y_jitter, color=matplotlib.color_sequences["tab10"][group_idx], marker=".", s=10)
+                    ax.scatter(x[i] + np.random.random(group.size) * w - w / 2, group + y_jitter,
+                               color="gray", marker=".", s=10)
+
     if errors:
         for i in range(len(x)):
             ax.errorbar(x[i],
