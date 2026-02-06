@@ -426,6 +426,7 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.spatial_resolution_spin_box.setMaximum(min_planar_dimension)
         self.event_statistics_window_radius_x_data_label_spin_box.setMaximum(min_planar_dimension)
         self.event_statistics_window_radius_y_data_label_spin_box.setMaximum(min_planar_dimension)
+        self.frame_changed()
         self.setState(image=True)
 
     def display_frame(self):
@@ -556,7 +557,6 @@ class FormImageProcessing(QtWidgets.QMainWindow):
         self.histogram_widget.setLabel('left','Frequency')
         self.histogram_widget.setLabel('bottom','Intensity')
         self.histogram_widget.update()
-
 
     def frame_changed(self):
         self.zo_changed = True

@@ -1126,7 +1126,7 @@ class Tissue(object):
             shape_name = splitted_feature[0]
             shape_feature = splitted_feature[1]
             if shape_name in self.shape_fitting_results[frame - 1]:
-                data = self.shape_fitting_results[frame - 1][shape_name][shape_feature]
+                data = tuple(self.shape_fitting_results[frame - 1][shape_name][shape_feature])
             else:
                 data = valid_cells[feature].to_numpy()
         else:
@@ -1409,9 +1409,7 @@ class Tissue(object):
         if cells_type != 'all':
             title += " for %s only" % cells_type
         ax.set_title(title)
-        cells_id = valid_cells.label.to_numpy()
-        return pd.DataFrame({"Frame": data_frames, feature + " average": data, feature + " se": err, "N": n_results,
-                             "cell_id":cells_id}), ""
+        return pd.DataFrame({"Frame": data_frames, feature + " average": data, feature + " se": err, "N": n_results}), ""
 
     def plot_overall_statistics(self, frame, x_feature, y_feature, ax, intensity_img=None,
                                 x_cells_type="HC", x_positive_for_type=False,  y_cells_type="HC", y_positive_for_type=False,
