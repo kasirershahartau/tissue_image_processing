@@ -50,7 +50,13 @@ E17_circular_ablation_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utr
                                  "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-09-11_E17.5_utricle_circular_ablation\\utricle2",
                                  "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2026-01-01_E17.5_utricle_circular_ablation\\utricle1",
                                  "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2026-01-01_E17.5_utricle_circular_ablation\\utricle2",
-                                 "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2026-01-01_E17.5_utricle_circular_ablation\\utricle3"]
+                                 "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2026-01-01_E17.5_utricle_circular_ablation\\utricle3",
+                                 "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2026-01-15_E17.5_utricle_circular_ablation\\utricle1",
+                                 "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2026-01-15_E17.5_utricle_circular_ablation\\utricle2",
+                                 "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2026-01-15_E17.5_utricle_circular_ablation\\utricle3",
+                                 "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2026-01-15_E17.5_utricle_circular_ablation\\utricle4",
+                                 "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2026-01-15_E17.5_utricle_circular_ablation\\utricle5",
+                                 "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2026-01-15_E17.5_utricle_circular_ablation\\utricle6"]
 P0_circular_ablation_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-08-24_P0_utricle_circular_ablation\\utricle2",
                                 "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-08-24_P0_utricle_circular_ablation\\utricle3",
                                 "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2025-09-14_P0_utricle_circular_ablation\\utricle1",
@@ -283,6 +289,7 @@ def fit_circular_ablation_results_to_circle(E17_folders, P0_folders, initial_rad
     fig2, ax2 = plt.subplots(figsize=(10, 10))
     colors = ["blue", "red"]
     labels = ["E17.5", "P0"]
+    all_data = []
     radii_avg = []
     radii_se = []
     stresses = []
@@ -334,7 +341,7 @@ def fit_circular_ablation_results_to_circle(E17_folders, P0_folders, initial_rad
             stresses[list_index].append(stress)
             stresses_err[list_index].append(stress_error)
             print("Bulk_stress_over_viscosity=%f+-%f" % (stress, stress_error))
-
+        all_data.append(truncated_radii)
         radii_avg.append(np.average(truncated_radii, axis=0))
         radius_std = np.std(truncated_radii, axis=0)
         radius_std[0] = 0.1
@@ -342,20 +349,21 @@ def fit_circular_ablation_results_to_circle(E17_folders, P0_folders, initial_rad
             radii_se.append(radius_std/np.sqrt(truncated_radii.shape[0]))
         else:
             radii_se.append(radii_err[0])
-        ax2.errorbar(time[:radii_avg[list_index].size], radii_avg[list_index], yerr=radii_se[list_index], fmt="*", markersize=30,
+        ax2.errorbar(time[:radii_avg[list_index].size], radii_avg[list_index], yerr=radii_se[list_index], fmt="*-", markersize=30,
                      label="%s Data" %labels[list_index], linewidth=2, color=colors[list_index])
     # Calculating bulk stress according to 10.7554/eLife.57964
     # calculated stress/viscosity in units of 1/time-unit
-    index = 0
-    for radius, radius_err in zip(radii_avg, radii_se):
-        popt_radius, pcov_radius = curve_fit(lambda t, a, b: (initial_radius - a) * np.exp(-b * t) + a,
-                                             times[index][:radius.size], radius,
-                                             p0=[initial_radius * 0.8, 0], sigma=radius_err)
-        final_radius = popt_radius[0]
-        young_over_visc = popt_radius[1]
-        ax2.plot(time_fit, (initial_radius - final_radius) * np.exp(-young_over_visc * fit_times[index]) + final_radius,
-                 label="%s Fit" % labels[index], linewidth=6, color=colors[index])
-        index += 1
+    # index = 0
+    # for radius, radius_err in zip(radii_avg, radii_se):
+    #     popt_radius, pcov_radius = curve_fit(lambda t, a, b: (initial_radius - a) * (np.exp(-b * t)) + a,
+    #                                          times[index][:radius.size], radius,
+    #                                          p0=[initial_radius * 0.8, 0.5], sigma=radius_err)
+    #     final_radius = popt_radius[0]
+    #     young_over_visc = popt_radius[1]
+    #     print("final_rad = %f, young = %f" % (final_radius, young_over_visc))
+    #     ax2.plot(time_fit, (initial_radius - final_radius) * (np.exp(-young_over_visc * fit_times[index])) + final_radius,
+    #              label="%s Fit" % labels[index], linewidth=6, color=colors[index])
+    #     index += 1
     ax1.set_xlabel("Time (minutes)", fontsize=font_size)
     ax1.set_ylabel("Radius (microns)", fontsize=font_size)
     ax1.set_xlim([0, 10])
@@ -363,18 +371,28 @@ def fit_circular_ablation_results_to_circle(E17_folders, P0_folders, initial_rad
     ax2.set_xlabel("Time (minutes)", fontsize=font_size)
     ax2.set_ylabel("Radius (microns)", fontsize=font_size)
     ax2.set_xlim([0, 10])
-    ax2.legend(loc="upper right")
+    # ax2.legend(loc="upper right")
     color = ["cyan", "pink"]
     edge_color = ["blue", "red"]
     E17_stress = DataCollector("E17 Stress", sample=np.array(stresses[0]))
     P0_stress = DataCollector("P0 Stress", sample=np.array(stresses[1]))
     fig3, ax3, res = compare_and_plot_samples([E17_stress, P0_stress], [(0, 1)], continues=True,
-                                            plot_style="bar", color=color, edge_color=edge_color,
+                                            plot_style="violin", color=color, edge_color=edge_color,
                                             show_statistics=True, show_N=True)
     fig4, ax4, _ = compare_and_plot_samples([E17_stress, P0_stress], [(0, 1)], continues=True,
-                                              plot_style="bar", color=color, edge_color=edge_color,
+                                              plot_style="violin", color=color, edge_color=edge_color,
                                               show_statistics=False, show_N=False, scatter=True)
+    ax4.set_ylim([0, 0.77])
     plt.tight_layout()
+    # E17_samples = [DataCollector("E17 radius", sample=all_data[0][:,t]) for t in range(1, 10)]
+    # P0_samples = [DataCollector("P0 radius", sample=all_data[1][:,t]) for t in range(1, 10)]
+    # samples_list = []
+    # for i in range(9):
+    #     samples_list.append(E17_samples[i])
+    #     samples_list.append(P0_samples[i])
+    # compare_and_plot_samples(samples_list, [(2*i, 2*i+1) for i in range(9)], continues=True, plot_style="violin",
+    #                          color=["cyan", "pink"]*9, edge_color=["blue", "red"]*9, scatter=True, show_statistics=True,
+    #                          show_N=True)
     plt.show()
 
 
@@ -724,6 +742,47 @@ def compare_E17_P0_neighbors_by_type():
     edge_color = ["mediumpurple"] * 3 + ["lightpink"] * 2
     compare_and_plot_samples(list(SC_with_Zero_HC_neighbors), [""]*5, [], continues=True, plot_style="box", color=color,
     edge_color=edge_color, fig=fig, ax=ax, show_statistics=False, show_N=False)
+    plt.show()
+def compare_E17_P0_HC_neighbors_with_model():
+    E17_diff = DataCollector("E17.5 differentiating cells", E17_folders,
+                             ["neighbors_by_type_differentiation_data"] * 3,
+                             ["HC neighbors"] * 3)
+    P0_diff = DataCollector("P0 differentiating cells", P0_folders,
+                            ["neighbors_by_type_differentiation_data"] * 3,
+                            ["HC neighbors"] * 3)
+    model_folder = r"C:\Users\Kasirer\Phd\mouse_ear_project\tissue_model"
+    psigma_vals = [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0]
+    model_res = [np.load(os.path.join(model_folder, "stress_dependent_on_random_0_psigma-%.1f_gammaSC-0.5_patoh-0.31 results HC with HC neighbors.npy"%psigma)) for psigma in psigma_vals]
+
+    model0 = DataCollector("psigma=0 model",sample=model_res[0][0])
+    # model2 = DataCollector("psigma=2 model", sample=model_res[1][0])
+    # model4 = DataCollector("psigma=4 model", sample=model_res[2][0])
+    # model6 = DataCollector("psigma=6 model", sample=model_res[3][0])
+    model8 = DataCollector("psigma=8 model", sample=model_res[4][0])
+    # model10 = DataCollector("psigma=10 model", sample=model_res[5][0])
+    # model12 = DataCollector("psigma=12 model", sample=model_res[6][0])
+
+    samples_list = [E17_diff, P0_diff, model0, model8]
+    pairs_to_compare = [(0,2), (1,3)]
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="histogram", color=["cyan", "pink", "turquoise", "orange"],
+                                                      edge_color=["blue", "red", "green", "purple"],
+                                                      show_statistics=True, show_N=True, hirarchical=True,
+                                                      scatter=False)
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
+                                                      plot_style="histogram", color=["cyan", "pink", "turquoise", "orange"],
+                                                      edge_color=["blue", "red", "green", "purple"],
+                                                      show_statistics=False, show_N=False, scatter=True)
+    from matplotlib.ticker import MaxNLocator
+    empty_ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+    empty_ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    empty_ax.set_ylim([-0.75, 3.5])
+    # pvalues_E17 = [res["pvalues"][(0,i)] for i in range(2,7)]
+    # pvalues_P0 = [res["pvalues"][(1, i)] for i in range(2,7)]
+    # fig, ax = plt.subplots()
+    # ax.plot(np.arange(len(pvalues_E17)), pvalues_E17[::-1], "b*-")
+    # ax.plot(np.arange(len(pvalues_P0)), pvalues_P0[::-1], "r*-")
+
     plt.show()
 
 def compare_E17_P0_HC_neighbors_for_differentiation_and_trans_differentiation():
@@ -1248,6 +1307,9 @@ def compare_E17_E19_and_P0_P2_area_and_roundness():
     # pairs_to_compare = [(0,1), (2,3), (4,5), (6,7), (8,9), (10, 11), (12,13), (14,15)]
     samples_list = [E17_after_48h_HC_roundness, E19_HC_roundness,
                     P0_after_48h_HC_roundness, P2_HC_roundness
+                    ]
+    samples_list = [E19_HC_area, E19_SC_area,
+                    P2_HC_area, P2_SC_area
                     ]
     pairs_to_compare = [(0, 1), (2, 3)]
     full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
@@ -2324,11 +2386,12 @@ if __name__ == "__main__":
     # fit_circular_ablation_results_to_circle(E17_circular_ablation_folders, P0_circular_ablation_folders, 60)
     # compare_distance_from_ablation()
     # compare_E17_P0_HC_neighbors_for_differentiation_and_trans_differentiation()
+    compare_E17_P0_HC_neighbors_with_model()
     # compare_E17_P0_HC_contact_length_for_differentiation_and_trans_differentiation()
     # compare_E17_P0_rho_inhibition_neighbors_by_type()
     # plot_rho_inhibition_HC_SC_roundness()
     # plot_number_of_events()
-    compare_E17_E19_and_P0_P2_neighbors()
-    compare_E17_E19_and_P0_P2_contact_length()
-    compare_E17_E19_and_P0_P2_area_and_roundness()
+    # compare_E17_E19_and_P0_P2_neighbors()
+    # compare_E17_E19_and_P0_P2_contact_length()
+    # compare_E17_E19_and_P0_P2_area_and_roundness()
 
