@@ -1,116 +1,515 @@
 import numpy as np
 import pandas as pd
 import scipy as sp
+import os
 import matplotlib
 from matplotlib import pyplot as plt
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
-from statsmodels.genmod.bayes_mixed_glm import PoissonBayesMixedGLM
-from scipy.stats import norm
+import scipy.stats as stats
+from scipy.stats import norm, chi2, shapiro, skew, mannwhitneyu
 from scipy.interpolate import interp1d
+from statsmodels.formula.api import ols
+from statsmodels.stats.multicomp import pairwise_tukeyhsd
+import scikit_posthocs as sp
+from statsmodels.stats.multitest import multipletests
+from openpyxl import load_workbook
 
-ANDERSON_THRESHOLD = 0.05
-DAGOSTINO_THRESHOLD = 0.05
-SHAPIRO_THRESHOLD = 0.05
-KOLMOGOROV_THRESHOLD = 0.05
-F_THRESHOLD = 0.05
+def _append_row_to_excel(filename, sheet_name, row_dict):
+    """
+    Appends a single row (dict) to an Excel sheet.
+    Creates the file or sheet if needed.
+    """
+
+    # -----------------------------
+    # CASE 1 — File does NOT exist
+    # -----------------------------
+    if not os.path.exists(filename):
+        df = pd.DataFrame([row_dict])
+        with pd.ExcelWriter(filename, engine="openpyxl", mode="w") as writer:
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+        return
+
+    # -----------------------------
+    # CASE 2 — File exists
+    # -----------------------------
+    try:
+        book = load_workbook(filename)
+    except Exception:
+        # File exists but is corrupted or not a real Excel file
+        print(f"Warning: '{filename}' is not a valid Excel file. Recreating it.")
+        df = pd.DataFrame([row_dict])
+        with pd.ExcelWriter(filename, engine="openpyxl", mode="w") as writer:
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+        return
+
+    # -----------------------------
+    # CASE 2A — Sheet exists → append
+    # -----------------------------
+    if sheet_name in book.sheetnames:
+        existing = pd.read_excel(filename, sheet_name=sheet_name)
+        new_df = pd.concat([existing, pd.DataFrame([row_dict])], ignore_index=True)
+
+        with pd.ExcelWriter(filename, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+            new_df.to_excel(writer, sheet_name=sheet_name, index=False)
+        return
+
+    # -----------------------------
+    # CASE 2B — Sheet does NOT exist → add new sheet
+    # -----------------------------
+    # Load all existing sheets
+    all_sheets = {name: pd.read_excel(filename, sheet_name=name) for name in book.sheetnames}
+
+    # Add the new sheet
+    all_sheets[sheet_name] = pd.DataFrame([row_dict])
+
+    # Rewrite the entire file with all sheets
+    with pd.ExcelWriter(filename, engine="openpyxl", mode="w") as writer:
+        for name, df in all_sheets.items():
+            df.to_excel(writer, sheet_name=name, index=False)
 
 class TwoSampleCompare:
-    def __init__(self, sample1, sample2, sample1_label='sample1', sample2_label='sample2', continues=True):
-        self.sample1 = sample1
-        self.sample2 = sample2
+    def __init__(self, sample1, sample2, sample1_label='sample1', sample2_label='sample2', continuous=True):
+        self.sample1 = np.array(sample1)
+        self.sample2 = np.array(sample2)
         self.sample1_label = sample1_label
         self.sample2_label = sample2_label
-        self.continues = continues
+        self.continuous = continuous
+
+    # ---------------------------------------------------------
+    # NORMALITY CHECK
+    # ---------------------------------------------------------
 
     @staticmethod
-    def anderson_test(sample):
-        res = sp.stats.anderson(sample, dist='norm')
-        pval = res.significance_level[np.argmin(np.abs(res.statistic - res.critical_values))]/100
-        return pval
+    def is_normal(sample):
+        sample = np.array(sample)
+
+        # Too small for reliable normality tests
+        if sample.size < 5:
+            return False
+
+        # Shapiro–Wilk (best for small n)
+        if sample.size < 20:
+            p = stats.shapiro(sample).pvalue
+            return p > 0.05
+
+        # D’Agostino–Pearson (better for n >= 20)
+        p = stats.normaltest(sample).pvalue
+        return p > 0.05
+
+    # ---------------------------------------------------------
+    # VARIANCE EQUALITY CHECK
+    # ---------------------------------------------------------
 
     @staticmethod
-    def dagostino_test(sample):
-        if sample.size < 8:
-            return 0
-        res = sp.stats.normaltest(sample, nan_policy='omit')
-        return res.pvalue
+    def equal_variances(x, y):
+        # Levene’s test (robust to non-normality)
+        p = stats.levene(x, y).pvalue
+        return p > 0.05
 
-    @staticmethod
-    def shapiro_test(sample):
-        res = sp.stats.shapiro(sample)
-        return res.pvalue
+    # ---------------------------------------------------------
+    # MAIN COMPARISON
+    # ---------------------------------------------------------
 
-    @staticmethod
-    def kolmogorov_test(sample):
-        res = sp.stats.ks_1samp(sample, sp.stats.norm.cdf)
-        return res.pvalue
+    def compare_samples(self, verbose=False, save_to_excel=None, sheet="", label=""):
 
-    def check_for_normality(self):
-        anderson1 = self.anderson_test(self.sample1)
-        # print("%s anderson test p-val: %.3f" % (self.sample1_label, anderson1))
-        anderson2 = self.anderson_test(self.sample2)
-        # print("%s anderson test p-val: %.3f" % (self.sample2_label, anderson2))
-        anderson_passed = anderson1 > ANDERSON_THRESHOLD and anderson2 > ANDERSON_THRESHOLD
-        dagostino1 = self.dagostino_test(self.sample1)
-        # print("%s  dagostino test p-val: %.3f" % (self.sample1_label, dagostino1))
-        dagostino2 = self.dagostino_test(self.sample2)
-        # print("%s  dagostino test p-val: %.3f" % (self.sample2_label, dagostino2))
-        dagostino_passed = dagostino1 > DAGOSTINO_THRESHOLD and dagostino2 > DAGOSTINO_THRESHOLD
-        if self.sample1.size > 2 and self.sample2.size > 2:
-            shapiro1 = self.shapiro_test(self.sample1)
-            # print("%s  shapiro test p-val: %.3f" % (self.sample1_label, shapiro1))
-            shapiro2 = self.shapiro_test(self.sample2)
-            # print("%s  shapiro test p-val: %.3f" % (self.sample2_label, shapiro2))
-            shapiro_passed = shapiro1 > SHAPIRO_THRESHOLD and shapiro2 > SHAPIRO_THRESHOLD
+        # If data is not continuous → always use Mann–Whitney
+        if not self.continuous:
+            stat, p = stats.mannwhitneyu(self.sample1, self.sample2, alternative='two-sided')
+            if verbose:
+                print(f"Using Mann–Whitney U test: U={stat:.3f}, p={p:.3f}")
+
+            results = {
+                "test": "Mann–Whitney U",
+                "stat": stat,
+                "p": p,
+                "normal1": False,
+                "normal2": False,
+                "normal": False,
+                "equal_var": None,
+            }
+
+        # Check normality
+        normal1 = self.is_normal(self.sample1)
+        normal2 = self.is_normal(self.sample2)
+        normal = normal1 and normal2
+
+        if not normal:
+            stat, p = stats.mannwhitneyu(self.sample1, self.sample2, alternative='two-sided')
+            if verbose:
+                print(f"Using Mann–Whitney U test (non-normal data): U={stat:.3f}, p={p:.3f}")
+
+            results = {
+                "test": "Mann–Whitney U",
+                "stat": stat,
+                "p": p,
+                "normal1": normal1,
+                "normal2": normal2,
+                "normal": normal,
+                "equal_var": None,
+            }
         else:
-            shapiro_passed = False
-        kolmogorov1 = self.kolmogorov_test(self.sample1)
-        # print("%s  kolmogorov test p-val: %.3f" % (self.sample1_label, kolmogorov1))
-        kolmogorov2 = self.kolmogorov_test(self.sample2)
-        # print("%s  kolmogorov test p-val: %.3f" % (self.sample2_label, kolmogorov2))
-        kolmogorov_passed = kolmogorov1 > KOLMOGOROV_THRESHOLD and kolmogorov2 > KOLMOGOROV_THRESHOLD
-        return (anderson_passed or dagostino_passed) or (shapiro_passed or kolmogorov_passed)
+            # Normal → use t-test
+            equal_var = self.equal_variances(self.sample1, self.sample2)
+            test_name = "Student's t-test" if equal_var else "Welch's t-test"
+
+            stat, p = stats.ttest_ind(self.sample1, self.sample2, equal_var=equal_var)
+            if verbose:
+                print(f"Using {test_name}: t={stat:.3f}, p={p:.3f}")
+
+            results = {
+                "test": test_name,
+                "stat": stat,
+                "p": p,
+                "normal1": normal1,
+                "normal2": normal2,
+                "normal": normal,
+                "equal_var": equal_var,
+            }
+
+        if save_to_excel:
+            if save_to_excel:
+                row = {
+                    "label": label,
+                    "sample1": self.sample1_label,
+                    "sample2": self.sample2_label,
+                    "test_used": results["test"],
+                    "statistic": results["stat"],
+                    "p_value": results["p"],
+                    "normality_sample1": results["normal1"],
+                    "normality_sample2": results["normal2"],
+                    "both_normal": results["normal"],
+                    "equal_variances": results["equal_var"],
+                }
+                _append_row_to_excel(save_to_excel, sheet, row)
+
+        return p
+
+class TwoByTwoCompare:
+    """
+    Compare four samples in a 2×2 factorial design:
+    Factor A: two levels (A1, A2)
+    Factor B: two levels (B1, B2)
+
+    Samples must be provided as:
+        A1B1, A1B2, A2B1, A2B2
+    """
+
+    def __init__(self,
+                 A1B1, A1B2, A2B1, A2B2,
+                 factorA_name="FactorA",
+                 factorB_name="FactorB",
+                 A_levels=("A1", "A2"),
+                 B_levels=("B1", "B2"),
+                 continuous=True):
+
+        self.samples = {
+            (A_levels[0], B_levels[0]): np.array(A1B1),
+            (A_levels[0], B_levels[1]): np.array(A1B2),
+            (A_levels[1], B_levels[0]): np.array(A2B1),
+            (A_levels[1], B_levels[1]): np.array(A2B2),
+        }
+
+        self.factorA_name = factorA_name
+        self.factorB_name = factorB_name
+        self.A_levels = A_levels
+        self.B_levels = B_levels
+        self.continuous = continuous
+
+        # Build long-format dataframe for ANOVA
+        self.df = self._build_dataframe()
+
+    # ---------------------------------------------------------
+    # DATAFRAME BUILDER
+    # ---------------------------------------------------------
+
+    def _build_dataframe(self):
+        rows = []
+        for (A, B), values in self.samples.items():
+            for v in values:
+                rows.append({self.factorA_name: A,
+                             self.factorB_name: B,
+                             "value": v})
+        return pd.DataFrame(rows)
+
+    # ---------------------------------------------------------
+    # NORMALITY CHECK
+    # ---------------------------------------------------------
 
     @staticmethod
-    def f_test(x, y):
-        x = np.array(x)
-        y = np.array(y)
-        x_var = np.var(x, ddof=1)
-        y_var = np.var(y, ddof=1)
-        f = max(x_var, y_var) / min(x_var, y_var)  # calculate F test statistic
-        dfn = x.size - 1 if x_var > y_var else y.size  # define degrees of freedom numerator
-        dfd = y.size - 1 if x_var > y_var else x.size  # define degrees of freedom denominator
-        p = 1 - sp.stats.f.cdf(f, dfn, dfd)  # find p-value of F test statistic
-        return f, p
+    def is_normal(sample):
+        sample = np.array(sample)
+        if sample.size < 5:
+            return False
+        if sample.size < 20:
+            return stats.shapiro(sample).pvalue > 0.05
+        return stats.normaltest(sample).pvalue > 0.05
 
-    def compare_variances(self):
-        stat, pval = self.f_test(self.sample1, self.sample2)
-        # print("F-statistics for variances: %.3f, p-value: %.3f" % (stat, pval))
-        return pval > F_THRESHOLD
+    # ---------------------------------------------------------
+    # VARIANCE HOMOGENEITY CHECK
+    # ---------------------------------------------------------
 
-    def compare_samples(self):
-        if not self.check_for_normality() or not self.continues:
-            statistics, pvalue = sp.stats.mannwhitneyu(self.sample1, self.sample2, nan_policy='omit')
-            print("Using Mann-Whitney test: u - %.3f, p-value - %.3f" % (statistics, pvalue))
+    def equal_variances(self):
+        groups = [
+            group["value"].to_numpy()
+            for _, group in self.df.groupby([self.factorA_name, self.factorB_name])
+        ]
+        stat, p = stats.levene(*groups)
+        return p > 0.05
+
+    def _flatten_posthoc(self, posthoc):
+        """
+        Convert a posthoc DataFrame into a flat dict of columns.
+        Example:
+            comparison | p_raw | p_corrected
+            A vs B     | 0.01  | 0.02
+        becomes:
+            posthoc_A_vs_B_p_raw = 0.01
+            posthoc_A_vs_B_p_corrected = 0.02
+        """
+
+        flat = {}
+
+        if posthoc is None:
+            return flat
+
+        df = posthoc.copy()
+
+        # Ensure comparison column exists
+        if "comparison" in df.columns:
+            comp_col = "comparison"
         else:
-            equal_variances = self.compare_variances()
-            # student's t-test if variances are equal or Welch's t-test otherwise
-            test = "Student's-t" if equal_variances else "Welch's-t"
-            statistics, pvalue = sp.stats.ttest_ind(self.sample1, self.sample2, equal_var=equal_variances, nan_policy='omit')
-            print("Using %s test: statistics - %.3f, p-value - %.3f" % (test, statistics, pvalue))
-        return pvalue
+            # Tukey summary table → convert to DataFrame
+            df = df.reset_index()
+            comp_col = df.columns[0]
+
+        for _, row in df.iterrows():
+            comp = str(row[comp_col]).replace(" ", "").replace("-", "_").replace(":", "_")
+            for col in df.columns:
+                if col == comp_col:
+                    continue
+                key = f"posthoc_{comp}_{col}"
+                flat[key] = row[col]
+
+        return flat
+
+    # ---------------------------------------------------------
+    # MAIN COMPARISON
+    # ---------------------------------------------------------
+
+    def compare(self, verbose=False, save_to_excel=None, sheet="", label=""):
+        """
+        Performs:
+        - Two-way ANOVA if assumptions met
+        - Otherwise Scheirer–Ray–Hare nonparametric test
+        - Tukey or nonparametric posthoc tests
+        - Optionally saves results to Excel (single sheet)
+        """
+
+        # Non-continuous → Kruskal-based factorial test
+        if not self.continuous:
+            if verbose:
+                print("Using Scheirer–Ray–Hare test (non-parametric 2×2 ANOVA).")
+            results = self._scheirer_ray_hare(verbose)
+        else:
+            # Check assumptions
+            normal = all(self.is_normal(v) for v in self.samples.values())
+            equal_var = self.equal_variances()
+
+            self.normal = normal
+            self.equal_var = equal_var
+
+            if verbose:
+                print(f"Normality: {normal}, Equal variances: {equal_var}")
+
+            if normal and equal_var:
+                results = self._two_way_anova(verbose)
+            else:
+                if verbose:
+                    print("Assumptions violated → using Scheirer–Ray–Hare test.")
+                results = self._scheirer_ray_hare(verbose)
+
+        # -----------------------------
+        # SAVE TO EXCEL (single sheet)
+        # -----------------------------
+        if save_to_excel:
+
+            # Determine test type and p-values
+            if "anova" in results:
+                test_type = "ANOVA"
+                pA = results["anova"].loc[self.factorA_name, "PR(>F)"]
+                pB = results["anova"].loc[self.factorB_name, "PR(>F)"]
+                pAB = results["anova"].loc[f"C({self.factorA_name}):C({self.factorB_name})", "PR(>F)"]
+
+                # Tukey posthoc
+                tukey = results["posthoc"]
+                # Convert Tukey summary to DataFrame
+                tukey_df = pd.DataFrame(tukey._results_table.data[1:], columns=tukey._results_table.data[0])
+                posthoc_flat = self._flatten_posthoc(tukey_df)
+
+            else:
+                test_type = "SRH"
+                pA = results["SRH"].loc[self.factorA_name, "p"]
+                pB = results["SRH"].loc[self.factorB_name, "p"]
+                pAB = results["SRH"].loc["Interaction", "p"]
+
+                posthoc = results["posthoc"]["posthoc"]
+                posthoc_flat = self._flatten_posthoc(posthoc)
+
+            # Base row
+            row = {
+                "label": label,
+                "test_type": test_type,
+                "factorA": self.factorA_name,
+                "factorB": self.factorB_name,
+                "p_factorA": pA,
+                "p_factorB": pB,
+                "p_interaction": pAB,
+            }
+
+            # Merge flattened posthoc columns
+            row.update(posthoc_flat)
+
+            _append_row_to_excel(save_to_excel, sheet, row)
+
+        return results
+
+    # ---------------------------------------------------------
+    # TWO-WAY ANOVA
+    # ---------------------------------------------------------
+
+    def _two_way_anova(self, verbose):
+        model = ols(f"value ~ C({self.factorA_name}) * C({self.factorB_name})",
+                    data=self.df).fit()
+        anova_table = sm.stats.anova_lm(model, typ=2)
+
+        if verbose:
+            print("\nTwo-way ANOVA:")
+            print(anova_table)
+
+        # Posthoc Tukey
+        tukey = pairwise_tukeyhsd(self.df["value"],
+                                  self.df[self.factorA_name] + "_" +
+                                  self.df[self.factorB_name])
+
+        if verbose:
+            print("\nPosthoc Tukey HSD:")
+            print(tukey)
+
+        return {"anova": anova_table, "posthoc": tukey}
+
+    # ---------------------------------------------------------
+    # SCHEIRER–RAY–HARE (nonparametric 2×2 ANOVA)
+    # ---------------------------------------------------------
+
+    def _scheirer_ray_hare(self, verbose):
+        df = self.df.copy()
+        df["rank"] = stats.rankdata(df["value"])
+
+        A = df.groupby(self.factorA_name)["rank"].sum()
+        B = df.groupby(self.factorB_name)["rank"].sum()
+        AB = df.groupby([self.factorA_name, self.factorB_name])["rank"].sum()
+
+        N = len(df)
+        a = len(self.A_levels)
+        b = len(self.B_levels)
+
+        H_A = 12 / (N * (N + 1)) * sum(A ** 2 / df[self.factorA_name].value_counts()) - 3 * (N + 1)
+        H_B = 12 / (N * (N + 1)) * sum(B ** 2 / df[self.factorB_name].value_counts()) - 3 * (N + 1)
+        H_AB = 12 / (N * (N + 1)) * sum(AB ** 2 / df.groupby([self.factorA_name,
+                                                              self.factorB_name]).size()) - H_A - H_B - 3 * (N + 1)
+
+        p_A = 1 - stats.chi2.cdf(H_A, a - 1)
+        p_B = 1 - stats.chi2.cdf(H_B, b - 1)
+        p_AB = 1 - stats.chi2.cdf(H_AB, (a - 1) * (b - 1))
+
+        results = pd.DataFrame({
+            "H": [H_A, H_B, H_AB],
+            "p": [p_A, p_B, p_AB]
+        }, index=[self.factorA_name, self.factorB_name, "Interaction"])
+
+        # run post-hoc logic
+        posthoc = self._posthoc_srh(results)
+
+        if verbose:
+            print("\nScheirer–Ray–Hare test:")
+            print(results)
+            print("\nPosthoc:")
+            print(posthoc["type"])
+            print(posthoc['posthoc'].to_string())
+
+        return {"SRH": results, "posthoc": posthoc}
+
+    def _posthoc_srh(self, srh_results):
+        """
+        Post-hoc logic for Scheirer–Ray–Hare test.
+        - If interaction significant → simple effects (Mann–Whitney)
+        - Else if main effects significant → Dunn test
+        """
+
+        pA = srh_results.loc[self.factorA_name, "p"]
+        pB = srh_results.loc[self.factorB_name, "p"]
+        pAB = srh_results.loc["Interaction", "p"]
+
+        # Build group labels
+        df = self.df.copy()
+        df["group"] = df[self.factorA_name] + "_" + df[self.factorB_name]
+
+        # Extract the four groups
+        g = {}
+        for (A, B), vals in self.samples.items():
+            g[f"{A}_{B}"] = np.array(vals)
+
+        # ------------------------------------------
+        # Interaction significant → simple effects
+        # ------------------------------------------
+        if pAB < 0.05:
+            comparisons = [
+                ("A1B1 vs A1B2", g[f"{self.A_levels[0]}_{self.B_levels[0]}"],
+                 g[f"{self.A_levels[0]}_{self.B_levels[1]}"]),
+                ("A2B1 vs A2B2", g[f"{self.A_levels[1]}_{self.B_levels[0]}"],
+                 g[f"{self.A_levels[1]}_{self.B_levels[1]}"]),
+                ("A1B1 vs A2B1", g[f"{self.A_levels[0]}_{self.B_levels[0]}"],
+                 g[f"{self.A_levels[1]}_{self.B_levels[0]}"]),
+                ("A1B2 vs A2B2", g[f"{self.A_levels[0]}_{self.B_levels[1]}"],
+                 g[f"{self.A_levels[1]}_{self.B_levels[1]}"]),
+            ]
+
+            names = []
+            pvals = []
+
+            for name, x, y in comparisons:
+                stat, p = mannwhitneyu(x, y, alternative="two-sided")
+                names.append(name)
+                pvals.append(p)
+
+            # Holm correction
+            _, pvals_corr, _, _ = multipletests(pvals, method="holm")
+
+            posthoc = pd.DataFrame({
+                "comparison": names,
+                "p_raw": pvals,
+                "p_corrected": pvals_corr
+            })
+            return {"type": "simple_effects", "posthoc": posthoc}
+
+        # ------------------------------------------
+        # No interaction, but main effect significant → Dunn test
+        # ------------------------------------------
+        else:
+            dunn = sp.posthoc_dunn(df, val_col="value", group_col="group", p_adjust="holm")
+            return {"type": "dunn", "posthoc": dunn}
+
 
 class HierarchicalTwoSamplesCompare:
-    """ Comparing two samples with hierarchical structure (e.g. different cells in the same tissue for a few biological
-     repeats"""
 
-    def __init__(self, data1, data2, continues=True):
+    def __init__(self, data1, data2, continuous=True):
         """
-        data1, data2 - DataCollector instances where each file is a biological repeat
+        continuous = False  → use Poisson/NB/ZIP/ZINB pipeline
+        continuous = True → use continuous-data pipeline
         """
         self.data = self.rearrange_data_into_table(data1, data2)
-        self.continues = continues
+        self.continuous = continuous
 
     @staticmethod
     def rearrange_data_into_table(data1, data2):
@@ -120,54 +519,211 @@ class HierarchicalTwoSamplesCompare:
                 for measurement in data.get_partial_sample(group):
                     df.append({
                         'measurement': measurement,
-                        'fixed_effect_label': data_index,
-                        'biological_repeat': f"R{data.get_biological_repeat(group)}"
+                        'stage': data_index,
+                        'replicate': f"R{data.get_biological_repeat(group)}"
                     })
         df = pd.DataFrame(df)
-        df['fixed_effect_label'] = df['fixed_effect_label'].astype('category')
-        df['biological_repeat'] = df['biological_repeat'].astype('category')
+        df['stage'] = df['stage'].astype('category')
+        df['replicate'] = df['replicate'].astype('category')
         return df
 
-    def fit_poissonian_GLMM(self):
-        # Define model matrices
-        endog = self.data['measurement']
-        exog = sm.add_constant(self.data['fixed_effect_label'])
-        exog_re = pd.get_dummies(self.data['biological_repeat'], drop_first=False)  # random effect
-        ident = list(range(exog_re.shape[1]))
+    # ---------------------------------------------------------
+    # COUNT-DATA DIAGNOSTICS
+    # ---------------------------------------------------------
 
-        # Fit Poisson GLMM
-        model = PoissonBayesMixedGLM(endog, exog, exog_re, ident)
-        result = model.fit_vb()
-        return result
+    def check_overdispersion(self, model):
+        pearson = sum(model.resid_pearson**2)
+        df = model.df_resid
+        return pearson / df
 
-    def fit_LMM(self):
-        model = smf.mixedlm("measurement ~ fixed_effect_label", self.data, groups=self.data["biological_repeat"])
-        result = model.fit()
-        return result
+    def check_zero_inflation(self):
+        y = self.data['measurement']
+        lam = y.mean()
+        expected_zeros = np.exp(-lam)
+        observed_zeros = (y == 0).mean()
+        return observed_zeros > expected_zeros * 1.5
 
-    @staticmethod
-    def calc_pval_from_mean_and_sd(mean, sd):
-        z_val = mean/sd
-        p_val = 2 * (1 - norm.cdf(np.abs(z_val)))
-        return p_val
+    # ---------------------------------------------------------
+    # COUNT-DATA MODELS
+    # ---------------------------------------------------------
 
-    def compare_samples(self):
-        try:
-            if self.continues:
-                res = self.fit_LMM()
-                p_val = res.pvalues["fixed_effect_label[T.1]"]
+    def fit_poisson(self):
+        return smf.glm("measurement ~ stage", data=self.data,
+                       family=sm.families.Poisson()).fit()
+
+    def fit_nb(self):
+        return smf.glm("measurement ~ stage", data=self.data,
+                       family=sm.families.NegativeBinomial()).fit()
+
+    def fit_zip(self):
+        import statsmodels.discrete.count_model as cm
+        return cm.ZeroInflatedPoisson.from_formula(
+            "measurement ~ stage", self.data, exog_infl="stage"
+        ).fit()
+
+    def fit_zinb(self):
+        import statsmodels.discrete.count_model as cm
+        return cm.ZeroInflatedNegativeBinomialP.from_formula(
+            "measurement ~ stage", self.data, exog_infl="stage"
+        ).fit()
+
+    # ---------------------------------------------------------
+    # CONTINUOUS-DATA MODELS
+    # ---------------------------------------------------------
+
+    def fit_lmm(self):
+        return smf.mixedlm("measurement ~ stage", self.data,
+                           groups=self.data["replicate"]).fit()
+
+    def fit_log_lmm(self):
+        self.data["log_measurement"] = np.log(self.data["measurement"])
+        return smf.mixedlm("log_measurement ~ stage", self.data,
+                           groups=self.data["replicate"]).fit()
+
+    def fit_gamma_glmm(self):
+        return smf.glm("measurement ~ stage", data=self.data,
+                       family=sm.families.Gamma()).fit()
+
+    def fit_invgauss_glmm(self):
+        return smf.glm("measurement ~ stage", data=self.data,
+                       family=sm.families.InverseGaussian()).fit()
+
+    # ---------------------------------------------------------
+    # MAIN LOGIC
+    # ---------------------------------------------------------
+
+    def compare_samples(self, verbose=False, save_to_excel=None, sheet="", label=""):
+
+        # ---------------- COUNT DATA PIPELINE ----------------
+        if not self.continuous:
+
+            poisson = self.fit_poisson()
+            overdisp = self.check_overdispersion(poisson)
+            zero_inf = self.check_zero_inflation()
+
+            if zero_inf:
+                if overdisp > 1.5:
+                    model = self.fit_zinb()
+                    model_type = "Zero-Inflated Negative Binomial"
+                else:
+                    model = self.fit_zip()
+                    model_type = "Zero-Inflated Poisson"
             else:
-                res = self.fit_poissonian_GLMM()
-                fixed_effect_mean = res.fe_mean[1]
-                fixed_effect_sd = res.fe_sd[1]
-                p_val = self.calc_pval_from_mean_and_sd(fixed_effect_mean, fixed_effect_sd)
-            print(res.summary())
-        except np.linalg.LinAlgError:
-            print("Didn't converge")
-            return 1
+                if overdisp > 1.5:
+                    model = self.fit_nb()
+                    model_type = "Negative Binomial"
+                else:
+                    model = poisson
+                    model_type = "Poisson"
+
+            p_val = model.pvalues["stage[T.1]"]
+
+            if verbose:
+                print(f"\nSelected model: {model_type}\n")
+                print(model.summary())
+                summary_text = model.summary().as_text()
+            else:
+                print(p_val)
+                summary_text = None
+
+            results = {
+                "model_type": model_type,
+                "p_value": p_val,
+                "overdispersion": overdisp,
+                "zero_inflation": zero_inf,
+                "normality_p": None,
+                "skewness": None,
+                "summary": summary_text,
+            }
+
+        # ---------------- CONTINUOUS DATA PIPELINE ----------------
+        else:
+            y = self.data["measurement"]
+
+            stat, p_norm = shapiro(y)
+            sk = skew(y)
+
+            if p_norm > 0.05 and abs(sk) < 1:
+                model = self.fit_lmm()
+                model_type = "Linear Mixed Model"
+                p_val = model.pvalues["stage[T.1]"]
+
+            elif (y > 0).all():
+                model = self.fit_log_lmm()
+                model_type = "Log-Transformed LMM"
+                p_val = model.pvalues["stage[T.1]"]
+
+            else:
+                if sk > 2:
+                    model = self.fit_invgauss_glmm()
+                    model_type = "Inverse Gaussian GLMM"
+                else:
+                    model = self.fit_gamma_glmm()
+                    model_type = "Gamma GLMM"
+
+                p_val = model.pvalues["stage[T.1]"]
+
+            if verbose:
+                print(f"\nSelected model: {model_type}\n")
+                print(model.summary())
+                summary_text = model.summary().as_text()
+            else:
+                print(p_val)
+                summary_text = None
+
+            results = {
+                "model_type": model_type,
+                "p_value": p_val,
+                "overdispersion": None,
+                "zero_inflation": None,
+                "normality_p": p_norm,
+                "skewness": sk,
+                "summary": summary_text,
+            }
+        if save_to_excel:
+            row = {
+                "label": label,
+                "model_type": results["model_type"],
+                "p_value": results["p_value"],
+                "overdispersion": results.get("overdispersion"),
+                "zero_inflation": results.get("zero_inflation"),
+                "normality_p": results.get("normality_p"),
+                "skewness": results.get("skewness"),
+            }
+            _append_row_to_excel(save_to_excel, sheet, row)
+
         return p_val
 
+    def _save_results_to_excel(self, results, filename, label=""):
+        """
+        Save hierarchical two-sample comparison results to an Excel file.
+        Appends if file exists.
+        """
 
+        mode = "a" if os.path.exists(filename) else "w"
+
+        with pd.ExcelWriter(filename, engine="openpyxl", mode=mode) as writer:
+            # Diagnostics sheet
+            diag_df = pd.DataFrame({
+                "overdispersion": [results.get("overdispersion")],
+                "zero_inflation": [results.get("zero_inflation")],
+                "normality_p": [results.get("normality_p")],
+                "skewness": [results.get("skewness")],
+            })
+            diag_df.to_excel(writer, sheet_name=label + " diagnostics", index=False)
+
+            # Model info sheet
+            model_df = pd.DataFrame({
+                "model_type": [results["model_type"]],
+                "p_value": [results["p_value"]],
+            })
+            model_df.to_excel(writer, sheet_name=label + " model_info", index=False)
+
+            # Model summary (if available)
+            if "summary" in results and results["summary"] is not None:
+                summary_text = results["summary"]
+                summary_df = pd.DataFrame({"summary": summary_text.split("\n")})
+                summary_df.to_excel(writer, sheet_name=label + " model_summary", index=False)
 
 
 def barplot_annotate_brackets(num1, num2, data, center, height, yerr=None, dh=.05, barh=.05, fs=None, maxasterix=None, ax=None):
@@ -233,29 +789,30 @@ def barplot_annotate_brackets(num1, num2, data, center, height, yerr=None, dh=.0
     ax.text(*mid, text, **kwargs)
     return (y+barh)/(ax_y1 - ax_y0)
 
-def compare_and_plot_samples(samples_list, pairs_to_compare, continues=True, plot_style="violin", color='white',
+def compare_and_plot_samples(samples_list, pairs_to_compare, continuous=True, plot_style="violin", color='white',
                              edge_color='grey', fig=None, ax=None, show_statistics=False, show_N=False,
-                             hirarchical=False, scatter=False):
+                             hirarchical=False, scatter=False, hatch=None, save_to_excel=None, excel_sheet=""):
 
     # Statistical analysis for each pair
     pvalues = np.zeros((len(pairs_to_compare),))
     for index, pair in enumerate(pairs_to_compare):
         sample1_index, sample2_index = pair
-        if hasattr(continues, "__len__"):
-            continues_sample = continues[sample1_index] and continues[sample2_index]
+        if hasattr(continuous, "__len__"):
+            continuouss_sample = continuous[sample1_index] and continuous[sample2_index]
         else:
-            continues_sample = continues
+            continuous_sample = continuous
         if hirarchical:
             analyzer = HierarchicalTwoSamplesCompare(samples_list[sample1_index], samples_list[sample2_index],
-                                                     continues=continues_sample)
+                                                     continuous=continuous_sample)
         else:
             analyzer = TwoSampleCompare(samples_list[sample1_index].get_sample(), samples_list[sample2_index].get_sample(),
                                         samples_list[sample1_index].name, samples_list[sample2_index].name,
-                                        continues=continues_sample)
-        pvalues[index] = analyzer.compare_samples()
+                                        continuous=continuous_sample)
+        excel_label = samples_list[sample1_index].name + " vs " + samples_list[sample2_index].name
+        pvalues[index] = analyzer.compare_samples(save_to_excel=save_to_excel, sheet=excel_sheet, label=excel_label)
 
-    averages = np.array([sample.get_average() for sample in samples_list])
-    standard_errors = np.array([sample.get_se() for sample in samples_list])
+    averages = np.array([sample.get_average_of_groups() for sample in samples_list])
+    standard_errors = np.array([sample.get_se_of_groups() for sample in samples_list])
     sample_sizes = np.array([sample.get_number_of_data_points() for sample in samples_list])
     labels = [sample.name for sample in samples_list]
 
@@ -305,9 +862,13 @@ def compare_and_plot_samples(samples_list, pairs_to_compare, continues=True, plo
         ax.set_xticks(x)
         ax.set_xticklabels(labels)
         errors = True
+        i=0
         for pc, c, ec in zip(parts['bodies'], color, edge_color):
             pc.set_facecolor(c)
             pc.set_edgecolor(ec)
+            if hatch is not None:
+                pc.set_hatch(hatch[i])
+                i+=1
     elif plot_style == "histogram":
         y_lim = 0
         # for scatter if needed
@@ -320,7 +881,11 @@ def compare_and_plot_samples(samples_list, pairs_to_compare, continues=True, plo
             heights = np.ones((bin_edges.size - 1))
             lefts = i - 0.5*norm_hist
             y_lim = max(y_lim, np.max(dataset))
-            ax.barh(bottom, norm_hist, height=heights, left=lefts, color=color[i], edgecolor=edge_color[i], linewidth=1, alpha=0.6)
+            if hatch is not None and hatch[i] is not None:
+                ax.barh(bottom, norm_hist, height=heights, left=lefts, color=color[i], edgecolor=edge_color[i],
+                        linewidth=1, alpha=0.6, hatch=hatch[i])
+            else:
+                ax.barh(bottom, norm_hist, height=heights, left=lefts, color=color[i], edgecolor=edge_color[i], linewidth=1, alpha=0.6)
             if show_statistics:
                 for j, val in enumerate(norm_hist):
                     ax.text(i, bin_edges[j] + 0.5,
@@ -430,6 +995,7 @@ def compare_and_plot_samples(samples_list, pairs_to_compare, continues=True, plo
     res = {"averages": averages, "standard errors":standard_errors, "sample sizes": sample_sizes,
            "pvalues": {pairs_to_compare[i]: pvalues[i] for i in range(len(pairs_to_compare))}}
     return fig, ax, res
+
 
 if __name__ == "__main__":
     # Testing methods
