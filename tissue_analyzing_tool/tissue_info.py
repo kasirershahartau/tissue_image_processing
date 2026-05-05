@@ -3382,9 +3382,11 @@ class Tissue(object):
     def fit_a_circle(self, X, Y, ax, norm_factor):
 
         # rescaling coordinates to avoid overflow
-        rescale_factor = np.abs(max(np.max(X), np.max(Y)))
-        rescaled_X = (X - np.mean(X)) / rescale_factor
-        rescaled_Y = (Y - np.mean(Y)) / rescale_factor
+        shifted_X = X - np.mean(X)
+        shifted_Y = Y - np.mean(Y)
+        rescale_factor = np.abs(max(np.max(shifted_X), np.max(shifted_Y)))
+        rescaled_X = shifted_X / rescale_factor
+        rescaled_Y = shifted_Y / rescale_factor
 
         # Formulate and solve the least squares problem ||Ax - b ||^2
         A = np.column_stack([rescaled_X ** 2 + rescaled_Y ** 2, rescaled_X, rescaled_Y])
@@ -3392,7 +3394,7 @@ class Tissue(object):
         params, chi_sqr, _, _ = np.linalg.lstsq(A, b, rcond=None)
         params = params.squeeze()
         chi_sqr = chi_sqr[0]
-        params_cov = np.linalg.inv(A.T.dot(A))
+        params_cov = np.linalg.inv(A.T.dot(A))*chi_sqr/(X.size - 3)
 
 
         # Obtaining canonical parameters
@@ -3416,7 +3418,6 @@ class Tissue(object):
         radius_err *= rescale_factor
         x_center_err *= rescale_factor
         y_center_err *= rescale_factor
-        chi_sqr *= rescale_factor ** 2 / (norm_factor * X.size)
         # plot the image
         ax.imshow(self.labels == 0)
 
@@ -3435,6 +3436,28 @@ class Tissue(object):
                "y_center": (y_center, y_center_err),
                "Chi square": (chi_sqr, 0), "N": (X.size, 0)}
         return res
+
+    def fix_params_errors_for_old_circle_fit(self, shape_name):
+        for i in range(len(self.shape_fitting_results)):
+            data = self.shape_fitting_results[i]
+            if shape_name in data:
+                shape_data = data[shape_name]
+                chi_sqr = shape_data["Chi square"][0]
+                radius, radius_err = shape_data["radius"]
+                x_center, x_center_err = shape_data["x_center"]
+                y_center, y_center_err = shape_data["y_center"]
+                N = shape_data["N"][0]
+                fixed_chi = (chi_sqr/((max(x_center, y_center) + radius)**2)) * N
+                se_fix_factor = np.sqrt(fixed_chi / (N-3))
+                fixed_res = {"radius": (radius, radius_err*se_fix_factor),
+                             "x_center": (x_center, x_center_err*se_fix_factor),
+                             "y_center": (y_center, y_center_err*se_fix_factor),
+                             "Chi square": (fixed_chi, 0),
+                             "N": (N, 0)}
+                self.shape_fitting_results[i][shape_name] = fixed_res
+                print(fixed_res)
+        self.save_shape_fitting()
+        return 0
 
     def initialize_working_space(self):
         working_dir = get_temp_directory(self.data_path)
@@ -3860,12 +3883,15 @@ class Tissue(object):
 
     def calculate_average_area_in_movie(self):
         area = 0
+        calculated_frames = 0
         for frame in range(1, self.number_of_frames + 1):
             if self.is_frame_valid(frame):
                 cells_info = self.get_cells_info(frame)
-                valid_cells = cells_info.query("valid == 1 and empty_cell == 0")
-                area += np.sum(valid_cells.area.to_numpy())
-        average_valid_area = area/self.get_number_of_valid_frames()
+                if cells_info is not None:
+                    valid_cells = cells_info.query("valid == 1 and empty_cell == 0")
+                    area += np.sum(valid_cells.area.to_numpy())
+                    calculated_frames += 1
+        average_valid_area = area/calculated_frames
         print("Average area = %f pixels^2" % average_valid_area)
         return average_valid_area
 
@@ -4104,9 +4130,14 @@ class Tissue(object):
         labels = self.get_labels(frame)
         cells_info = self.get_cells_info(frame)
         cells_info_copy = cells_info.copy()
+        cells_info_copy["valid"] = np.logical_and(cells_info.valid.to_numpy(), ~cells_info.empty_cell.to_numpy())
         cells_info_copy.drop(columns="empty_cell",inplace=True)
         cells_info_copy.rename(columns={"label":"cell_id"}, inplace=True)
         cells_info_copy["label"] = cells_info.index.to_numpy() + 1
+        edge_cells_indices = self.detect_edge_cells(labels)
+        edge_cells = np.zeros((cells_info.shape[0],))
+        edge_cells[cells_info.index.isin(edge_cells_indices)] = 1
+        cells_info_copy["edge_cell"] = edge_cells
         contact_matrix = self.calc_neighbors_contact_matrix(frame)
         np.save(os.path.join(directory, "%s_contact_matrix_frame_%d" % (movie_name, frame)), contact_matrix)
         np.save(os.path.join(directory, "%s_labels_frame_%d" % (movie_name, frame)), labels)
