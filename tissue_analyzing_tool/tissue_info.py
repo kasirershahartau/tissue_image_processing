@@ -4130,7 +4130,7 @@ class Tissue(object):
         labels = self.get_labels(frame)
         cells_info = self.get_cells_info(frame)
         cells_info_copy = cells_info.copy()
-        cells_info_copy["valid"] = np.logical_and(cells_info.valid.to_numpy(), ~cells_info.empty_cell.to_numpy())
+        cells_info_copy["valid"] = np.logical_and(cells_info.valid.to_numpy() == 1, cells_info.empty_cell.to_numpy() == 0)
         cells_info_copy.drop(columns="empty_cell",inplace=True)
         cells_info_copy.rename(columns={"label":"cell_id"}, inplace=True)
         cells_info_copy["label"] = cells_info.index.to_numpy() + 1
