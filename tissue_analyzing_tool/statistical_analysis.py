@@ -15,6 +15,155 @@ import scikit_posthocs as sp
 from statsmodels.stats.multitest import multipletests
 from openpyxl import load_workbook
 
+class DataCollector:
+    def __init__(self, name, folders=[], file_names=[], data_labels=[], normalization=1, sample=None, omit_zeros=False):
+        self.name = name
+        self.normalization = normalization
+        self.labels = data_labels
+        self.experiment_idx = None
+        self.files = None
+        self.initial_batch_indices = None
+        if sample is not None:
+            self.sample = sample/normalization
+        else:
+            self.experiment_idx = [folders.index(folder) for folder in folders]
+            self.files = [os.path.join(folder, file_name) for folder, file_name in zip(folders, file_names)]
+            self.sample = self.collect(omit_zeros=omit_zeros)
+
+    def collect(self, omit_zeros=False):
+        s = np.empty(0)
+        self.initial_batch_indices = []
+        group_id = 0
+        for f, l in zip(self.files, self.labels):
+            all_data = pd.read_pickle(f)
+            relevant_data = all_data[l].to_numpy()
+            if omit_zeros:
+                relevant_data = relevant_data[relevant_data != 0]
+            self.initial_batch_indices.append(s.size)
+            if hasattr(self.normalization, "__len__"):
+                normalization = self.normalization[group_id]
+            else:
+                normalization = self.normalization
+            s = np.hstack((s, relevant_data/ normalization))
+            group_id += 1
+        self.initial_batch_indices = np.array(self.initial_batch_indices)
+        return s[~np.isnan(s)]
+
+    def get_name(self):
+        return self.name
+
+    def get_sample(self):
+        return self.sample
+
+    def get_sample_size(self):
+        return self.sample.size
+
+    def get_partial_sample_size(self, file_index):
+        start = self.initial_batch_indices[file_index]
+        end = self.sample.size if file_index + 1 >= self.initial_batch_indices.size else self.initial_batch_indices[
+            file_index + 1]
+        return end - start
+
+    def get_partial_sample(self, file_index):
+        if self.initial_batch_indices is None:
+            return self.sample
+        start = self.initial_batch_indices[file_index]
+        end = self.sample.size if file_index + 1 >= self.initial_batch_indices.size  else self.initial_batch_indices[file_index + 1]
+        return self.sample[start:end]
+
+    def get_biological_repeat(self, file_index):
+        if self.experiment_idx is None:
+            return 0
+        return self.experiment_idx[file_index]
+
+    def get_number_of_data_points(self):
+        return self.sample.size
+
+    def get_average(self):
+        return np.average(self.sample)
+
+    def get_group_avg(self, group_id=-1):
+        if group_id >= 0:
+            return np.average(self.get_partial_sample(group_id))
+        else:
+            return [np.average(self.get_partial_sample(i)) for i in range(self.get_number_of_groups())]
+
+    def get_average_of_groups(self):
+        return np.average(self.get_group_avg())
+
+    def get_std_of_groups(self):
+        return np.std(self.get_group_avg())
+
+    def get_se_of_groups(self):
+        if self.get_std_of_groups() > 1:
+            return self.get_std_of_groups()/np.sqrt(self.get_number_of_groups())
+        else:
+            return self.get_se()
+
+    def get_number_of_groups(self):
+        if self.files is None:
+            return 1
+        return len(self.files)
+
+    def get_std(self):
+        return np.std(self.sample)
+
+    def get_se(self):
+        return self.get_std() / np.sqrt(self.get_number_of_data_points())
+
+    def get_group_std(self):
+        avg = np.array([self.get_group_avg(i) for i in range(self.get_number_of_groups())])
+        return np.std(avg)
+
+    def get_group_se(self):
+        return self.get_group_std()/np.sqrt(self.get_number_of_groups())
+
+    def get_max(self):
+        return np.max(self.sample)
+
+    def get_min(self):
+        return np.min(self.sample)
+
+    def save_sample(self, out_path, by_groups=False):
+        if by_groups:
+            for group in range(self.get_number_of_groups()):
+                group_sample = self.get_partial_sample(group)
+                np.save(os.path.join(out_path, "%s_experiment%d.npy" % (self.name, group)), group_sample)
+        else:
+            np.save(os.path.join(out_path, "%s.npy" % self.name), self.sample)
+
+    def save_to_excel(self, out_path, data_label, change_to_int=False):
+        df = pd.DataFrame()
+        for group in range(self.get_number_of_groups()):
+            group_sample = self.get_partial_sample(group)
+            if change_to_int:
+                group_sample = group_sample.astype(int)
+            current_df = pd.DataFrame({"Experiment #": [group]*group_sample.size, "Cell #":np.arange(group_sample.size),
+                                       data_label: group_sample})
+            df = pd.concat([df, current_df], ignore_index=True)
+        if os.path.isfile(out_path):
+            mode = "a"
+        else:
+            mode = "w"
+        with pd.ExcelWriter(out_path, mode=mode) as writer:
+            df.to_excel(writer, sheet_name=self.name[:30])
+        return df
+
+    def divide(self, other):
+        sample1 = self.sample
+        sample2 = other.sample
+        new_initial_batch_indices = []
+        zeros = (sample2 == 0)
+        cum_zeros = np.cumsum(zeros.astype(int))
+        for i in self.initial_batch_indices:
+             if i > 0:
+                new_initial_batch_indices.append(i - cum_zeros[i-1])
+             else:
+                 new_initial_batch_indices.append(i)
+        self.sample = sample1[sample2 != 0] / sample2[sample2 != 0]
+        self.name = self.name + " per " + other.name
+
+
 def _append_row_to_excel(filename, sheet_name, row_dict):
     """
     Appends a single row (dict) to an Excel sheet.
@@ -69,12 +218,12 @@ def _append_row_to_excel(filename, sheet_name, row_dict):
             df.to_excel(writer, sheet_name=name, index=False)
 
 class TwoSampleCompare:
-    def __init__(self, sample1, sample2, sample1_label='sample1', sample2_label='sample2', continuous=True):
+    def __init__(self, sample1, sample2, sample1_label='sample1', sample2_label='sample2', continues=True):
         self.sample1 = np.array(sample1)
         self.sample2 = np.array(sample2)
         self.sample1_label = sample1_label
         self.sample2_label = sample2_label
-        self.continuous = continuous
+        self.continues = continues
 
     # ---------------------------------------------------------
     # NORMALITY CHECK
@@ -113,8 +262,8 @@ class TwoSampleCompare:
 
     def compare_samples(self, verbose=False, save_to_excel=None, sheet="", label=""):
 
-        # If data is not continuous → always use Mann–Whitney
-        if not self.continuous:
+        # If data is not continues → always use Mann–Whitney
+        if not self.continues:
             stat, p = stats.mannwhitneyu(self.sample1, self.sample2, alternative='two-sided')
             if verbose:
                 print(f"Using Mann–Whitney U test: U={stat:.3f}, p={p:.3f}")
@@ -201,7 +350,7 @@ class TwoByTwoCompare:
                  factorB_name="FactorB",
                  A_levels=("A1", "A2"),
                  B_levels=("B1", "B2"),
-                 continuous=True):
+                 continues=True):
 
         self.samples = {
             (A_levels[0], B_levels[0]): np.array(A1B1),
@@ -214,7 +363,7 @@ class TwoByTwoCompare:
         self.factorB_name = factorB_name
         self.A_levels = A_levels
         self.B_levels = B_levels
-        self.continuous = continuous
+        self.continues = continues
 
         # Build long-format dataframe for ANOVA
         self.df = self._build_dataframe()
@@ -306,8 +455,8 @@ class TwoByTwoCompare:
         - Optionally saves results to Excel (single sheet)
         """
 
-        # Non-continuous → Kruskal-based factorial test
-        if not self.continuous:
+        # Non-continues → Kruskal-based factorial test
+        if not self.continues:
             if verbose:
                 print("Using Scheirer–Ray–Hare test (non-parametric 2×2 ANOVA).")
             results = self._scheirer_ray_hare(verbose)
@@ -503,25 +652,34 @@ class TwoByTwoCompare:
 
 class HierarchicalTwoSamplesCompare:
 
-    def __init__(self, data1, data2, continuous=True):
+    def __init__(self, data1, data2, continues=True):
         """
-        continuous = False  → use Poisson/NB/ZIP/ZINB pipeline
-        continuous = True → use continuous-data pipeline
+        continues = False  → use Poisson/NB/ZIP/ZINB pipeline
+        continues = True → use continues-data pipeline
         """
         self.data = self.rearrange_data_into_table(data1, data2)
-        self.continuous = continuous
+        self.continues = continues
 
     @staticmethod
     def rearrange_data_into_table(data1, data2):
         df = []
         for data_index, data in enumerate([data1, data2]):
-            for group in range(data.get_number_of_groups()):
-                for measurement in data.get_partial_sample(group):
-                    df.append({
-                        'measurement': measurement,
-                        'stage': data_index,
-                        'replicate': f"R{data.get_biological_repeat(group)}"
-                    })
+            if isinstance(data, DataCollector):
+                for group in range(data.get_number_of_groups()):
+                    for measurement in data.get_partial_sample(group):
+                        df.append({
+                            'measurement': measurement,
+                            'stage': data_index,
+                            'replicate': f"R{data.get_biological_repeat(group)}"
+                        })
+            elif isinstance(data, list):
+                for group in range(len(data)):
+                    for measurement in data[group]:
+                        df.append({
+                            'measurement': measurement,
+                            'stage': data_index,
+                            'replicate': f"R{group}"
+                        })
         df = pd.DataFrame(df)
         df['stage'] = df['stage'].astype('category')
         df['replicate'] = df['replicate'].astype('category')
@@ -568,7 +726,7 @@ class HierarchicalTwoSamplesCompare:
         ).fit()
 
     # ---------------------------------------------------------
-    # CONTINUOUS-DATA MODELS
+    # CONTINUES-DATA MODELS
     # ---------------------------------------------------------
 
     def fit_lmm(self):
@@ -595,7 +753,7 @@ class HierarchicalTwoSamplesCompare:
     def compare_samples(self, verbose=False, save_to_excel=None, sheet="", label=""):
 
         # ---------------- COUNT DATA PIPELINE ----------------
-        if not self.continuous:
+        if not self.continues:
 
             poisson = self.fit_poisson()
             overdisp = self.check_overdispersion(poisson)
@@ -636,7 +794,7 @@ class HierarchicalTwoSamplesCompare:
                 "summary": summary_text,
             }
 
-        # ---------------- CONTINUOUS DATA PIPELINE ----------------
+        # ---------------- CONTINUES DATA PIPELINE ----------------
         else:
             y = self.data["measurement"]
 
@@ -789,7 +947,7 @@ def barplot_annotate_brackets(num1, num2, data, center, height, yerr=None, dh=.0
     ax.text(*mid, text, **kwargs)
     return (y+barh)/(ax_y1 - ax_y0)
 
-def compare_and_plot_samples(samples_list, pairs_to_compare, continuous=True, plot_style="violin", color='white',
+def compare_and_plot_samples(samples_list, pairs_to_compare, continues=True, plot_style="violin", color='white',
                              edge_color='grey', fig=None, ax=None, show_statistics=False, show_N=False,
                              hirarchical=False, scatter=False, hatch=None, save_to_excel=None, excel_sheet=""):
 
@@ -797,17 +955,17 @@ def compare_and_plot_samples(samples_list, pairs_to_compare, continuous=True, pl
     pvalues = np.zeros((len(pairs_to_compare),))
     for index, pair in enumerate(pairs_to_compare):
         sample1_index, sample2_index = pair
-        if hasattr(continuous, "__len__"):
-            continuouss_sample = continuous[sample1_index] and continuous[sample2_index]
+        if hasattr(continues, "__len__"):
+            continues_sample = continues[sample1_index] and continues[sample2_index]
         else:
-            continuous_sample = continuous
+            continues_sample = continues
         if hirarchical:
             analyzer = HierarchicalTwoSamplesCompare(samples_list[sample1_index], samples_list[sample2_index],
-                                                     continuous=continuous_sample)
+                                                     continues=continues_sample)
         else:
             analyzer = TwoSampleCompare(samples_list[sample1_index].get_sample(), samples_list[sample2_index].get_sample(),
                                         samples_list[sample1_index].name, samples_list[sample2_index].name,
-                                        continuous=continuous_sample)
+                                        continues=continues_sample)
         excel_label = samples_list[sample1_index].name + " vs " + samples_list[sample2_index].name
         pvalues[index] = analyzer.compare_samples(save_to_excel=save_to_excel, sheet=excel_sheet, label=excel_label)
 

@@ -10,7 +10,7 @@ import os, sys
 import subprocess
 import seaborn as sns
 
-from statistical_analysis import compare_and_plot_samples
+from statistical_analysis import compare_and_plot_samples, DataCollector
 
 RAW_DATA_FOLDER = r"C:\Users\Kasirer\Phd\mouse_ear_project\papers\Dynamic lateral inhibition in the utricle\Raw Data"
 
@@ -76,150 +76,7 @@ P0_circular_ablation_folders = ["D:\\Kasirer\\experimental_results\\movies\\Utri
 E17_circular_ablation_touching_frames = [11, 11, 7, 7, 6, 10, 7, 5, 7, 5, 7, 10, 10, 7]
 P0_circular_ablation_touching_frames = [9, 8, 12, 12, 11, 11, 9, 11, 4, 8, 11, 11, 11, 11]
 output_dir = r"C:\Users\Kasirer\Phd\mouse_ear_project\papers\Dynamic lateral inhibition in the utricle\Experimental Data"
-class DataCollector:
-    def __init__(self, name, folders=[], file_names=[], data_labels=[], normalization=1, sample=None, omit_zeros=False):
-        self.name = name
-        self.normalization = normalization
-        self.labels = data_labels
-        self.experiment_idx = None
-        self.files = None
-        self.initial_batch_indices = None
-        if sample is not None:
-            self.sample = sample/normalization
-        else:
-            self.experiment_idx = [folders.index(folder) for folder in folders]
-            self.files = [os.path.join(folder, file_name) for folder, file_name in zip(folders, file_names)]
-            self.sample = self.collect(omit_zeros=omit_zeros)
 
-    def collect(self, omit_zeros=False):
-        s = np.empty(0)
-        self.initial_batch_indices = []
-        group_id = 0
-        for f, l in zip(self.files, self.labels):
-            all_data = pd.read_pickle(f)
-            relevant_data = all_data[l].to_numpy()
-            if omit_zeros:
-                relevant_data = relevant_data[relevant_data != 0]
-            self.initial_batch_indices.append(s.size)
-            if hasattr(self.normalization, "__len__"):
-                normalization = self.normalization[group_id]
-            else:
-                normalization = self.normalization
-            s = np.hstack((s, relevant_data/ normalization))
-            group_id += 1
-        self.initial_batch_indices = np.array(self.initial_batch_indices)
-        return s[~np.isnan(s)]
-
-    def get_name(self):
-        return self.name
-
-    def get_sample(self):
-        return self.sample
-
-    def get_sample_size(self):
-        return self.sample.size
-
-    def get_partial_sample_size(self, file_index):
-        start = self.initial_batch_indices[file_index]
-        end = self.sample.size if file_index + 1 >= self.initial_batch_indices.size else self.initial_batch_indices[
-            file_index + 1]
-        return end - start
-
-    def get_partial_sample(self, file_index):
-        if self.initial_batch_indices is None:
-            return self.sample
-        start = self.initial_batch_indices[file_index]
-        end = self.sample.size if file_index + 1 >= self.initial_batch_indices.size  else self.initial_batch_indices[file_index + 1]
-        return self.sample[start:end]
-
-    def get_biological_repeat(self, file_index):
-        if self.experiment_idx is None:
-            return 0
-        return self.experiment_idx[file_index]
-
-    def get_number_of_data_points(self):
-        return self.sample.size
-
-    def get_average(self):
-        return np.average(self.sample)
-
-    def get_group_avg(self, group_id=-1):
-        if group_id >= 0:
-            return np.average(self.get_partial_sample(group_id))
-        else:
-            return [np.average(self.get_partial_sample(i)) for i in range(self.get_number_of_groups())]
-
-    def get_average_of_groups(self):
-        return np.average(self.get_group_avg())
-
-    def get_std_of_groups(self):
-        return np.std(self.get_group_avg())
-
-    def get_se_of_groups(self):
-        return self.get_std_of_groups()/np.sqrt(self.get_number_of_groups())
-
-    def get_number_of_groups(self):
-        if self.files is None:
-            return 1
-        return len(self.files)
-
-    def get_std(self):
-        return np.std(self.sample)
-
-    def get_se(self):
-        return self.get_std() / np.sqrt(self.get_number_of_data_points())
-
-    def get_group_std(self):
-        avg = np.array([self.get_group_avg(i) for i in range(self.get_number_of_groups())])
-        return np.std(avg)
-
-    def get_group_se(self):
-        return self.get_group_std()/np.sqrt(self.get_number_of_groups())
-
-    def get_max(self):
-        return np.max(self.sample)
-
-    def get_min(self):
-        return np.min(self.sample)
-
-    def save_sample(self, out_path, by_groups=False):
-        if by_groups:
-            for group in range(self.get_number_of_groups()):
-                group_sample = self.get_partial_sample(group)
-                np.save(os.path.join(out_path, "%s_experiment%d.npy" % (self.name, group)), group_sample)
-        else:
-            np.save(os.path.join(out_path, "%s.npy" % self.name), self.sample)
-
-    def save_to_excel(self, out_path, data_label, change_to_int=False):
-        df = pd.DataFrame()
-        for group in range(self.get_number_of_groups()):
-            group_sample = self.get_partial_sample(group)
-            if change_to_int:
-                group_sample = group_sample.astype(int)
-            current_df = pd.DataFrame({"Experiment #": [group]*group_sample.size, "Cell #":np.arange(group_sample.size),
-                                       data_label: group_sample})
-            df = pd.concat([df, current_df], ignore_index=True)
-        if os.path.isfile(out_path):
-            mode = "a"
-        else:
-            mode = "w"
-        with pd.ExcelWriter(out_path, mode=mode) as writer:
-            df.to_excel(writer, sheet_name=self.name[:30])
-        return df
-
-    def divide(self, other):
-        sample1 = self.sample
-        sample2 = other.sample
-        new_initial_batch_indices = []
-        zeros = (sample2 == 0)
-        cum_zeros = np.cumsum(zeros.astype(int))
-        for i in self.initial_batch_indices:
-             if i > 0:
-                new_initial_batch_indices.append(i - cum_zeros[i-1])
-             else:
-                 new_initial_batch_indices.append(i)
-        self.sample = sample1[sample2 != 0] / sample2[sample2 != 0]
-        self.name = self.name + " per " + other.name
 
 def combine_frame_compare_results():
     # Contact length with SC
@@ -263,7 +120,7 @@ def combine_frame_compare_results():
     x = np.arange(len(labels))  # the label locations
     width = 0.35  # the width of the bars
     compare_event_statistics([E17_folders, P0_folders], [SC_file, HC_file], [SC_file, HC_file], labels, [(0,1), (2,3)],
-                             [1],["roundness"], ["Roundness"], continuous=True, color=["red", "green", "red", "green"],
+                             [1],["roundness"], ["Roundness"], continues=True, color=["red", "green", "red", "green"],
                              edge_color=["red", "green", "red", "green"])
 
 from scipy.optimize import curve_fit
@@ -465,21 +322,21 @@ def fit_circular_ablation_results_to_circle(E17_folders, P0_folders, initial_rad
                                                                                           "circular_ablation_statistical_analysis.xlsx")
     E17_stress = DataCollector("E17 Stress", sample=np.array(stresses[0]))
     P0_stress = DataCollector("P0 Stress", sample=np.array(stresses[1]))
-    fig3, ax3, res = compare_and_plot_samples([E17_stress, P0_stress], [(0, 1)], continuous=True,
+    fig3, ax3, res = compare_and_plot_samples([E17_stress, P0_stress], [(0, 1)], continues=True,
                                             plot_style="violin", color=color, edge_color=edge_color,
                                             show_statistics=True, show_N=True,
                                               save_to_excel=statistical_analysis_excel, excel_sheet="Stress")
-    fig4, ax4, _ = compare_and_plot_samples([E17_stress, P0_stress], [(0, 1)], continuous=True,
+    fig4, ax4, _ = compare_and_plot_samples([E17_stress, P0_stress], [(0, 1)], continues=True,
                                               plot_style="violin", color=color, edge_color=edge_color,
                                               show_statistics=False, show_N=False, scatter=True)
     ax4.set_ylim([0, 0.77])
     E17_touching_frame = DataCollector("E17 touching frames", sample=np.array(E17_circular_ablation_touching_frames))
     P0_touching_frame = DataCollector("P0 touching frames", sample=np.array(P0_circular_ablation_touching_frames))
-    fig5, ax5, res = compare_and_plot_samples([E17_touching_frame, P0_touching_frame], [(0, 1)], continuous=False,
+    fig5, ax5, res = compare_and_plot_samples([E17_touching_frame, P0_touching_frame], [(0, 1)], continues=False,
                                               plot_style="bar", color=color, edge_color=edge_color,
                                               show_statistics=True, show_N=True,
                                               save_to_excel=statistical_analysis_excel, excel_sheet="Touching frame")
-    fig6, ax6, _ = compare_and_plot_samples([E17_touching_frame, P0_touching_frame], [(0, 1)], continuous=False,
+    fig6, ax6, _ = compare_and_plot_samples([E17_touching_frame, P0_touching_frame], [(0, 1)], continues=False,
                                             plot_style="bar", color=color, edge_color=edge_color,
                                             show_statistics=False, show_N=False, scatter=True)
     plt.show()
@@ -578,7 +435,7 @@ def load_data(folder_list, data_files_list, reference_files_list, data_labels, n
 
 def compare_event_statistics(folder_list, data_files_list, reference_files_list, x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous, color='white', edge_color='grey',
+                             data_labels, y_labels, continues, color='white', edge_color='grey',
                              show_statistics=False, show_N=False):
     font = {'family': 'sans',
             'size': 25}
@@ -594,8 +451,8 @@ def compare_event_statistics(folder_list, data_files_list, reference_files_list,
                                           reference_files_list, data_labels, normalization_list),
                                 y_labels):
 
-        style = "violin" if continuous else "bar"
-        fig, ax, res = compare_and_plot_samples(samples, x_labels, pairs_to_compare, continuous=continuous,
+        style = "violin" if continues else "bar"
+        fig, ax, res = compare_and_plot_samples(samples, x_labels, pairs_to_compare, continues=continues,
                                                 plot_style=style, color=color, edge_color=edge_color,
                                                 show_statistics=show_statistics, show_N=show_N)
         ax.set_ylabel(y_label)
@@ -632,7 +489,7 @@ def plot_E17_HC_density_and_fraction():
     data_labels = ["HC density", "HC type_fraction"]
     compare_event_statistics(folder, data_files_list, reference_files_list, x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=True)
+                             data_labels, y_labels, continues=True)
 
 
 def plot_E17_neighbors_by_type():
@@ -655,7 +512,7 @@ def plot_E17_neighbors_by_type():
     data_labels = ["SC neighbors", "HC neighbors"]
     compare_event_statistics(folder, data_files_list, reference_files_list, x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=False)
+                             data_labels, y_labels, continues=False)
 
 def plot_E17_rho_inhibition_neighbors_by_type():
     folder = Rho_inhibition_E17_folders
@@ -669,7 +526,7 @@ def plot_E17_rho_inhibition_neighbors_by_type():
     data_labels = ["SC neighbors", "HC neighbors"]
     compare_event_statistics(folder, data_files_list, reference_files_list, x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=False)
+                             data_labels, y_labels, continues=False)
 
 def plot_E17_second_neighbors_by_type():
     folder = E17_folders
@@ -697,7 +554,7 @@ def plot_E17_second_neighbors_by_type():
     data_labels = ["SC second neighbors", "HC second neighbors"]
     compare_event_statistics(folder, data_files_list, reference_files_list, x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=False)
+                             data_labels, y_labels, continues=False)
 
 
 def plot_E17_contact_length_by_type():
@@ -720,7 +577,7 @@ def plot_E17_contact_length_by_type():
     data_labels = ["SC contact length", "HC contact length"]
     compare_event_statistics(folder, data_files_list, reference_files_list, x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=True)
+                             data_labels, y_labels, continues=True)
 
 def plot_E17_number_of_neighbors():
     folder = E17_folders
@@ -743,7 +600,7 @@ def plot_E17_number_of_neighbors():
     color = ["red", "blue", "green", "grey"]
     compare_event_statistics(folder, data_files_list, reference_files_list, x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=False, color=color, edge_color=color)
+                             data_labels, y_labels, continues=False, color=color, edge_color=color)
 
 def plot_E17_area_and_roundness():
     folder = E17_folders
@@ -766,7 +623,7 @@ def plot_E17_area_and_roundness():
     color = ["red", "blue", "green", "grey"]
     compare_event_statistics(folder, data_files_list, reference_files_list, x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=True, color=color, edge_color=color)
+                             data_labels, y_labels, continues=True, color=color, edge_color=color)
 
 def compare_E17_P0_neighbors_by_type():
     E17_folder = E17_folders
@@ -816,7 +673,7 @@ def compare_E17_P0_neighbors_by_type():
 
     compare_event_statistics((E17_folder,P0_folder), E17_data_files_list, P0_files_list , x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=False, color=color, edge_color=edge_color)
+                             data_labels, y_labels, continues=False, color=color, edge_color=edge_color)
 
     SC_with_Zero_HC_neighbors = np.zeros((5,2))
     for experiment_idx in range(2):
@@ -829,7 +686,7 @@ def compare_E17_P0_neighbors_by_type():
 
     color = ["mediumpurple"] * 3 + ["lightpink"] * 2
     edge_color = ["mediumpurple"] * 3 + ["lightpink"] * 2
-    compare_and_plot_samples(list(SC_with_Zero_HC_neighbors), [""]*5, [], continuous=True, plot_style="box", color=color,
+    compare_and_plot_samples(list(SC_with_Zero_HC_neighbors), [""]*5, [], continues=True, plot_style="box", color=color,
     edge_color=edge_color, fig=fig, ax=ax, show_statistics=False, show_N=False)
     plt.show()
 def compare_E17_P0_HC_neighbors_with_model():
@@ -853,12 +710,12 @@ def compare_E17_P0_HC_neighbors_with_model():
 
     samples_list = [E17_diff, P0_diff, model0, model8]
     pairs_to_compare = [(0,2), (1,3)]
-    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=False,
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
                                                       plot_style="histogram", color=["cyan", "pink", "turquoise", "orange"],
                                                       edge_color=["blue", "red", "green", "purple"],
                                                       show_statistics=True, show_N=True, hirarchical=True,
                                                       scatter=False)
-    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=False,
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
                                                       plot_style="histogram", color=["cyan", "pink", "turquoise", "orange"],
                                                       edge_color=["blue", "red", "green", "purple"],
                                                       show_statistics=False, show_N=False, scatter=True)
@@ -919,11 +776,11 @@ def compare_E17_P0_HC_neighbors_for_differentiation_and_trans_differentiation(ra
     samples_list = [E17_diff, E17_ref_SC, P0_diff, P0_trans_diff, P0_ref_SC]
     all_samples_list = samples_list + [E17_ablation_diff, E17_ablation_ref_SC, P0_ablation_diff, P0_ablation_ref_SC]
     pairs_to_compare = [(0,1),(0,2), (2,3), (2,4), (0,3)]
-    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=False,
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
                                             plot_style="histogram", color= ["cyan"] * 2 + ["pink"] *3, edge_color=["blue"] * 2 + ["red"] * 3,
                                             show_statistics=True, show_N=True, hirarchical=True, scatter=False,
                                                       save_to_excel=excel_path, excel_sheet="HC neighbors")
-    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=False,
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
                                                       plot_style="histogram", color=["cyan"] * 2 + ["pink"] * 3,
                                                       edge_color=["blue"] * 2 + ["red"] * 3,
                                                       show_statistics=False, show_N=False, scatter=True, hatch=[None]*3 + ['/', None])
@@ -1114,13 +971,13 @@ def compare_E17_P0_HC_contact_length_for_differentiation_and_trans_differentiati
     samples_list = [E17_diff, E17_ref_SC, P0_diff, P0_trans_diff, P0_ref_SC]
     all_samples_list = samples_list + [E17_ablation_diff, E17_ablation_ref_SC, P0_ablation_diff, P0_ablation_ref_SC]
     pairs_to_compare = [(0,1),(0,2), (0,3), (2,3), (2,4)]
-    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=True,
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=True,
                                             plot_style="violin", color= ["cyan"] * 2 + ["pink"] *3, edge_color=["blue"] * 2 + ["red"] * 3,
                                             show_statistics=True, show_N=True, hirarchical=True, scatter=True,
                                                       save_to_excel=excel_path, excel_sheet="HC neighbors")
 
     full_ax.set_ylabel("Apical contact length with neighboring HCs (microns)")
-    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=False,
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
                                                       plot_style="violin", color=["cyan"] * 2 + ["pink"] * 3,
                                                       edge_color=["blue"] * 2 + ["red"] * 3,
                                                       show_statistics=False, show_N=False, scatter=True,
@@ -1179,7 +1036,7 @@ def compare_E17_E19_and_P0_P2_neighbors(raw_data_output_folder=None):
                     P0_after_48h_HC_neighbors_for_SC, P2_HC_neighbors_for_SC,
                     ]
     pairs_to_compare = [(0,1), (2,3), (4,5), (6,7)]
-    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=False,
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
                                             plot_style="histogram", color= ["cyan", "turquoise", "pink", "yellow"]*2,
                                                       edge_color=["blue", "green", "red", "orange"]*2,
                                             show_statistics=True, show_N=True, hirarchical=True,
@@ -1187,7 +1044,7 @@ def compare_E17_E19_and_P0_P2_neighbors(raw_data_output_folder=None):
                                                       excel_sheet="HC neighbors")
 
     full_ax.set_ylabel("# neighbors")
-    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=False,
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
                                                       plot_style="histogram", color= ["cyan", "turquoise", "pink", "yellow"]*2,
                                                       edge_color=["blue", "green", "red", "orange"]*2,
                                                       show_statistics=False, show_N=False, scatter=True)
@@ -1265,7 +1122,7 @@ def compare_E17_E19_and_P0_P2_contact_length(raw_data_output_folder=None):
                     P0_after_48h_HC_contact_length_for_SC, P2_HC_contact_length_for_SC,
                     ]
     pairs_to_compare = [(0,1), (2,3), (4,5), (6,7)]
-    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=True,
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=True,
                                             plot_style="violin", color= ["cyan", "turquoise", "pink", "yellow"]*2,
                                                       edge_color=["blue", "green", "red", "orange"]*2,
                                             show_statistics=True, show_N=True, hirarchical=True,
@@ -1274,7 +1131,7 @@ def compare_E17_E19_and_P0_P2_contact_length(raw_data_output_folder=None):
                                                       excel_sheet="HC contact len")
 
     full_ax.set_ylabel("Contact length (microns)")
-    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=True,
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=True,
                                                       plot_style="violin", color= ["cyan", "turquoise", "pink", "yellow"]*2,
                                                       edge_color=["blue", "green", "red", "orange"]*2,
                                                       show_statistics=False, show_N=False, scatter=True)
@@ -1291,7 +1148,7 @@ def compare_E17_E19_and_P0_P2_contact_length(raw_data_output_folder=None):
             sample.save_to_excel(out_path, "Apical contact length with HCs (um)")
     plt.show()
 
-def compare_E17_E19_and_P0_P2_roundness(raw_data_output_folder=None):
+def compare_roundness_with_model(raw_data_output_folder=None):
     E17_after_48h_SC_roundness = DataCollector("E17.5 +48h SC roundness", E17_folders,
                                                ["area_and_roundness_reference_SC_frame191_data",
                                                 "area_and_roundness_reference_SC_frame199_data",
@@ -1302,12 +1159,6 @@ def compare_E17_E19_and_P0_P2_roundness(raw_data_output_folder=None):
                                                        "area_and_roundness_reference_HC_frame199_data",
                                                        "area_and_roundness_reference_HC_frame120_data"],
                                                       ["roundness"] * 3, normalization=1)
-    E19_SC_roundness = DataCollector("E19.5 SC roundness", E19_folders,
-                                     ["area_and_roundness_reference_SC_frame1_data"] * len(E19_folders),
-                                     ["roundness"] * len(E19_folders), normalization=1)
-    E19_HC_roundness = DataCollector("E19.5 HC roundness", E19_folders,
-                                            ["area_and_roundness_reference_HC_frame1_data"] * len(E19_folders),
-                                            ["roundness"] * len(E19_folders), normalization=1)
     P0_after_48h_SC_roundness = DataCollector("P0 +48h SC roundness", P0_folders,
                                               ["area_and_roundness_reference_SC_frame165_data",
                                                "area_and_roundness_reference_SC_frame144_data",
@@ -1318,27 +1169,31 @@ def compare_E17_E19_and_P0_P2_roundness(raw_data_output_folder=None):
                                                 "area_and_roundness_reference_HC_frame144_data",
                                                 "area_and_roundness_reference_HC_frame130_data"],
                                                ["roundness"] * 3, normalization=1)
-    P2_SC_roundness = DataCollector("P2 SC roundness", P2_folders,
-                                     ["area_and_roundness_reference_SC_frame1_data"] * len(P2_folders),
-                                     ["roundness"] * len(P2_folders), normalization=1)
-    P2_HC_roundness = DataCollector("P2 HC roundness", P2_folders,
-                                    ["area_and_roundness_reference_HC_frame1_data"] * len(P2_folders),
-                                    ["roundness"] * len(P2_folders), normalization=1)
+    model_folder = r"C:\Users\Kasirer\Phd\mouse_ear_project\tissue_model"
+    gammaSC_vals = [0.01]
+    psigma_vals = [0.0]
+    gammaHC_ratio_vals = [2.0, 4.0, 6.0, 8.0, 10.0, 20.0]
+    alphaHC_ratio_vals = [1.0]
+    model_res = [np.load(os.path.join(model_folder,
+                                      "stress_dependent_on_random_0_psigma-%.1f_gammaSC-0.5_patoh-0.31 results HC with HC neighbors.npy" % psigma))
+                 for psigma in psigma_vals]
 
-    samples_list = [
-                    E17_after_48h_HC_roundness, E19_HC_roundness,
-                    P0_after_48h_HC_roundness, P2_HC_roundness,
-                    E17_after_48h_SC_roundness, E19_SC_roundness,
-                    P0_after_48h_SC_roundness, P2_SC_roundness,
-                    ]
+    model0 = DataCollector("psigma=0 model", sample=model_res[0][0])
+    # model2 = DataCollector("psigma=2 model", sample=model_res[1][0])
+    # model4 = DataCollector("psigma=4 model", sample=model_res[2][0])
+    # model6 = DataCollector("psigma=6 model", sample=model_res[3][0])
+    model8 = DataCollector("psigma=8 model", sample=model_res[4][0])
+    # model10 = DataCollector("psigma=10 model", sample=model_res[5][0])
+    # model12 = DataCollector("psigma=12 model", sample=model_res[6][0])
+
     pairs_to_compare = [(0,1), (2,3), (4,5), (6,7)]
-    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=True,
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=True,
                                             plot_style="violin", color=["cyan", "turquoise", "pink", "yellow"] * 4,
                                                       edge_color=["blue", "green", "red", "orange"] * 4,
                                             show_statistics=True, show_N=True, hirarchical=True)
 
     full_ax.set_ylabel("Contact length (microns)")
-    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=True,
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=True,
                                                       plot_style="violin", color= ["cyan", "turquoise", "pink", "yellow"] * 4,
                                                       edge_color=["blue", "green", "red", "orange"] * 4,
                                                       show_statistics=False, show_N=False, scatter=True)
@@ -1380,7 +1235,7 @@ def compare_E17_P0_neighbors_by_type_for_differentiation():
     compare_event_statistics((E17_folder,P0_folder), E17_data_files_list, P0_reference_files_list,
                              x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=False, color=color, edge_color=edge_color,
+                             data_labels, y_labels, continues=False, color=color, edge_color=edge_color,
                              show_statistics=True, show_N=False)
 
 def compare_P0_neighbors_by_type_for_differentiation_and_transdiff():
@@ -1403,7 +1258,7 @@ def compare_P0_neighbors_by_type_for_differentiation_and_transdiff():
     compare_event_statistics((P0_folder, transdiff_folders), P0_reference_files_list, trans_diffreference_files_list,
                              x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=False, color=color, edge_color=edge_color,
+                             data_labels, y_labels, continues=False, color=color, edge_color=edge_color,
                              show_statistics=False, show_N=False)
 
 def compare_E17_neighbors_by_type_for_differentiation_and_transdiff():
@@ -1428,7 +1283,7 @@ def compare_E17_neighbors_by_type_for_differentiation_and_transdiff():
     compare_event_statistics((E17_folder, transdiff_folders), E17_reference_files_list, trans_diffreference_files_list,
                              x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=False, color=color, edge_color=edge_color, show_N=False,
+                             data_labels, y_labels, continues=False, color=color, edge_color=edge_color, show_N=False,
                              show_statistics=False)
 
 
@@ -1477,12 +1332,12 @@ def compare_E17_P0_rho_inhibition_neighbors_by_type(raw_data_output_folder=None)
     # pairs_to_compare = [(0, 1)]
     color = ["cyan", "pink"]*2
     edge_color = ["blue", "red"]*2
-    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=False,
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
                                                       plot_style="histogram", color=color,
                                                       edge_color=edge_color,
                                                       show_statistics=True, show_N=True, hirarchical=True,
                                                       save_to_excel=excel_path, excel_sheet="HC neighbors")
-    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=False,
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
                                                       plot_style="histogram", color=color,
                                                       edge_color=edge_color,
                                                       show_statistics=False, show_N=False, hirarchical=True, scatter=True)
@@ -1534,7 +1389,7 @@ def compare_E17_P0_rho_inhibition_neighbors_by_type(raw_data_output_folder=None)
         pairs = [(0, 1)]
         for pair in pairs:
             comparer = TwoSampleCompare(samples[pair[0]], samples[pair[1]], sample1_label=labels[pair[0]],
-                                        sample2_label=labels[pair[1]], continuous=True)
+                                        sample2_label=labels[pair[1]], continues=True)
             pval = comparer.compare_samples(save_to_excel=excel_path, sheet="Differentiating percentage", label="%d HC neighbors" % n_neighbors)
             print("pval for %d HC neighbors between %s and %s = %f" % (
             n_neighbors, labels[pair[0]], labels[pair[1]], pval))
@@ -1625,12 +1480,12 @@ def compare_E17_P0_rho_inhibition_contact_length(raw_data_output_folder=None):
     # pairs_to_compare = [(0, 1)]
     color = ["cyan", "pink"]*2
     edge_color = ["blue", "red"]*2
-    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=True,
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=True,
                                                       plot_style="violin", color=color,
                                                       edge_color=edge_color,
                                                       show_statistics=True, show_N=True, hirarchical=True,
                                                       save_to_excel=excel_path, excel_sheet="HC contact len")
-    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=True,
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=True,
                                                       plot_style="violin", color=color,
                                                       edge_color=edge_color,
                                                       show_statistics=False, show_N=False, hirarchical=True, scatter=True)
@@ -1688,11 +1543,11 @@ def compare_E17_P0_density():
     pairs_to_compare = [(0, 1), (1,2), (2,3), (3,4), (4,5)]
     color = ["blue", "blue", "blue", "red", "red", "red"]
     edge_color = ["blue", "blue", "blue", "red", "red", "red"]
-    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=False,
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
                                                       plot_style="violin", color=color,
                                                       edge_color=edge_color,
                                                       show_statistics=True, show_N=True)
-    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=False,
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
                                                       plot_style="violin", color=color,
                                                       edge_color=edge_color,
                                                       show_statistics=False, show_N=False)
@@ -1700,11 +1555,11 @@ def compare_E17_P0_density():
     pairs_to_compare = [(0, 3), (1, 3), (2, 3), (4, 7), (5, 7), (6, 7)]
     color = ["blue", "blue", "blue", "cyan", "red", "red", "red", "pink"]
     edge_color = ["blue", "blue", "blue", "cyan", "red", "red", "red", "pink"]
-    full_fig_with_diff, full_ax_with_diff, res = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=False,
+    full_fig_with_diff, full_ax_with_diff, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
                                                       plot_style="violin", color=color,
                                                       edge_color=edge_color,
                                                       show_statistics=True, show_N=True)
-    empty_fig_with_diff, empty_ax_with_diff, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=False,
+    empty_fig_with_diff, empty_ax_with_diff, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
                                                       plot_style="violin", color=color,
                                                       edge_color=edge_color,
                                                       show_statistics=False, show_N=False)
@@ -1727,7 +1582,7 @@ def compare_E17_P0_number_of_neighbors():
     compare_event_statistics((E17_folder, P0_folder), E17_data_files_list, P0_reference_files_list, x_labels,
                              pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=False)
+                             data_labels, y_labels, continues=False)
 
 def compare_E17_P0_area_and_roundness():
     E17_folder = E17_folders
@@ -1748,7 +1603,7 @@ def compare_E17_P0_area_and_roundness():
     compare_event_statistics((E17_folder, P0_folder), E17_data_files_list, P0_reference_files_list, x_labels,
                              pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=True, color=color, edge_color=edge_color)
+                             data_labels, y_labels, continues=True, color=color, edge_color=edge_color)
 
 def compare_E17_P0_contact_length():
     E17_folder = E17_folders
@@ -1775,7 +1630,7 @@ def compare_E17_P0_contact_length():
     compare_event_statistics((E17_folder, P0_folder), E17_data_files_list, P0_reference_files_list, x_labels,
                              pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=True, color=color, edge_color=edge_color)
+                             data_labels, y_labels, continues=True, color=color, edge_color=edge_color)
 
 
 def plot_P0_HC_density_and_fraction():
@@ -1793,7 +1648,7 @@ def plot_P0_HC_density_and_fraction():
     data_labels = ["HC density", "HC type_fraction"]
     compare_event_statistics(folder, data_files_list, reference_files_list, x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=True)
+                             data_labels, y_labels, continues=True)
 
 
 def plot_P0_neighbors_by_type():
@@ -1809,7 +1664,7 @@ def plot_P0_neighbors_by_type():
     data_labels = ["SC neighbors", "HC neighbors"]
     compare_event_statistics(folder, data_files_list, reference_files_list, x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=False)
+                             data_labels, y_labels, continues=False)
 
 
 def plot_P0_contact_length_by_type():
@@ -1825,7 +1680,7 @@ def plot_P0_contact_length_by_type():
     data_labels = ["SC contact length", "HC contact length"]
     compare_event_statistics(folder, data_files_list, reference_files_list, x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=True)
+                             data_labels, y_labels, continues=True)
 
 def plot_P0_number_of_neighbors():
     folder = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-07-31_P0\\position3-analysis\\Events statistics\\"
@@ -1840,7 +1695,7 @@ def plot_P0_number_of_neighbors():
     data_labels = ["n_neighbors"]
     compare_event_statistics(folder, data_files_list, reference_files_list, x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=False)
+                             data_labels, y_labels, continues=False)
 
 def plot_P0_area_and_roundness():
     folder = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-07-31_P0\\position3-analysis\\Events statistics\\"
@@ -1855,7 +1710,7 @@ def plot_P0_area_and_roundness():
     data_labels = ["area", "roundness"]
     compare_event_statistics(folder, data_files_list, reference_files_list, x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=True)
+                             data_labels, y_labels, continues=True)
 
 def plot_P0_second_neighbors_by_type():
     folder = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-07-31_P0\\position3-analysis\\Events statistics\\"
@@ -1871,7 +1726,7 @@ def plot_P0_second_neighbors_by_type():
     data_labels = ["SC second neighbors", "HC second neighbors"]
     compare_event_statistics(folder, data_files_list, reference_files_list, x_labels, pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=False)
+                             data_labels, y_labels, continues=False)
 
 def compare_distance_from_ablation(raw_data_output_folder=None):
     E17_diff = DataCollector("E17.5 differentiating cells",
@@ -1898,13 +1753,13 @@ def compare_distance_from_ablation(raw_data_output_folder=None):
         excel_path = None
     samples_list = [E17_diff,  E17_ref_SC, P0_diff, P0_ref_SC]
     pairs_to_compare = [(0, 1), (2, 3)]
-    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=True,
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=True,
                                                       plot_style="violin", color=["cyan"] * 2 + ["pink"] * 2,
                                                       edge_color=["blue"] * 2 + ["red"] * 2,
                                                       show_statistics=True, show_N=True, hirarchical=True, scatter=True,
                                                       save_to_excel=excel_path, excel_sheet="dist from ablation"
                                                       )
-    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=False,
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
                                                       plot_style="violin", color=["cyan"] * 2 + ["pink"] * 2,
                                                       edge_color=["blue"] * 2 + ["red"] * 2,
                                                       show_statistics=False, show_N=False, scatter=True)
@@ -1933,7 +1788,7 @@ def compare_normal_and_promoted_differentiation_HC_density_and_fraction():
     compare_event_statistics(folder, data_files_list, reference_files_list, x_labels,
                              pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=True, color=["red", "purple"], edge_color=["red", "purple"])
+                             data_labels, y_labels, continues=True, color=["red", "purple"], edge_color=["red", "purple"])
 
 def compare_normal_and_promoted_differentiation_HC_neighbors():
     folder = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-06-05_P0_utricle_ablation\\position2-analysis\\Event statistics\\"
@@ -1948,7 +1803,7 @@ def compare_normal_and_promoted_differentiation_HC_neighbors():
     compare_event_statistics(folder, data_files_list, reference_files_list, x_labels,
                              pairs_to_compare,
                              normalization_list,
-                             data_labels, y_labels, continuous=False, color=["red", "purple"],
+                             data_labels, y_labels, continues=False, color=["red", "purple"],
                              edge_color=["red", "purple"])
 
 def compare_deformability():
@@ -1987,7 +1842,7 @@ def compare_deformability():
     x_labels = ["HC area", "SC area"]
     pairs_to_compare = [(0,1)]
     color = ["red", "green"]
-    fig, ax, res = compare_and_plot_samples(samples, x_labels, pairs_to_compare, continuous=True,
+    fig, ax, res = compare_and_plot_samples(samples, x_labels, pairs_to_compare, continues=True,
                                             plot_style=style, color=color, edge_color=color)
     ax.set_ylabel("Fold change")
     print(res)
@@ -2107,11 +1962,11 @@ def plot_number_of_differentiations():
     pairs_to_compare = []
     color = ["blue", "red"]
     edge_color = ["blue", "red"]
-    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=False,
+    full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
                                                       plot_style="box", color=color,
                                                       edge_color=edge_color,
                                                       show_statistics=True, show_N=True)
-    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continuous=False,
+    empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
                                                       plot_style="box", color=color,
                                                       edge_color=edge_color,
                                                       show_statistics=False, show_N=False)
@@ -2235,11 +2090,11 @@ def plot_rho_inhibition_HC_SC_roundness(raw_data_output_folder=None):
     # pairs_to_compare = [(2*i, 2*i+1) for i in range(10)]
     # color = ["cyan", "green"] * 5 + ["pink", "magenta"] * 5
     # edge_color = ["blue", "black"] * 5 + ["red", "purple"] * 5
-    # full_fig, full_ax, res = compare_and_plot_samples(HC_samples_list, pairs_to_compare, continuous=True,
+    # full_fig, full_ax, res = compare_and_plot_samples(HC_samples_list, pairs_to_compare, continues=True,
     #                                                   plot_style="violin", color=color,
     #                                                   edge_color=edge_color,
     #                                                   show_statistics=True, show_N=True, hirarchical=True)
-    # empty_fig, empty_ax, _ = compare_and_plot_samples(HC_samples_list, pairs_to_compare, continuous=True,
+    # empty_fig, empty_ax, _ = compare_and_plot_samples(HC_samples_list, pairs_to_compare, continues=True,
     #                                                   plot_style="violin", color=color,
     #                                                   edge_color=edge_color,
     #                                                   show_statistics=False, show_N=False, hirarchical=True,
@@ -2351,11 +2206,11 @@ def plot_rho_inhibition_HC_SC_roundness(raw_data_output_folder=None):
     # pairs_to_compare = [(2 * i, 2 * i + 1) for i in range(10)]
     # color = ["cyan", "green"] * 5 + ["pink", "magenta"] * 5
     # edge_color = ["blue", "black"] * 5 + ["red", "purple"] * 5
-    # full_fig, full_ax, res = compare_and_plot_samples(SC_samples_list, pairs_to_compare, continuous=True,
+    # full_fig, full_ax, res = compare_and_plot_samples(SC_samples_list, pairs_to_compare, continues=True,
     #                                                   plot_style="violin", color=color,
     #                                                   edge_color=edge_color,
     #                                                   show_statistics=True, show_N=True, hirarchical=True)
-    # empty_fig, empty_ax, _ = compare_and_plot_samples(SC_samples_list, pairs_to_compare, continuous=True,
+    # empty_fig, empty_ax, _ = compare_and_plot_samples(SC_samples_list, pairs_to_compare, continues=True,
     #                                                   plot_style="violin", color=color,
     #                                                   edge_color=edge_color,
     #                                                   show_statistics=False, show_N=False, hirarchical=True,
@@ -2558,11 +2413,11 @@ def plot_rho_inhibition_HC_SC_roundness(raw_data_output_folder=None):
     # pairs_to_compare = [(2 * i, 2 * i + 1) for i in range(10)]
     # color = ["cyan", "green"] * 5 + ["pink", "magenta"] * 5
     # edge_color = ["blue", "black"] * 5 + ["red", "purple"] * 5
-    # full_fig, full_ax, res = compare_and_plot_samples(HC_samples_list, pairs_to_compare, continuous=True,
+    # full_fig, full_ax, res = compare_and_plot_samples(HC_samples_list, pairs_to_compare, continues=True,
     #                                                   plot_style="violin", color=color,
     #                                                   edge_color=edge_color,
     #                                                   show_statistics=True, show_N=True, hirarchical=True)
-    # empty_fig, empty_ax, _ = compare_and_plot_samples(HC_samples_list, pairs_to_compare, continuous=True,
+    # empty_fig, empty_ax, _ = compare_and_plot_samples(HC_samples_list, pairs_to_compare, continues=True,
     #                                                   plot_style="violin", color=color,
     #                                                   edge_color=edge_color,
     #                                                   show_statistics=False, show_N=False, hirarchical=True,
@@ -2635,7 +2490,12 @@ if __name__ == "__main__":
 
     # plot_DAPT_data()
 
-    # compare_E17_P0_HC_neighbors_with_model()
+
+    ### Data to compare with model ###
+
+    compare_E17_P0_HC_neighbors_with_model()
+
+
 
 
     ## CREATE PAPER FIGURES ##
@@ -2660,5 +2520,5 @@ if __name__ == "__main__":
     # compare_E17_P0_rho_inhibition_neighbors_by_type(raw_data_output_folder=RAW_DATA_FOLDER)
 
     # Figure S4 #
-    plot_rho_inhibition_HC_SC_roundness(raw_data_output_folder=None)
+    # plot_rho_inhibition_HC_SC_roundness(raw_data_output_folder=None)
     # compare_E17_P0_rho_inhibition_contact_length(raw_data_output_folder=RAW_DATA_FOLDER)
