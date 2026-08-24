@@ -9,8 +9,11 @@ import pandas as pd
 import os, sys
 import subprocess
 import seaborn as sns
-
+import re
+import glob
 from statistical_analysis import compare_and_plot_samples, DataCollector
+
+sys.path.insert(0, r"C:\Users\Kasirer\Phd\mouse_ear_project\tissue_model")
 
 RAW_DATA_FOLDER = r"C:\Users\Kasirer\Phd\mouse_ear_project\papers\Dynamic lateral inhibition in the utricle\Raw Data"
 
@@ -77,6 +80,231 @@ E17_circular_ablation_touching_frames = [11, 11, 7, 7, 6, 10, 7, 5, 7, 5, 7, 10,
 P0_circular_ablation_touching_frames = [9, 8, 12, 12, 11, 11, 9, 11, 4, 8, 11, 11, 11, 11]
 output_dir = r"C:\Users\Kasirer\Phd\mouse_ear_project\papers\Dynamic lateral inhibition in the utricle\Experimental Data"
 
+experimental_results_folder = os.environ.get(
+    "EXPERIMENTAL_DATA_DIR",
+    r"C:\Users\Kasirer\Phd\mouse_ear_project\papers\Dynamic lateral inhibition in the utricle\Experimental Data")
+ablation_area_change_file_name = r"ablation_area_change_summary.ods"
+
+def _experimental_late_cells_info_path(stage, experiment):
+    """Path to the *latest* (``+24h``) ``cells_info`` pickle for a given
+    experiment, i.e. the recorded frame other than the initial ``frame_1``.
+    Found by globbing so the late-frame number (191/199/120 for E17.5, …)
+    doesn't have to be hard-coded per experiment."""
+    prefix = "E17" if stage == "E17.5" else "P0"
+    pattern = os.path.join(experimental_results_folder, stage,
+                           "%s_experiment%d_cells_info_frame_*" % (prefix, experiment))
+    best_path, best_frame = None, -1
+    for path in glob.glob(pattern):
+        match = re.search(r"frame_(\d+)$", path)
+        if match is None:
+            continue
+        frame = int(match.group(1))
+        if frame != 1 and frame > best_frame:
+            best_frame, best_path = frame, path
+    if best_path is None:
+        raise FileNotFoundError("No +24h cells_info frame found for %s experiment %d" % (stage, experiment))
+    return best_path
+
+def _read_ablation_area_ratios(stage):
+    """Parse the ablation-summary ODS and return the per-cell *area after / area
+    before* ablation ratios for ``stage``, GROUPED BY BIOLOGICAL REPEAT.
+
+    A biological repeat is one ablation experiment, identified by its
+    ``(Date, position)`` — a distinct utricle imaged on a given date at a given
+    position. Returns a list of ``(hc_ratios, sc_ratios)`` NumPy-array pairs, one
+    per repeat in first-seen order, so the HC/SC area-change ratio can be formed
+    WITHIN each repeat (each HC normalized by its own repeat's mean SC change) and
+    the repeats used as replicates in the hierarchical comparison — matching how
+    the area/roundness metrics are grouped. (The previous version pooled every
+    cell into one array, which mislabelled a whole stage as a single replicate.)
+
+    Read by unzipping the ODS and walking ``content.xml`` directly so no optional
+    ``odfpy`` dependency is required (it isn't installed in the ``tyssue``
+    environment).
+    """
+    import zipfile
+    from collections import OrderedDict
+    from xml.etree import ElementTree as ET
+    table_ns = "urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+    ods_path = os.path.join(experimental_results_folder, ablation_area_change_file_name)
+    with zipfile.ZipFile(ods_path) as archive:
+        root = ET.fromstring(archive.read("content.xml").decode("utf-8"))
+
+    rows = []
+    for table in root.iter("{%s}table" % table_ns):
+        for row in table.findall("{%s}table-row" % table_ns):
+            cells = []
+            for cell in row.findall("{%s}table-cell" % table_ns):
+                repeat = int(cell.get("{%s}number-columns-repeated" % table_ns, "1"))
+                text = "".join(cell.itertext()).strip()
+                cells.extend([text] * repeat)
+            rows.append(cells)
+
+    # First non-empty row is the header; map the columns we need by name.
+    header = next(r for r in rows if any(c for c in r))
+    col = {name: idx for idx, name in enumerate(header)}
+    date_i, stage_i, pos_i = col["Date"], col["stage"], col["position"]
+    type_i, ratio_i = col["cell type"], col["area ratio"]
+    need = max(date_i, stage_i, pos_i, type_i, ratio_i)
+
+    # Group each cell's area ratio into its biological repeat (Date, position),
+    # keeping HC and SC separate. OrderedDict preserves first-seen repeat order.
+    repeats = OrderedDict()
+    for cells in rows:
+        if cells is header or len(cells) <= need or cells[stage_i] != stage:
+            continue
+        if cells[type_i] not in ("HC", "SC"):
+            continue
+        try:
+            ratio = float(cells[ratio_i])
+        except (ValueError, IndexError):
+            continue
+        hc, sc = repeats.setdefault((cells[date_i], cells[pos_i]), ([], []))
+        (hc if cells[type_i] == "HC" else sc).append(ratio)
+    return [(np.array(hc), np.array(sc)) for hc, sc in repeats.values()]
+
+def load_experimental_results(stage, type, cell_type='all', neighbor_type='all'):
+    """``cell_type`` / ``neighbor_type`` (``'all'`` / ``'HC'`` / ``'SC'``)
+    restrict, for the ``"number of neighbors"`` and ``"contact length"``
+    branches, which cells are counted and which of their neighbors are
+    counted. The default ``'all'`` / ``'all'`` reproduces the original
+    behavior (total neighbors of every valid cell); ``cell_type='HC'`` with
+    ``neighbor_type='HC'`` yields the number of HC neighbors for each HC.
+    The experimental ``type`` column encodes HCs as ``1`` and SCs as ``0``.
+    """
+    res = []
+    if type == "number of neighbors" or type == "contact length":
+        for experiment in range(1, 4):
+            contact_matrix_file_name = "E17_experiment%d_contact_matrix_frame_1.npy"%experiment if stage=="E17.5"\
+                else "P0_experiment%d_contact_matrix_frame_1.npy"%experiment
+            cells_info_file_name = "E17_experiment%d_cells_info_frame_1"%experiment if stage=="E17.5"\
+                else "P0_experiment%d_cells_info_frame_1"%experiment
+            contact_matrix = np.load(os.path.join(experimental_results_folder, stage,contact_matrix_file_name))
+            cells_info = pd.read_pickle(os.path.join(experimental_results_folder, stage,cells_info_file_name))
+            valid_cells = cells_info.valid.values
+            is_HC = cells_info.type.values == 1
+
+            def _mask(which):
+                if which == "HC":
+                    return valid_cells & is_HC
+                elif which == "SC":
+                    return valid_cells & ~is_HC
+                return valid_cells
+
+            row_mask = _mask(cell_type)
+            col_mask = _mask(neighbor_type)
+            valid_contacts = contact_matrix[np.ix_(row_mask, col_mask)]
+            if type == "number of neighbors":
+                valid_contacts = (valid_contacts > 0).astype(int)
+            res.append(np.sum(valid_contacts, axis=1))
+        return res
+    elif type == "HC to SC area ratio":
+        # Per experiment (one replicate each), each HC's area divided by the
+        # mean SC area at the +24h frame. A ratio, so unit-free and directly
+        # comparable to the model.
+        for experiment in range(1, 4):
+            # cells_info = pd.read_pickle(_experimental_late_cells_info_path(stage, experiment))
+            cells_info = pd.read_pickle(os.path.join(experimental_results_folder, stage,"E17_experiment%d_cells_info_frame_1" % experiment if stage == "E17.5" \
+                else "P0_experiment%d_cells_info_frame_1" % experiment))
+            valid = cells_info.valid.values
+            is_HC = cells_info.type.values == 1
+            area = cells_info.area.values
+            res.append(area[valid & is_HC] / np.average(area[valid & ~is_HC]))
+        return res
+    elif type == "HC to SC roundness ratio":
+        # Per experiment (one replicate each), each HC's roundness divided by the
+        # mean SC roundness at the +24h frame. Roundness is computed PER CELL
+        # from that experiment's cells_info as 4*pi*area / perimeter**2 — the
+        # same formula the model uses (VirtualSheet.get_face_roundness) — so it's
+        # unit-free and directly comparable to the model. Mirrors the
+        # "HC to SC area ratio" branch above.
+        for experiment in range(1, 4):
+            cells_info = pd.read_pickle(_experimental_late_cells_info_path(stage, experiment))
+            # cells_info = pd.read_pickle(os.path.join(experimental_results_folder, stage,"E17_experiment%d_cells_info_frame_1" % experiment if stage == "E17.5" \
+            #                                 else "P0_experiment%d_cells_info_frame_1" % experiment))
+            valid = cells_info.valid.values
+            is_HC = cells_info.type.values == 1
+            roundness = 4 * np.pi * cells_info.area.values / cells_info.perimeter.values ** 2
+            res.append(roundness[valid & is_HC] / np.average(roundness[valid & ~is_HC]))
+        return res
+    elif type == "HC roundness" or type == "SC roundness":
+        # ABSOLUTE per-cell roundness (4*pi*area/perimeter**2) of the valid HC
+        # (or SC) cells, one array per experiment — computed from each
+        # experiment's +24h cells_info, the SAME source/formula as the ratio
+        # branch above and the model (VirtualSheet.get_face_roundness). Roundness
+        # is dimensionless, so unlike area the absolute value IS directly
+        # comparable model<->experiment. (Replaces the old precomputed-npy path.)
+        want_hc = type == "HC roundness"
+        for experiment in range(1, 4):
+            cells_info = pd.read_pickle(_experimental_late_cells_info_path(stage, experiment))
+            # cells_info = pd.read_pickle(os.path.join(experimental_results_folder, stage,"E17_experiment%d_cells_info_frame_1" % experiment if stage == "E17.5" \
+            #                                 else "P0_experiment%d_cells_info_frame_1" % experiment))
+            valid = cells_info.valid.values
+            is_HC = cells_info.type.values == 1
+            roundness = 4 * np.pi * cells_info.area.values / cells_info.perimeter.values ** 2
+            res.append(roundness[valid & (is_HC if want_hc else ~is_HC)])
+        return res
+    elif type == "HC to SC area change ratio after ablation":
+        # From the ablation-summary ODS, GROUPED BY BIOLOGICAL REPEAT
+        # ((Date, position)): within each repeat, each ablation-adjacent HC's
+        # area-change ratio divided by that repeat's mean SC area-change ratio.
+        # One array per repeat (the ablation experiments per stage), so the
+        # repeats act as replicates in the hierarchical comparison, like the
+        # area/roundness metrics. A repeat with no HC (or no SC) cells can't form
+        # the ratio and is dropped.
+        res = []
+        for hc_ratios, sc_ratios in _read_ablation_area_ratios(stage):
+            if len(hc_ratios) > 0 and len(sc_ratios) > 0:
+                res.append(hc_ratios / np.average(sc_ratios))
+        return res
+    elif type == "HC area change after ablation" or type == "SC area change after ablation":
+        # The ablation area-change (area after / area before) of the ablation-
+        # adjacent HC (resp. SC) cells, one array per biological repeat
+        # ((Date, position)) — so the repeats act as replicates in the comparison.
+        # HC and SC are separate fit objectives (the old HC-over-SC ratio was
+        # split). Note SC has cells in every repeat while HC may not (a repeat
+        # with no cells of that type yields no array).
+        want_hc = type == "HC area change after ablation"
+        res = []
+        for hc_ratios, sc_ratios in _read_ablation_area_ratios(stage):
+            vals = hc_ratios if want_hc else sc_ratios
+            if len(vals) > 0:
+                res.append(vals)
+        return res
+    elif type == "percentage of differentiating cells":
+        # One row per biological repeat (normal development) of the chosen
+        # stage; each returned array is the % of cells that differentiated
+        # binned by their initial HC-neighbor count (0, 1, ..., >=max). The
+        # number of bins is fixed by the spreadsheet's columns.
+        table = pd.read_excel(os.path.join(experimental_results_folder,
+                                           percentage_of_differentiating_cells_file_name))
+        rows = table[(table["Stage"] == stage) & (table["Condition"] == "Normal development")]
+        percentage_columns = [c for c in table.columns if str(c).startswith("% differentiating")]
+        return [row[percentage_columns].to_numpy(dtype=float) for _, row in rows.iterrows()]
+    elif stage == "E17.5":
+        if type == "HC number of HC neighbors":
+            return [np.load(os.path.join(experimental_results_folder, E17_number_of_HC_neighbors_file_name)).astype(int)]
+        elif type == "HC contact length with HC":
+            return [np.load(os.path.join(experimental_results_folder, E17_contact_length_with_HC_neighbors_file_name))]
+        elif type == "HC roundness":
+            return [np.load(os.path.join(experimental_results_folder, E17_HC_roundness_file_name))]
+        elif type == "SC roundness":
+            return [np.load(os.path.join(experimental_results_folder, E17_SC_roundness_file_name))]
+        else:
+            raise "Not implemented for type %s"%type
+    elif stage == "P0":
+        if type == "HC number of HC neighbors":
+            return [np.load(os.path.join(experimental_results_folder, P0_number_of_HC_neighbors_file_name)).astype(int)]
+        elif type == "HC contact length with HC":
+            return [np.load(os.path.join(experimental_results_folder, P0_contact_length_with_HC_neighbors_file_name))]
+        elif type == "HC roundness":
+            return [np.load(os.path.join(experimental_results_folder, P0_HC_roundness_file_name))]
+        elif type == "SC roundness":
+            return [np.load(os.path.join(experimental_results_folder, P0_SC_roundness_file_name))]
+        else:
+            raise "Not implemented for type %s"%type
+    else:
+        raise "Not implemented for stage %s"%stage
 
 def combine_frame_compare_results():
     # Contact length with SC
@@ -731,7 +959,7 @@ def compare_E17_P0_HC_neighbors_with_model():
 
     plt.show()
 
-def compare_E17_P0_HC_neighbors_for_differentiation_and_trans_differentiation(raw_data_output_folder=None):
+def compare_E17_P0_HC_neighbors_for_differentiation_and_trans_differentiation(raw_data_output_folder=None, no_transdiff=False):
     E17_diff = DataCollector("E17.5 differentiating cells", E17_folders,
                              ["neighbors_by_type_differentiation_data"]*3,
                              ["HC neighbors"]*3)
@@ -773,17 +1001,27 @@ def compare_E17_P0_HC_neighbors_for_differentiation_and_trans_differentiation(ra
                                   "differentiation_and_trans-differentiation_statistical_analysis.xlsx")
     else:
         excel_path = None
-    samples_list = [E17_diff, E17_ref_SC, P0_diff, P0_trans_diff, P0_ref_SC]
+    if no_transdiff:
+        samples_list = [E17_diff, E17_ref_SC, P0_diff, P0_ref_SC]
+        pairs_to_compare = [(0, 1), (0, 2), (2, 3)]
+        colors = ["cyan"] * 2 + ["pink"] *2
+        edge_color=["blue"] * 2 + ["red"] * 2
+        hatch=[None]*4
+    else:
+        samples_list = [E17_diff, E17_ref_SC, P0_diff, P0_trans_diff, P0_ref_SC]
+        pairs_to_compare = [(0,1),(0,2), (2,3), (2,4), (0,3)]
+        colors = ["cyan"] * 2 + ["pink"] * 3
+        edge_color = ["blue"] * 2 + ["red"] * 3
+        hatch=[None]*3 + ['/', None]
     all_samples_list = samples_list + [E17_ablation_diff, E17_ablation_ref_SC, P0_ablation_diff, P0_ablation_ref_SC]
-    pairs_to_compare = [(0,1),(0,2), (2,3), (2,4), (0,3)]
     full_fig, full_ax, res = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
-                                            plot_style="histogram", color= ["cyan"] * 2 + ["pink"] *3, edge_color=["blue"] * 2 + ["red"] * 3,
+                                            plot_style="histogram", color=colors, edge_color=edge_color,
                                             show_statistics=True, show_N=True, hirarchical=True, scatter=False,
                                                       save_to_excel=excel_path, excel_sheet="HC neighbors")
     empty_fig, empty_ax, _ = compare_and_plot_samples(samples_list, pairs_to_compare, continues=False,
-                                                      plot_style="histogram", color=["cyan"] * 2 + ["pink"] * 3,
-                                                      edge_color=["blue"] * 2 + ["red"] * 3,
-                                                      show_statistics=False, show_N=False, scatter=True, hatch=[None]*3 + ['/', None])
+                                                      plot_style="histogram", color=colors,
+                                                      edge_color=edge_color,
+                                                      show_statistics=False, show_N=False, scatter=True, hatch=hatch)
 
     from matplotlib.ticker import MaxNLocator
     empty_ax.yaxis.set_major_locator(MaxNLocator(integer=True))
@@ -1775,6 +2013,41 @@ def compare_distance_from_ablation(raw_data_output_folder=None):
             sample.save_to_excel(out_path, "Distance from ablation")
     plt.show()
 
+def plot_differentiation_timing_after_ablation(raw_data_output_folder=None):
+    P0_transdiff = DataCollector("P0 differentiating cells",
+                             P0_ablation_folders,
+                             ["timing_promoted_differentiation_data"] *3,
+                             ["timing histogram"]*3, normalization=4)
+
+    if raw_data_output_folder is not None:
+        excel_path = os.path.join(raw_data_output_folder,
+                                  "differentiation_timing_data.xlsx")
+    else:
+        excel_path = None
+    samples_list = [P0_transdiff]
+    plt.hist(P0_transdiff.get_sample())
+    plt.xlabel("Differentiation time from ablation (hours)")
+    plt.ylabel("Frequency")
+    if raw_data_output_folder is not None:
+        out_path = os.path.join(raw_data_output_folder, "distance_from_ablation_raw_data.xlsx")
+        overall_raw_data = pd.DataFrame({"Name": [sample.name for sample in samples_list],
+                                         "Trans-differentiation time after ablation average (hours)": [sample.get_average_of_groups() for sample in
+                                                                            samples_list],
+                                         "Differentiation time after ablation SE (hours)": [sample.get_se_of_groups() for sample in
+                                                                       samples_list],
+                                         })
+        with pd.ExcelWriter(out_path, mode="w") as writer:
+            overall_raw_data.to_excel(writer, sheet_name="Overall differentiation timing after ablation")
+        for sample in samples_list:
+            sample.save_to_excel(out_path, "Differentiation timing after ablation")
+    plt.show()
+
+
+    if raw_data_output_folder is not None:
+        for sample in samples_list:
+            sample.save_to_excel(excel_path, "Differentiation timing")
+    plt.show()
+
 def compare_normal_and_promoted_differentiation_HC_density_and_fraction():
     folder = "D:\\Kasirer\\experimental_results\\movies\\Utricle\\2022-06-05_P0_utricle_ablation\\position2-analysis\\Event statistics\\"
     x_labels = ["Promoted differentiations", "Normal differentiations"]
@@ -2057,9 +2330,11 @@ def plot_rho_inhibition_HC_SC_roundness(raw_data_output_folder=None):
                                             ["area_and_roundness_reference_HC_frame144_data"] * 2+
                                             ["area_and_roundness_reference_HC_frame130_data"],
                                             ["roundness"] * 3, normalization=1)
-    P0_48h_HC_roundness = DataCollector("P0 +48h HC roundness", [P0_folders[0]],
-                                            ["area_and_roundness_reference_HC_frame165_data"],
-                                            ["roundness"] * 1, normalization=1)
+    P0_48h_HC_roundness = DataCollector("P0 +48h HC roundness", P0_folders,
+                                            ["area_and_roundness_reference_HC_frame175_data",
+                                             "area_and_roundness_reference_HC_frame144_data",
+                                             "area_and_roundness_reference_HC_frame130_data"],
+                                            ["roundness"] * 3, normalization=1)
     E17_HC_rho_samples = [E17_rho_0h_HC_roundness,
                     E17_rho_12h_HC_roundness,
                     E17_rho_24h_HC_roundness,
@@ -2087,18 +2362,18 @@ def plot_rho_inhibition_HC_SC_roundness(raw_data_output_folder=None):
     for i in range(5):
         HC_samples_list.append(P0_HC_samples[i])
         HC_samples_list.append(P0_HC_rho_samples[i])
-    # pairs_to_compare = [(2*i, 2*i+1) for i in range(10)]
-    # color = ["cyan", "green"] * 5 + ["pink", "magenta"] * 5
-    # edge_color = ["blue", "black"] * 5 + ["red", "purple"] * 5
-    # full_fig, full_ax, res = compare_and_plot_samples(HC_samples_list, pairs_to_compare, continues=True,
-    #                                                   plot_style="violin", color=color,
-    #                                                   edge_color=edge_color,
-    #                                                   show_statistics=True, show_N=True, hirarchical=True)
-    # empty_fig, empty_ax, _ = compare_and_plot_samples(HC_samples_list, pairs_to_compare, continues=True,
-    #                                                   plot_style="violin", color=color,
-    #                                                   edge_color=edge_color,
-    #                                                   show_statistics=False, show_N=False, hirarchical=True,
-    #                                           scatter=True)
+    pairs_to_compare = [(2*i, 2*i+1) for i in range(10)] + [(8, 18)]
+    color = ["cyan", "green"] * 5 + ["pink", "magenta"] * 5
+    edge_color = ["blue", "black"] * 5 + ["red", "purple"] * 5
+    full_fig, full_ax, res = compare_and_plot_samples(HC_samples_list, pairs_to_compare, continues=True,
+                                                      plot_style="violin", color=color,
+                                                      edge_color=edge_color,
+                                                      show_statistics=True, show_N=True, hirarchical=True)
+    empty_fig, empty_ax, _ = compare_and_plot_samples(HC_samples_list, pairs_to_compare, continues=True,
+                                                      plot_style="violin", color=color,
+                                                      edge_color=edge_color,
+                                                      show_statistics=False, show_N=False, hirarchical=True,
+                                              scatter=True)
 
     E17_rho_0h_SC_roundness = DataCollector("E17.5 rho +0h SC roundness", Rho_inhibition_E17_folders,
                                                ["area_and_roundness_reference_SC_frame1_data"]*3,
@@ -2169,9 +2444,11 @@ def plot_rho_inhibition_HC_SC_roundness(raw_data_output_folder=None):
                                         ["area_and_roundness_reference_SC_frame144_data"] * 2 +
                                         ["area_and_roundness_reference_SC_frame130_data"],
                                             ["roundness"] * 3, normalization=1)
-    P0_48h_SC_roundness = DataCollector("P0 +48h SC roundness", [P0_folders[0]],
-                                            ["area_and_roundness_reference_SC_frame165_data"],
-                                            ["roundness"] * 1, normalization=1)
+    P0_48h_SC_roundness = DataCollector("P0 +48h SC roundness", P0_folders,
+                                            ["area_and_roundness_reference_SC_frame175_data",
+                                             "area_and_roundness_reference_SC_frame144_data",
+                                             "area_and_roundness_reference_SC_frame130_data"],
+                                            ["roundness"] * 3, normalization=1)
     E17_SC_rho_samples = [E17_rho_0h_SC_roundness,
                     E17_rho_12h_SC_roundness,
                     E17_rho_24h_SC_roundness,
@@ -2458,7 +2735,7 @@ def plot_differentiation_timing_by_n_HC_neighbors():
     for i in range(4):
         ax.plot(np.array([0] + P0dapt_timing['timing for %d HC neighbors' % i])/4,
                 100*np.arange(len(P0dapt_timing['timing for %d HC neighbors' % i]) + 1)/P0dapt_timing['initial_abundance for %d HC neighbors' % i], label="%d HC neighbors - DAPT (N=%d)" % (i, P0dapt_timing['initial_abundance for %d HC neighbors' % i]), color=colors[i], linestyle='solid')
-    for i in range(3):
+    for i in range(4):
         ax.plot(np.array([0] + P0_timing['timing for %d HC neighbors' % i])/4,
                  100*np.arange(len(P0_timing['timing for %d HC neighbors' % i]) + 1)/P0_timing['initial_abundance for %d HC neighbors' % i], label="%d HC neighbors - Control (N=%d)" % (i, P0_timing['initial_abundance for %d HC neighbors' % i]), color=colors[i], linestyle='dashed')
     plt.legend()
@@ -2486,39 +2763,83 @@ def plot_differentiation_timing_by_n_HC_neighbors():
     plt.ylabel("Differentiation Probability")
     plt.show()
 
+def plot_morphological_measurements():
+    E17_HC_roundness = DataCollector(name="E17.5 HC roundness", sample = load_experimental_results("E17.5", "HC roundness"))
+    E17_SC_roundness = DataCollector(name="E17.5 SC roundness", sample = load_experimental_results("E17.5", "SC roundness"))
+    P0_HC_roundness = DataCollector(name="P0 HC roundness", sample = load_experimental_results("P0", "HC roundness"))
+    P0_SC_roundness = DataCollector(name="P0 SC roundness", sample = load_experimental_results("P0", "SC roundness"))
+
+    E17_HC_area_change = DataCollector(name="E17.5 HC area change after ablation", sample =load_experimental_results("E17.5", "HC area change after ablation"))
+    E17_SC_area_change = DataCollector(name="E17.5 SC area change after ablation", sample =load_experimental_results("E17.5", "SC area change after ablation"))
+    P0_HC_area_change = DataCollector(name="P0 HC area change after ablation", sample =load_experimental_results("P0", "HC area change after ablation"))
+    P0_SC_area_change = DataCollector(name="P0 SC area change after ablation", sample =load_experimental_results("P0", "SC area change after ablation"))
+
+
+    roundness_samples_list = [E17_HC_roundness, P0_HC_roundness, E17_SC_roundness, P0_SC_roundness]
+    area_change_samples_list = [E17_HC_area_change, P0_HC_area_change, E17_SC_area_change, P0_SC_area_change]
+    pairs_to_compare = [(0, 1), (2, 3), (0,2), (1,3)]
+    color = ["cyan", "pink"] * 2
+    edge_color = ["blue", "red"] * 2
+    for s in roundness_samples_list + area_change_samples_list:
+        print(s.name + " avg: %f, se: %f" %(s.get_average_of_groups(), s.get_se_of_groups()))
+    full_fig, full_ax, res = compare_and_plot_samples(roundness_samples_list, pairs_to_compare, continues=True,
+                                                      plot_style="violin", color=color,
+                                                      edge_color=edge_color,
+                                                      show_statistics=True, show_N=True, hirarchical=True)
+    empty_fig, empty_ax, _ = compare_and_plot_samples(roundness_samples_list, pairs_to_compare, continues=True,
+                                                      plot_style="violin", color=color,
+                                                      edge_color=edge_color,
+                                                      show_statistics=False, show_N=False, hirarchical=True,
+                                                      scatter=True)
+
+    full_fig, full_ax, res = compare_and_plot_samples(area_change_samples_list, pairs_to_compare, continues=True,
+                                                      plot_style="violin", color=color,
+                                                      edge_color=edge_color,
+                                                      show_statistics=True, show_N=True, hirarchical=True)
+    empty_fig, empty_ax, _ = compare_and_plot_samples(area_change_samples_list, pairs_to_compare, continues=True,
+                                                      plot_style="violin", color=color,
+                                                      edge_color=edge_color,
+                                                      show_statistics=False, show_N=False, hirarchical=True,
+                                                      scatter=True)
+    plt.show()
+
+
 if __name__ == "__main__":
 
     # plot_DAPT_data()
-
+    # compare_E17_P0_HC_neighbors_for_differentiation_and_trans_differentiation(raw_data_output_folder=None, no_transdiff=True)
 
     ### Data to compare with model ###
 
-    compare_E17_P0_HC_neighbors_with_model()
+    # compare_E17_P0_HC_neighbors_with_model()
 
 
 
 
     ## CREATE PAPER FIGURES ##
-    # Figure S1 #
+    # # Figure S1 #
     # plot_number_of_events()
-
-    # Figure S2 #
+    #
+    # # Figure2 #
+    # compare_E17_P0_HC_neighbors_for_differentiation_and_trans_differentiation(raw_data_output_folder=None)
+    # compare_distance_from_ablation(raw_data_output_folder=RAW_DATA_FOLDER)
+    #
+    # # Figure S2 #
     # compare_E17_E19_and_P0_P2_neighbors(raw_data_output_folder=RAW_DATA_FOLDER)
     # compare_E17_E19_and_P0_P2_contact_length(raw_data_output_folder=RAW_DATA_FOLDER)
-
-    # Figure2 #
-    # compare_E17_P0_HC_neighbors_for_differentiation_and_trans_differentiation(raw_data_output_folder=RAW_DATA_FOLDER)
-    # compare_distance_from_ablation(raw_data_output_folder=RAW_DATA_FOLDER)
-
-    # Figure S3 #
+    # plot_differentiation_timing_after_ablation(raw_data_output_folder=RAW_DATA_FOLDER) # Not in the figure right now
+    #
+    # # Figure S3 #
     # compare_E17_P0_HC_contact_length_for_differentiation_and_trans_differentiation(raw_data_output_folder=RAW_DATA_FOLDER)
-
-    # Figure 3 and S4 #
+    #
+    # # Figure 3 and S4 #
     # fit_circular_ablation_results_to_circle(E17_circular_ablation_folders, P0_circular_ablation_folders, 60, raw_data_output_folder=RAW_DATA_FOLDER)
-
-    # Figure 4 #
+    #
+    # # Figure 4 #
     # compare_E17_P0_rho_inhibition_neighbors_by_type(raw_data_output_folder=RAW_DATA_FOLDER)
-
-    # Figure S4 #
-    # plot_rho_inhibition_HC_SC_roundness(raw_data_output_folder=None)
+    #
+    # # Figure S4 #
+    plot_rho_inhibition_HC_SC_roundness(raw_data_output_folder=RAW_DATA_FOLDER)
     # compare_E17_P0_rho_inhibition_contact_length(raw_data_output_folder=RAW_DATA_FOLDER)
+
+   # plot_morphological_measurements()
