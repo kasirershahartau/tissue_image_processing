@@ -24,11 +24,31 @@ class DataCollector:
         self.files = None
         self.initial_batch_indices = None
         if sample is not None:
-            self.sample = sample/normalization
+            if isinstance(sample, list):
+                self.sample = self.rearrange_list_of_distributions(sample, omit_zeros=omit_zeros)
+            else:
+                self.sample = sample/normalization
         else:
             self.experiment_idx = [folders.index(folder) for folder in folders]
             self.files = [os.path.join(folder, file_name) for folder, file_name in zip(folders, file_names)]
             self.sample = self.collect(omit_zeros=omit_zeros)
+
+    def rearrange_list_of_distributions(self, samples_list, omit_zeros=False):
+        s = np.empty(0)
+        self.initial_batch_indices = []
+        group_id = 0
+        for sample in samples_list:
+            if omit_zeros:
+                sample = sample[sample != 0]
+            self.initial_batch_indices.append(s.size)
+            if hasattr(self.normalization, "__len__"):
+                normalization = self.normalization[group_id]
+            else:
+                normalization = self.normalization
+            s = np.hstack((s, sample / normalization))
+            group_id += 1
+        self.initial_batch_indices = np.array(self.initial_batch_indices)
+        return s[~np.isnan(s)]
 
     def collect(self, omit_zeros=False):
         s = np.empty(0)
@@ -95,7 +115,7 @@ class DataCollector:
         return np.std(self.get_group_avg())
 
     def get_se_of_groups(self):
-        if self.get_std_of_groups() > 1:
+        if self.get_number_of_groups() > 1:
             return self.get_std_of_groups()/np.sqrt(self.get_number_of_groups())
         else:
             return self.get_se()
@@ -670,7 +690,7 @@ class HierarchicalTwoSamplesCompare:
                         df.append({
                             'measurement': measurement,
                             'stage': data_index,
-                            'replicate': f"R{data.get_biological_repeat(group)}"
+                            'replicate': f"R{data_index}_{data.get_biological_repeat(group)}"
                         })
             elif isinstance(data, list):
                 for group in range(len(data)):
@@ -678,7 +698,7 @@ class HierarchicalTwoSamplesCompare:
                         df.append({
                             'measurement': measurement,
                             'stage': data_index,
-                            'replicate': f"R{group}"
+                            'replicate': f"R{data_index}_{group}"
                         })
         df = pd.DataFrame(df)
         df['stage'] = df['stage'].astype('category')
@@ -967,7 +987,8 @@ def compare_and_plot_samples(samples_list, pairs_to_compare, continues=True, plo
                                         samples_list[sample1_index].name, samples_list[sample2_index].name,
                                         continues=continues_sample)
         excel_label = samples_list[sample1_index].name + " vs " + samples_list[sample2_index].name
-        pvalues[index] = analyzer.compare_samples(save_to_excel=save_to_excel, sheet=excel_sheet, label=excel_label)
+        pvalues[index] = analyzer.compare_samples(save_to_excel=save_to_excel, sheet=excel_sheet, label=excel_label,
+                                                  verbose=True)
 
     averages = np.array([sample.get_average_of_groups() for sample in samples_list])
     standard_errors = np.array([sample.get_se_of_groups() for sample in samples_list])
